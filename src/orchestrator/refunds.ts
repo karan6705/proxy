@@ -25,16 +25,31 @@ export async function refundOnce(
   action: Action,
   amount: Cents,
 ): Promise<RefundOnceResult> {
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    throw new Error("Expected refund amount must be a positive integer in cents");
+  }
   const charge_id = await payments.findChargeForAction(action);
   if (charge_id === null) return { status: "no_charge" };
 
   const before = await payments.verifyRefund(charge_id, amount);
   if (before.refunded_amount > 0) {
     // Money already went back for this charge: never send a second refund, only report what Stripe shows.
-    return { status: "already_refunded", charge_id, refund_id: null, verified: before.verified, refunded_amount: before.refunded_amount };
+    return {
+      status: "already_refunded",
+      charge_id,
+      refund_id: null,
+      verified: before.verified && before.refunded_amount === amount,
+      refunded_amount: before.refunded_amount,
+    };
   }
 
   const { refund_id } = await payments.refund(charge_id, amount, refundKey(action.action_id));
   const after = await payments.verifyRefund(charge_id, amount);
-  return { status: "refunded", charge_id, refund_id, verified: after.verified, refunded_amount: after.refunded_amount };
+  return {
+    status: "refunded",
+    charge_id,
+    refund_id,
+    verified: after.verified && after.refunded_amount === amount,
+    refunded_amount: after.refunded_amount,
+  };
 }
