@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { createMemoryStore } from "../../db/index.js";
+import { logic } from "../../logic/index.js";
+import { createMerchants } from "../../merchants/index.js";
+import { createToolHandlers } from "../../tools/handlers.js";
 import type { Action } from "../../types.js";
 import { createSimulatedClock } from "../clock.js";
-import { createFakePayments, createRecordingStore, createStubMerchants, emptyChain } from "../fakes.js";
+import { createFakePayments, createRecordingStore, emptyChain } from "../fakes.js";
+import type { Proxy } from "../proxy.js";
 import { runSelfServeRoute } from "./self-serve.js";
 
 // The demo mistake: a Nov 3 flight instead of Nov 13. The 24-hour rule needs departure at least
@@ -10,9 +15,17 @@ const BOOKED_AT = "2026-10-25T10:00:00.000Z";
 
 async function setup(opts: { settleRefunds?: boolean } = {}) {
   const clock = createSimulatedClock(BOOKED_AT);
-  const merchants = createStubMerchants();
   const fake = createFakePayments(opts);
   const mem = createRecordingStore();
+  let chargeSequence = 0;
+  const merchants = createMerchants({
+    async charge(args) {
+      const charge_id = `ch_airline_${++chargeSequence}`;
+      fake.addCharge(charge_id, "act_flight", args.amount);
+      return { charge_id };
+    },
+    async deliver() {},
+  });
 
   const booking = await merchants.book({
     merchant_id: "airline",
@@ -23,8 +36,6 @@ async function setup(opts: { settleRefunds?: boolean } = {}) {
     amount: 41200,
     booked_at: clock.now(),
   });
-  fake.addCharge(booking.stripe_charge_id, "act_flight", booking.amount);
-
   const action: Action = {
     action_id: "act_flight",
     task_id: "task_demo",
@@ -58,6 +69,36 @@ describe("self-serve route (airline 24-hour rule)", () => {
     expect(mem.steps).toHaveLength(1);
   });
 
+  it("runs the real airline through cancel, refund and verification so the widget row is green", async () => {
+    const { deps, chain, action, fake } = await setup();
+    const store = createMemoryStore();
+    await store.putIntent(
+      {
+        task_id: action.task_id,
+        task_email: "task-demo@inkboxmail.com",
+        goal: "NYC trip for the Nov 13 conference, under $1,500",
+        constraints: { dates: { start: "2026-11-13", end: "2026-11-16" } },
+        preferences: { no_store_credit: true, min_partial_refund_pct: 80, auto_undo: false },
+        created_at: BOOKED_AT,
+      },
+      "widget-green",
+    );
+    await store.upsertAction(action);
+    await store.upsertChain(chain);
+
+    const route = await runSelfServeRoute({ ...deps, store }, chain, action);
+    expect(route.action.state).toBe("verified");
+
+    const handlers = createToolHandlers(() => ({
+      deps: { store, logic, clock: deps.clock, payments: fake.payments },
+    }) as unknown as Proxy);
+    const result = await handlers.get_chain({ chain_id: chain.chain_id });
+    if (!result.structuredContent.ok) throw new Error(result.structuredContent.message);
+    expect(result.structuredContent.actions).toEqual([
+      expect.objectContaining({ action_id: action.action_id, state: "verified", stripe_verified: true }),
+    ]);
+  });
+
   it("fails without refunding after the 24-hour window", async () => {
     const { clock, deps, chain, action, fake } = await setup();
     clock.advance(25 * 3_600_000);
@@ -77,6 +118,49 @@ describe("self-serve route (airline 24-hour rule)", () => {
 
     expect(result.action.state).toBe("refund_pending");
     expect(result.step.outcome).toBe("pending");
+  });
+
+  it.each([
+    ["zero", 0],
+    ["missing", undefined],
+  ])("never verifies a %s merchant refund amount", async (_label, refundAmount) => {
+    const { deps, chain, action, fake } = await setup();
+    const result = await runSelfServeRoute(
+      {
+        ...deps,
+        merchants: {
+          async selfServeCancel() {
+            return { ok: true as const, refund_amount: refundAmount as number, stripe_refund_id: null };
+          },
+        },
+      },
+      chain,
+      action,
+    );
+
+    expect(result.action.state).toBe("refund_pending");
+    expect(result.step.outcome).toBe("pending");
+    expect(fake.refunds.size).toBe(0);
+  });
+
+  it("never verifies a partial refund when the action expects a full refund", async () => {
+    const { deps, chain, action, fake } = await setup();
+    const result = await runSelfServeRoute(
+      {
+        ...deps,
+        merchants: {
+          async selfServeCancel() {
+            return { ok: true as const, refund_amount: 34_000, stripe_refund_id: null };
+          },
+        },
+      },
+      chain,
+      action,
+    );
+
+    expect(result.action.state).toBe("refund_pending");
+    expect(result.step.message).toContain("expected the full 41200 refund");
+    expect(fake.refunds.size).toBe(0);
   });
 
   it("never refunds twice when retried", async () => {

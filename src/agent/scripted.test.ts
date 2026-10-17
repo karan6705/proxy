@@ -13,6 +13,7 @@ import {
   type DemoControl,
 } from "./scripted.js";
 import type { ConfirmationEnvelope } from "./stub-merchants.js";
+import { StubMerchants } from "./stub-merchants.js";
 
 function fakeClient(fixableNow: string[] = []): ToolClient & { calls: Array<{ name: string; args: Record<string, unknown> }> } {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -66,6 +67,17 @@ function fakeControl(events: string[]): DemoControl & { confirmations: Confirmat
 }
 
 describe("scripted demo", () => {
+  it("models the airline as self-serve and uses the transfer support address", () => {
+    const merchants = new StubMerchants(createMockAgentPayments(), fakeControl([]));
+
+    expect(merchants.get("airline")).toMatchObject({ has_agent: false });
+    expect(merchants.get("airline")?.agent_identity).toBeUndefined();
+    expect(merchants.get("transfer")).toMatchObject({
+      has_agent: false,
+      support_email: "support@metrotransfer.example",
+    });
+  });
+
   it("ends the session before all merchant confirmations arrive", async () => {
     const events: string[] = [];
     const client = fakeClient();

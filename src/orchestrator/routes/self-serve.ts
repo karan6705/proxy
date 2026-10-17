@@ -46,6 +46,17 @@ export async function runSelfServeRoute(deps: SelfServeDeps, chain: Chain, actio
   if (!cancel.ok) {
     return finish("failed", "failed", `Merchant refused self-serve cancel: ${cancel.reason ?? "no reason given"}`, null);
   }
+  if (!Number.isSafeInteger(cancel.refund_amount) || cancel.refund_amount <= 0) {
+    return finish("refund_pending", "pending", "Merchant cancellation did not include a positive refund amount", null);
+  }
+  if (cancel.refund_amount !== action.amount) {
+    return finish(
+      "refund_pending",
+      "pending",
+      `Merchant offered ${cancel.refund_amount}; expected the full ${action.amount} refund`,
+      null,
+    );
+  }
 
   // refundOnce: one idempotency key per action and no refund if Stripe already shows one.
   const r = await refundOnce(payments, action, cancel.refund_amount);

@@ -60,7 +60,7 @@ export const logIntent = server.tool(
     outputSchema: logIntentOutput,
     annotations: writeHints,
   },
-  handler(logIntentInput, tools.log_intent),
+  handler(logIntentInput, tools.log_intent, { toolName: "log_intent" }),
 );
 
 export const reversibility = server.tool(
@@ -75,7 +75,7 @@ export const reversibility = server.tool(
     outputSchema: reversibilityOutput,
     annotations: readHints,
   },
-  handler(reversibilityInput, tools.reversibility),
+  handler(reversibilityInput, tools.reversibility, { toolName: "reversibility" }),
 );
 
 export const review = server.tool(
@@ -90,7 +90,7 @@ export const review = server.tool(
     outputSchema: reviewOutput,
     annotations: readHints,
   },
-  handler(reviewInput, tools.review),
+  handler(reviewInput, tools.review, { toolName: "review" }),
 );
 
 export const undo = server.tool(
@@ -105,7 +105,7 @@ export const undo = server.tool(
     outputSchema: undoOutput,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   },
-  handler(undoInput, tools.undo),
+  handler(undoInput, tools.undo, { toolName: "undo" }),
 );
 
 export const getChain = server.tool(
@@ -126,7 +126,7 @@ export const getChain = server.tool(
     },
     annotations: readHints,
   },
-  handler(getChainInput, tools.get_chain),
+  handler(getChainInput, tools.get_chain, { toolName: "get_chain" }),
 );
 
 export const listChains = server.tool(
@@ -141,7 +141,7 @@ export const listChains = server.tool(
     outputSchema: listChainsOutput,
     annotations: readHints,
   },
-  handler(listChainsInput, tools.list_chains),
+  handler(listChainsInput, tools.list_chains, { toolName: "list_chains" }),
 );
 
 server.resource(
@@ -275,21 +275,9 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
         if (typeof body === "string") return bad(body);
         const action = { ...body.action, source: "email", state: "found", received_at: clock.now() } as Action;
         if (!(await runtime.store.getIntent(action.task_id))) return bad(`Unknown task ${action.task_id}`);
-        // Let the fake Stripe and the stand-in airline know about the booking, so self-serve undo can run.
+        // Legacy direct confirmations still register fake charges. The normal scripted path books through
+        // the real merchant routes, which already own the order and its charge.
         runtime.fakePayments?.addCharge(body.stripe_charge_id, action.action_id, action.amount);
-        runtime.merchants.bookings.set(action.ref, {
-          request: {
-            merchant_id: action.merchant,
-            task_id: action.task_id,
-            task_email: body.task_email,
-            item: action.summary,
-            ...(action.dates ? { dates: action.dates } : {}),
-            amount: action.amount,
-            booked_at: body.action.received_at,
-          },
-          charge_id: body.stripe_charge_id,
-          cancelled: false,
-        });
         await runtime.proxy.onAction(action);
         return { status: 200, body: { ok: true, action_id: action.action_id } };
       },

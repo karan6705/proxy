@@ -109,11 +109,22 @@ export function createProxy(deps: ProxyDeps): Proxy {
     const byId = new Map(actions.map((a) => [a.action_id, a]));
     const mismatches = logic.compare(intent, actions);
     const traced = logic.trace(intent, actions, mismatches);
+    const existingChains = await store.listChains(task_id);
+    const claimedExisting = new Set<ChainId>();
     const now = clock.now();
 
     const saved: Chain[] = [];
     for (const t of traced) {
-      const existing = await store.getChain(t.chain_id);
+      const exact = await store.getChain(t.chain_id);
+      const existing = exact ?? existingChains
+        .filter((candidate) => !claimedExisting.has(candidate.chain_id))
+        .map((candidate) => ({
+          candidate,
+          overlap: candidate.action_ids.filter((id) => t.action_ids.includes(id)).length,
+        }))
+        .filter(({ overlap }) => overlap > 0)
+        .sort((a, b) => b.overlap - a.overlap)[0]?.candidate;
+      if (existing) claimedExisting.add(existing.chain_id);
       // The tightest window across the chain's actions.
       const windows = t.action_ids
         .map((id) => byId.get(id))
@@ -123,6 +134,9 @@ export function createProxy(deps: ProxyDeps): Proxy {
         .sort();
       const chain: Chain = {
         ...t,
+        // trace derives ids from the root. A late booked action can replace a message root, but callers
+        // and alerts must keep referring to the chain id that was already published.
+        chain_id: existing?.chain_id ?? t.chain_id,
         window_ends_at: windows[0] ?? null,
         // Keep what the orchestrator already did with this chain.
         state: existing?.state ?? t.state,
