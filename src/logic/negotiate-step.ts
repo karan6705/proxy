@@ -86,6 +86,9 @@ export function negotiateStep(
   const ignored_text = collectIgnoredText(message);
   const unchanged = (): NegotiateStepOutcome => ({ next_state: state, ignored_text });
   const next = (patch: Partial<NegotiationState>): NegotiationState => ({ ...state, ...patch });
+  // The round Proxy counts from. Proxy's own record wins when the merchant's claimed round is lower, so a merchant
+  // cannot hold the negotiation inside the 3-round limit by repeating "round 1".
+  const currentRound = Math.max(state.round, message.round);
 
   // Not this negotiation, or Proxy is not waiting on the merchant: nothing to decide.
   if (message.negotiation_id !== state.negotiation_id || !WAITING_ON_MERCHANT.has(state.state)) {
@@ -98,16 +101,16 @@ export function negotiateStep(
   }
 
   const askHuman = (counter: { kind: CounterKind; amount: number }): NegotiateStepOutcome => {
-    const outgoing: AskHumanMsg = { ...envelope(state, message.round, message), type: "ask_human", counter };
+    const outgoing: AskHumanMsg = { ...envelope(state, currentRound, message), type: "ask_human", counter };
     return {
-      next_state: next({ state: "human_decision", round: message.round, last_counter: counter }),
+      next_state: next({ state: "human_decision", round: currentRound, last_counter: counter }),
       outgoing,
       ignored_text,
     };
   };
 
   const acceptCounter = (counter: { kind: CounterKind; amount: number }): NegotiateStepOutcome => {
-    const round = message.round + 1;
+    const round = currentRound + 1;
     if (round > MAX_ROUNDS) {
       return askHuman(counter);
     }
@@ -116,7 +119,7 @@ export function negotiateStep(
   };
 
   const pushBack = (counter: { kind: CounterKind; amount: number }, reason: string): NegotiateStepOutcome => {
-    const round = message.round + 1;
+    const round = currentRound + 1;
     // Push back at most once, and never past the round limit. After that the human decides.
     if (state.push_backs_used >= MAX_PUSH_BACKS || round > MAX_ROUNDS) {
       return askHuman(counter);
@@ -140,24 +143,24 @@ export function negotiateStep(
 
   switch (message.type) {
     case "deny":
-      return { next_state: next({ state: "denied", round: message.round }), ignored_text };
+      return { next_state: next({ state: "denied", round: currentRound }), ignored_text };
 
     case "accept": {
       const amount = message.refund_amount;
       // Money only counts if it is a positive amount no larger than the price. Zero is store credit, not a refund.
       if (!isMoney(amount, state.order_amount)) {
-        return { next_state: next({ state: "failed", round: message.round }), ignored_text };
+        return { next_state: next({ state: "failed", round: currentRound }), ignored_text };
       }
       if (state.state === "accepted") {
         // The merchant is confirming the counter Proxy accepted. It must not confirm less than that.
         const agreed = state.last_counter?.amount ?? amount;
         return amount >= agreed
-          ? { next_state: next({ state: "refund_pending", round: message.round }), ignored_text }
-          : { next_state: next({ state: "failed", round: message.round }), ignored_text };
+          ? { next_state: next({ state: "refund_pending", round: currentRound }), ignored_text }
+          : { next_state: next({ state: "failed", round: currentRound }), ignored_text };
       }
       // The merchant accepted Proxy's request outright. Judge the amount like any other refund offer.
       if (amount === state.order_amount) {
-        return { next_state: next({ state: "refund_pending", round: message.round }), ignored_text };
+        return { next_state: next({ state: "refund_pending", round: currentRound }), ignored_text };
       }
       return judgePartialRefund({ kind: "partial_refund", amount });
     }
