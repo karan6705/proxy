@@ -39,22 +39,24 @@ describe("merchant routes: shape", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("gives agents only to merchants that have one, and support desks only to the transfer company", () => {
+  it("gives agents only to merchants that have one, and support desks only to the transfer company and the host", () => {
     const { routes } = setup();
     const paths = routes.map((r) => r.path);
     expect(paths).toContain("/merchants/hotel/agent");
     expect(paths).not.toContain("/merchants/airline/agent");
     expect(paths).not.toContain("/merchants/transfer/agent");
     expect(paths).toContain("/merchants/transfer/support");
+    expect(paths).toContain("/merchants/host/support");
+    expect(paths).not.toContain("/merchants/host/agent");
     expect(paths).not.toContain("/merchants/airline/support");
     expect(paths).not.toContain("/merchants/hotel/support");
   });
 
-  it("lists the three merchants", async () => {
+  it("lists the four merchants", async () => {
     const { routes } = setup();
     const response = await call(routes, "GET", "/merchants");
     expect(response.status).toBe(200);
-    expect((response.body as { merchants: { merchant_id: string }[] }).merchants.map((m) => m.merchant_id)).toEqual(["airline", "hotel", "transfer"]);
+    expect((response.body as { merchants: { merchant_id: string }[] }).merchants.map((m) => m.merchant_id)).toEqual(["airline", "hotel", "transfer", "host"]);
   });
 });
 
@@ -218,5 +220,43 @@ describe("merchant routes: errors", () => {
     expect(response.status).toBe(500);
     expect(JSON.stringify(response.body)).not.toContain("secret");
     expect(response.body).toMatchObject({ error: "internal" });
+  });
+});
+
+describe("merchant routes: host correction", () => {
+  it("books the agent's message for $0, then takes the correction over the support route", async () => {
+    const { routes, fake, merchants } = setup();
+    const booked = await call(routes, "POST", "/merchants/host/book", {
+      task_id: "task_nyc",
+      task_email: "task_nyc@tasks.proxy.example",
+      item: "Arrival email to the host: arriving 2026-11-03",
+      dates: { start: "2026-11-03" },
+      amount: 0,
+    });
+    expect(booked.status).toBe(200);
+    const { ref } = booked.body as { ref: string };
+    expect(fake.charges).toHaveLength(0);
+
+    const corrected = await call(routes, "POST", "/merchants/host/support", {
+      from: "proxy@tasks.proxy.example",
+      subject: `Correction to ${ref}`,
+      body: `Please correct ${ref}: I arrive 2026-11-13.`,
+    });
+    expect(corrected.status).toBe(200);
+    expect(corrected.body).toMatchObject({ approved: true, ref, refund_amount: 0 });
+    expect(fake.emails.at(-1)?.to).toBe("proxy@tasks.proxy.example");
+    expect(merchants.getOrder(ref)?.status).toBe("corrected");
+  });
+
+  it("answers 400 for a message with a negative amount", async () => {
+    const { routes } = setup();
+    const response = await call(routes, "POST", "/merchants/host/book", {
+      task_id: "task_nyc",
+      task_email: "task_nyc@tasks.proxy.example",
+      item: "x",
+      dates: { start: "2026-11-03" },
+      amount: -5,
+    });
+    expect(response.status).toBe(400);
   });
 });
