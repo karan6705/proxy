@@ -30,6 +30,11 @@ export interface ProxyDeps {
   params: Params;
   /** Preferences applied when log_intent omits them (the demo can override). */
   defaultPreferences: Preferences;
+  /**
+   * With PROXY_DEMO_ROUTES=1, every task reuses this pre-created Inkbox identity instead of getting its
+   * own, so the demo needs no new identities. Null outside the demo.
+   */
+  demoTaskId: TaskId | null;
 }
 
 export interface Proxy extends OrchestratorHooks {
