@@ -19,6 +19,18 @@
 
 ## Karan
 
+### Public URL for Inkbox webhooks (until the Manufact deploy is up)
+Inkbox can't reach `localhost`, so `/inkbox/inbound`, `/inkbox/text` and `/inkbox/imessage` need a public URL.
+1. **mcp-use's built-in tunnel (try first):** `npm run dev -- --tunnel`. It prints a public URL that forwards to the whole local server, webhooks included.
+2. **ngrok (fallback):** run `npm run dev`, then `ngrok http 3000`, and use the `https://...ngrok...` URL it prints.
+3. **Inkbox's own Tunnels API** is listed in their docs (inkbox.ai/docs/api/tunnels) but nobody has tested it. Use 1 or 2.
+
+Then subscribe with that URL (Sarah's snippet; the first subscription on an identity returns its signing secret once, so put it in `.env` as `INKBOX_WEBHOOK_SECRET`):
+- Each task identity (or `task-demo` for the demo), event `message.received`, URL `https://<public>/inkbox/inbound`.
+- `proxy-agent`, event `text.received` to `https://<public>/inkbox/text`, and `imessage.received` to `https://<public>/inkbox/imessage`.
+
+The tunnel URL changes every run, so re-subscribe after restarting it. `WEBHOOK_URL=https://<public>/inkbox/inbound node --env-file=.env src/inkbox/check.mjs` tests inbound delivery end to end. Without a tunnel, `INKBOX_DRY_RUN=1` accepts unsigned test posts to the same routes.
+
 ### How to ship the MCP App (live chain) with mcp-use 2.10.1
 - **Status:** the live-chain widget is at `src/app/live-chain/` and shown by `get_chain`. It polls `get_chain` every 2 s and turns a row green only when `stripe_verified` is true.
 - **Known limit:** `npm run dev` can't load views from `src/app/`, because the mcp-use 2.10.1 dev server only forwards `/views/...` paths to Vite. To see the widget, use `npm run preview` (build, then start with the inspector at `/inspector`). Deploys use the build, so they're unaffected.
