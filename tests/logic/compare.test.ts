@@ -162,3 +162,38 @@ describe("compare: duplicates", () => {
     expect(compare(roomy, [...demoActions(false), again])).toEqual([]);
   });
 });
+
+describe("compare: clean tasks raise no alarm", () => {
+  it("a monthly SaaS plan inside the budget, when monthly was asked for", () => {
+    const intent = demoIntent({ constraints: { must_haves: ["term:monthly"], budget_total: 3000 } });
+    expect(compare(intent, [saas("Acme Pro, monthly", { amount: 2000 })])).toEqual([]);
+  });
+
+  it("the right store item at exactly the budget", () => {
+    const intent = demoIntent({ constraints: { must_haves: ["item:rain jacket", "size:M"], budget_total: 8900 } });
+    const jacket = saas("Rain jacket, size M", { action_id: "act_jacket", merchant: "store", category: "store", amount: 8900, ref: "STO-1" });
+    expect(compare(intent, [jacket])).toEqual([]);
+  });
+
+  it("a one-day conference with the flight and the transfer on that day", () => {
+    const intent = demoIntent({ constraints: { dates: { start: "2026-11-13" }, budget_total: 100000 } });
+    const [flight, transfer] = demoActions(false);
+    expect(compare(intent, [flight, transfer])).toEqual([]);
+  });
+
+  it("a stay on the first and last allowed day", () => {
+    const hotel = demoActions(false).find((a) => a.category === "hotel") as Action;
+    expect(hotel.dates).toEqual({ start: "2026-11-13", end: "2026-11-16" });
+    expect(compare(demoIntent(), [hotel])).toEqual([]);
+  });
+
+  it("an intent with nothing to check against", () => {
+    const intent = demoIntent({ constraints: {} });
+    expect(compare(intent, demoActions(true))).toEqual([]);
+  });
+
+  it("free-text must-haves and unrelated categories never trigger an item mismatch", () => {
+    const intent = demoIntent({ constraints: { must_haves: ["aisle seat if possible", "vegetarian meal"], dates: { start: "2026-11-13", end: "2026-11-16" } } });
+    expect(compare(intent, demoActions(false))).toEqual([]);
+  });
+});
