@@ -65,6 +65,12 @@ async function captureFlight(task_id: string) {
   return flight;
 }
 
+async function chainIdFor(task_id: string) {
+  const chain = (await rt.store.listChains(task_id))[0];
+  if (!chain) throw new Error(`Expected a chain for ${task_id}`);
+  return chain.chain_id;
+}
+
 describe("tools wired to the orchestrator", () => {
   it("log_intent creates the intent and task address, idempotently", async () => {
     const a = await logTask();
@@ -184,7 +190,7 @@ describe("tools wired to the orchestrator", () => {
     expect(rt.fakePayments?.refunds.size).toBe(1);
 
     // The widget's view-only _meta: recovered money only for Stripe-verified actions, plus each window.
-    const chain = await tools.get_chain({ chain_id: `chain_${task_id}` });
+    const chain = await tools.get_chain({ chain_id: await chainIdFor(task_id) });
     expect(chain.structuredContent).toMatchObject({ ok: true, actions: [{ action_id: "act_flight", stripe_verified: true }] });
     expect("_meta" in chain && chain._meta).toMatchObject({ server_now: clock.now(), recovered: { act_flight: 41_200 } });
     expect("_meta" in chain && chain._meta.windows.act_flight).toBe("2026-10-26T10:00:00.000Z");
@@ -230,7 +236,7 @@ describe("tools wired to the orchestrator", () => {
     expect(frozen).toMatchObject({ accepted: [], requires_human: ["act_flight"] });
     expect(rt.fakePayments?.refunds.size).toBe(0);
 
-    await rt.proxy.onHumanReply({ kind: "keep", chain_id: `chain_${task_id}`, received_at: clock.now() });
+    await rt.proxy.onHumanReply({ kind: "keep", chain_id: await chainIdFor(task_id), received_at: clock.now() });
     const after = (await tools.undo({ action_ids: ["act_flight"], reason: "wrong date" })).structuredContent;
     expect(after).toMatchObject({ accepted: ["act_flight"] });
   });
@@ -238,8 +244,9 @@ describe("tools wired to the orchestrator", () => {
   it("a correction waits for confirmation instead of acting", async () => {
     const { task_id } = await logTask();
     await captureFlight(task_id);
-    await rt.proxy.onHumanReply({ kind: "correction", chain_id: `chain_${task_id}`, corrected_text: "ugh no the 13th", received_at: clock.now() });
-    expect(rt.proxy.pendingCorrections.get(`chain_${task_id}`)?.corrected_text).toBe("ugh no the 13th");
+    const chain_id = await chainIdFor(task_id);
+    await rt.proxy.onHumanReply({ kind: "correction", chain_id, corrected_text: "ugh no the 13th", received_at: clock.now() });
+    expect(rt.proxy.pendingCorrections.get(chain_id)?.corrected_text).toBe("ugh no the 13th");
     expect((await rt.store.getAction("act_flight"))?.state).toBe("found");
   });
 

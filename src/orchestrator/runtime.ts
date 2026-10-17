@@ -4,6 +4,7 @@
 import { createAnthropicExtractor, createCapture, createInboundEmailRoute, deliverToCapture, type Capture } from "../capture/index.js";
 import { createStoreFromEnv } from "../db/index.js";
 import { createClient, createHumanChannel, createHumanRoutes, createInkbox, type HumanChannel } from "../inkbox/index.js";
+import { logic } from "../logic/index.js";
 import {
   addressMode,
   createInkboxDeliver,
@@ -18,7 +19,6 @@ import { createFakePayments } from "./fakes.js";
 import { createProxy, type DemoTask, type Proxy } from "./proxy.js";
 import { createSessions } from "./sessions.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
-import { createStandInLogic } from "./standin-logic.js";
 
 export interface Runtime {
   proxy: Proxy;
@@ -123,7 +123,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
 
   const proxy = createProxy({
     store,
-    logic: createStandInLogic(params.MIN_HOURS),
+    logic,
     inkbox,
     payments: fakePayments ? fakePayments.payments : createPayments(),
     merchants,

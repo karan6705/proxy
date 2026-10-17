@@ -179,6 +179,19 @@ export function createToolHandlers(getProxy: () => Proxy) {
           continue;
         }
         sessions.touch(action.task_id);
+        // A repeated undo is successful once the original attempt has been Stripe-verified.
+        // Real Logic intentionally omits settled actions from new mismatch plans, so handle
+        // this idempotent replay before asking Logic whether the action is still fixable.
+        if (action.state === "verified") {
+          const existingChain = (await store.listChains(action.task_id)).find((candidate) => candidate.action_ids.includes(id));
+          if (existingChain) {
+            accepted.push(id);
+            chain_id = existingChain.chain_id;
+          } else {
+            requires_human.push(id);
+          }
+          continue;
+        }
         // Enforce the self-undo rule here too, not just in review.
         const { mismatches, chains } = await p.refreshChains(action.task_id);
         const actions = await store.listActions(action.task_id);
