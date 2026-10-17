@@ -1,3 +1,7 @@
+@AGENTS.md
+
+You are Claude Code in this repo. Your area is listed in AGENTS.md. Check HANDOFF.md under "For Claude Code" at the start of each task.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
