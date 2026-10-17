@@ -179,6 +179,17 @@ Read `src/logic/compare.ts` and `tests/logic/compare.test.ts` on `origin/dhwanil
 - **No-alarm scenarios** (3 of them) look like the shapes already in the unit tests. Add adversarial clean tasks: a refund line, a total exactly at budget with a duplicate-looking pair, a SaaS plan with no term and no must-have, a message with `$0`.
 - **Same-ref resend** never reaches `compare` (capture dedupes by ref). Test it at the capture boundary, not as a `compare` scenario.
 
+### From Dhwanil: scenarios ready for your review (Sarah)
+`evals/scenarios.ts` has 34 scenarios. Every expected result is written by hand from the story and the human's real request, not copied from what the logic outputs. Please check them the way you offered, so the grader does not share `compare`'s blind spots. Run `npx tsx evals/run.ts` to see them against both arms and `evals/results/` for the raw log.
+
+What I did with your earlier points:
+- **Ground truth vs the logged intent:** a scenario has `intent` (what the human really asked) and an optional `logged_intent` (what the agent logged). Proxy compares against the logged one. S34 is the case where they differ: all four wrong bookings are counted as real mistakes that Proxy misses.
+- **Known misses and known false alarms are documented, and fail loudly if they stop being true.** S15 (price rose after the quote, still under budget: no quote to compare against), S34 (wrong logged intent), S33 (two real identical transfers look like a duplicate). They count in the totals: 44 real mistakes, 39 caught, 5 documented misses, 1 documented false alarm.
+- **The naive arm is labelled "scripted self-review"** in the CLI output and the raw log. What it notices follows each scenario's `assumption`, so those numbers are not a measured rate. Please look hard at the `assumption` lines: they are the soft spot.
+- **Your blind-spot list:** term wording now includes `P1Y`, `P12M`, `/yr`, `/mo`; a charge seen by both email and Stripe is counted once; `item:` and `size:` match whole words (`size:M` no longer matches "Medium"). Not done: the quoted-price gap (S15 documents it), and the two-identical-purchases false alarm (S33 documents it).
+- **Adversarial clean tasks:** S29 (total exactly at budget), S31 (SaaS receipt with no term), S32 (a $0 message), S28 (late confirmation). I did not add a refund line, because `Action.amount` has no negative case.
+- Money here is what the merchants agreed. Verifying it against Stripe test-mode objects, as you asked, happens in Layer 2 and the orchestrator, not in Layer 1.
+
 ### How the pieces plug in (for wiring at 5 PM)
 - `src/db`: `createStoreFromEnv()` (Supabase when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set, otherwise in memory). Run `src/db/schema.sql` once in the Supabase SQL editor; the `events` table rejects updates and deletes with a trigger.
 - `src/capture`: `createCapture({ store, hooks, clock, llm? })`; routes: `createInboundEmailRoute({ capture, fetchFullMessage })` at `POST /inkbox/inbound`. Mock merchants can use `deliverToCapture(capture)` as their `deliver`.
@@ -212,7 +223,7 @@ Merchants no longer refund. `selfServeCancel`, the hotel agent and the support d
 8. **Hotel behaviors:** fine as an option on `createMerchants`. The default stays the demo behavior.
 - **Task address:** use `@tasks.proxy.example` in tests (e.g. `task_nyc@tasks.proxy.example`) until Sarah reports the Inkbox format.
 ### Status from Dhwanil
-Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/` (`compare`, `trace`, `reversibility`, `plan_undo`, `rank`, `negotiate_step`), the rules table, the airline, hotel agent, transfer company and host merchants with `RouteHandler`s, the demo fixtures in `fixtures/demo/`, and a first Layer 1 scenario runner with a naive arm in `evals/` (5 of ~30 scenarios). Not started: the SaaS and store merchants, the prompt-injection merchant scenario, the other ~25 scenarios, Layer 2 (live agent), the scoreboard page. Sarah still needs to review the expected results in `evals/scenarios.ts`.
+Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/`; the airline, hotel agent, transfer company, host, SaaS vendor and store merchants with `RouteHandler`s; the demo fixtures in `fixtures/demo/`; and the Layer 1 scenario runner, grader and CLI in `evals/` with **34 scenarios** (`evals/scenarios.ts`) and a scripted-self-review naive arm. Not started: Layer 2 (live agent, needs the Anthropic key), the scoreboard page, time-to-alert and tokens metrics, and a live Inkbox run of the merchants (needs the keys). Waiting on Sarah's review of the expected results.
 
 ## Karan's Codex
 
