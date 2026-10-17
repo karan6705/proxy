@@ -156,3 +156,30 @@ export function taxiReservation(
     priceCurrency: "USD",
   };
 }
+
+/** schema.org Order, for purchases with no dates: a SaaS subscription or a store item. */
+export function orderConfirmation(
+  order: MerchantOrder,
+  seller: { name: string; url: string },
+  offer: { kind: "Service" | "Product"; billingDuration?: string },
+): JsonLdConfirmation {
+  const price = plainAmount(order.amount);
+  return {
+    "@context": "https://schema.org",
+    "@type": "Order",
+    orderNumber: order.ref,
+    orderStatus: "https://schema.org/OrderProcessing",
+    orderDate: order.booked_at,
+    seller: { "@type": "Organization", name: seller.name, url: seller.url },
+    customer: { "@type": "Person", email: order.task_email },
+    acceptedOffer: {
+      "@type": "Offer",
+      price,
+      priceCurrency: "USD",
+      itemOffered: { "@type": offer.kind, name: order.item },
+      ...(offer.billingDuration
+        ? { priceSpecification: { "@type": "UnitPriceSpecification", price, priceCurrency: "USD", billingDuration: offer.billingDuration } }
+        : {}),
+    },
+  };
+}
