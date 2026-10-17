@@ -170,15 +170,20 @@ function budgetCrossing(budget: number | undefined, ordered: Action[]): { action
   return null;
 }
 
+/** Whole-word, case-insensitive match, so size:M does not match "Medium" or "Women's". */
+function containsWord(text: string, value: string): boolean {
+  const escaped = value.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\w])${escaped}(?![\\w])`, "i").test(text);
+}
+
 function itemMismatches(constraints: IntentConstraints, action: Action): Mismatch[] {
   if (action.category !== "store" && action.category !== "saas") {
     return [];
   }
-  const summary = action.summary.toLowerCase();
   const found: Mismatch[] = [];
   for (const entry of constraints.must_haves ?? []) {
     const parsed = parseMustHave(entry);
-    if (parsed && ITEM_KEYS.has(parsed.key) && !summary.includes(parsed.value.toLowerCase())) {
+    if (parsed && ITEM_KEYS.has(parsed.key) && !containsWord(action.summary, parsed.value)) {
       found.push({
         action_id: action.action_id,
         field: "item",
