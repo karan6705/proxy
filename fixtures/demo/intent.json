@@ -1,0 +1,36 @@
+{
+  "log_intent": {
+    "goal": "NYC trip for the Nov 13 conference, under $1,500",
+    "constraints": {
+      "dates": {
+        "start": "2026-11-13",
+        "end": "2026-11-16"
+      },
+      "budget_total": 150000
+    },
+    "preferences": {
+      "no_store_credit": true,
+      "min_partial_refund_pct": 80,
+      "auto_undo": false
+    },
+    "idempotency_key": "demo-nyc-trip"
+  },
+  "intent": {
+    "task_id": "task_nyc",
+    "task_email": "task_nyc@tasks.proxy.example",
+    "goal": "NYC trip for the Nov 13 conference, under $1,500",
+    "constraints": {
+      "dates": {
+        "start": "2026-11-13",
+        "end": "2026-11-16"
+      },
+      "budget_total": 150000
+    },
+    "preferences": {
+      "no_store_credit": true,
+      "min_partial_refund_pct": 80,
+      "auto_undo": false
+    },
+    "created_at": "2026-10-17T09:00:00.000Z"
+  }
+}
