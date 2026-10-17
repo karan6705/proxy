@@ -154,7 +154,7 @@ export async function sendConfirmation(ctx: ModuleContext, spec: BookingSpec, re
     return false;
   }
   try {
-    await ctx.deps.deliver(spec.render(order));
+    await ctx.deps.deliver({ ...spec.render(order), identity: spec.info.merchant_id });
   } catch (cause) {
     throw new MerchantError("upstream_unavailable", `Could not deliver the confirmation for ${ref}: ${errorMessage(cause)}`);
   }
