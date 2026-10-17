@@ -11,6 +11,7 @@
     "dev": "mcp-use dev --entry src/server.ts --views-dir src/app",
     "build": "mcp-use build --entry src/server.ts --views-dir src/app",
     "start": "mcp-use start",
+    "preview": "mcp-use build --entry src/server.ts --views-dir src/app && mcp-use start --with-inspector",
     "deploy": "mcp-use deploy",
     "typecheck": "mcp-use typecheck --entry src/server.ts",
     "test": "vitest run",
@@ -21,6 +22,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
+    "@inkbox/sdk": "0.7.19",
     "@modelcontextprotocol/client": "^2.3.1",
     "mcp-use": "2.10.1",
     "react": "^19.2.7",

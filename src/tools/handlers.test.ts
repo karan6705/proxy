@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSimulatedClock } from "../orchestrator/clock.js";
 import { DEFAULT_PARAMS } from "../orchestrator/params.js";
 import { createRuntime, type Runtime } from "../orchestrator/runtime.js";
+import { createStandInInkbox } from "../orchestrator/standin-inkbox.js";
 import type { Action, SimulatedClock } from "../types.js";
 import { createToolHandlers } from "./handlers.js";
 
@@ -17,9 +18,9 @@ let rt: Runtime;
 let tools: ReturnType<typeof createToolHandlers>;
 
 beforeEach(() => {
-  delete process.env.STRIPE_SECRET_KEY;
   clock = createSimulatedClock(START);
-  rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES);
+  // No env: in-memory Store, stand-in Inkbox, fake Stripe. Nothing leaves the process.
+  rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, { env: {}, inkbox: createStandInInkbox() });
   tools = createToolHandlers(() => rt.proxy);
 });
 
@@ -66,6 +67,37 @@ describe("tools wired to the orchestrator", () => {
     expect(again.task_id).toBe(a.task_id);
     const conflict = await tools.log_intent({ ...INTENT, goal: "something else" });
     expect(conflict.structuredContent).toMatchObject({ ok: false, code: "idempotency_conflict", next_action: "fix_now" });
+  });
+
+  it("log_intent asks Inkbox for one identity per task", async () => {
+    const inkbox = createStandInInkbox();
+    const asked: string[] = [];
+    rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, {
+      env: {},
+      inkbox: { ...inkbox, createTaskAddress: async (id) => (asked.push(id), inkbox.createTaskAddress(id)) },
+    });
+    const a = await logTask();
+    const b = (await tools.log_intent({ ...INTENT, idempotency_key: "other" })).structuredContent;
+    expect(b.ok && b.task_id).not.toBe(a.task_id);
+    expect(asked).toEqual([a.task_id, b.ok ? b.task_id : ""]);
+    expect(asked.every((id) => /^[a-z0-9_]+$/.test(id))).toBe(true);
+  });
+
+  it("in demo mode every task reuses the demo identity, one task at a time", async () => {
+    rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, { env: { PROXY_DEMO_ROUTES: "1" }, inkbox: createStandInInkbox() });
+    const a = await logTask();
+    expect(a).toMatchObject({ task_id: "task_demo", task_email: "task_demo@tasks.proxy.example" });
+    expect((await logTask()).task_id).toBe("task_demo");
+    const other = (await tools.log_intent({ ...INTENT, idempotency_key: "second" })).structuredContent;
+    expect(other).toMatchObject({ ok: false, code: "upstream_unavailable", next_action: "stop" });
+  });
+
+  it("rejects task ids outside [a-z0-9_]", async () => {
+    rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, {
+      env: { PROXY_DEMO_ROUTES: "1", INKBOX_DEMO_TASK_ID: "Task-Demo" },
+      inkbox: createStandInInkbox(),
+    });
+    expect((await tools.log_intent(INTENT)).structuredContent).toMatchObject({ ok: false, code: "invalid_input" });
   });
 
   it("review returns not_found for an unknown task", async () => {
