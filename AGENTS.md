@@ -6,7 +6,7 @@ Proxy (repo folder: tripwire) is the undo layer for AI agents. Any agent calls i
 Hackathon: YC Make Something Agents Want. Submissions due Sunday 10 AM. Target tracks: Manufact (MCP server) and Inkbox (agent identity: email, text, phone, agent to agent).
 
 ## Stack
-TypeScript, Node 18+, mcp-use (Manufact), @inkbox/sdk, Stripe in test mode only, Supabase, @anthropic-ai/sdk.
+TypeScript, Node 22.22.2 or newer (required by mcp-use 2.10.1), mcp-use (Manufact), @inkbox/sdk, Stripe in test mode only, Supabase, @anthropic-ai/sdk.
 
 ## Three people work in this folder at the same time, each with their own coding agent
 Karan owns: src/server.ts, src/tools/, src/app/ (MCP App), src/stripe/, src/orchestrator/, src/types.ts (the shared contract), package.json, tsconfig.json.
@@ -26,6 +26,7 @@ Rules:
 - Commit only your own files with explicit paths (git add src/logic/...). Never use git add ., git add -A, git reset --hard, git checkout ., git stash, or force push.
 - Prefix commit messages with [core] for src/ work or [evals] for evals/, fixtures/ and tests/ work. Never mention Claude, Codex, AI or any assistant in commit messages, PR titles, PR descriptions or code comments. No Co-Authored-By or Generated-with lines. Run git pull --rebase before you push.
 - Secrets go in .env, which is never committed. Add every variable name to .env.example.
+- Never run "mcp-use client". It silently edits package.json. Test tools with npm run dev and the inspector instead.
 
 ## How to work
 - Hackathon speed: small working increments, demo path first. No coverage targets. Write tests only where they protect the demo.
