@@ -399,6 +399,13 @@ export interface EvidencePacket {
   mismatch: Mismatch;
   why_wrong: string;
   deadline: Timestamp;
+  /** Optional audit trail of communications relevant to the reversal or dispute. */
+  message_timeline?: Array<{
+    at: Timestamp;
+    channel: string;
+    direction: "inbound" | "outbound";
+    summary: string;
+  }>;
 }
 
 /** Fields on every protocol message. */

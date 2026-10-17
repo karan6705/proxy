@@ -49,14 +49,26 @@ async function logTask() {
 }
 
 async function captureFlight(task_id: string) {
-  const flight = action(task_id, { action_id: "act_flight", summary: "Flight SFO to JFK, Nov 3", amount: 41_200, ref: "AIR-1" });
-  rt.fakePayments?.addCharge("ch_1", "act_flight", 41_200);
-  rt.merchants.bookings.set("AIR-1", {
-    request: { merchant_id: "airline", task_id, task_email: "", item: "Flight", dates: { start: "2026-11-03" }, amount: 41_200, booked_at: clock.now() },
-    charge_id: "ch_1",
-    cancelled: false,
+  const booking = await rt.merchants.book({
+    merchant_id: "airline",
+    task_id,
+    task_email: `${task_id}@tasks.proxy.example`,
+    item: "Flight SFO to JFK, Nov 3",
+    dates: { start: "2026-11-03" },
+    amount: 41_200,
+    booked_at: clock.now(),
+    defer_confirmation: true,
   });
+  const flight = action(task_id, { action_id: "act_flight", summary: "Flight SFO to JFK, Nov 3", amount: 41_200, ref: booking.ref });
+  rt.fakePayments?.addCharge(booking.stripe_charge_id, "act_flight", 41_200);
   await rt.proxy.onAction(flight);
+  return flight;
+}
+
+async function chainIdFor(task_id: string) {
+  const chain = (await rt.store.listChains(task_id))[0];
+  if (!chain) throw new Error(`Expected a chain for ${task_id}`);
+  return chain.chain_id;
 }
 
 describe("tools wired to the orchestrator", () => {
@@ -178,7 +190,7 @@ describe("tools wired to the orchestrator", () => {
     expect(rt.fakePayments?.refunds.size).toBe(1);
 
     // The widget's view-only _meta: recovered money only for Stripe-verified actions, plus each window.
-    const chain = await tools.get_chain({ chain_id: `chain_${task_id}` });
+    const chain = await tools.get_chain({ chain_id: await chainIdFor(task_id) });
     expect(chain.structuredContent).toMatchObject({ ok: true, actions: [{ action_id: "act_flight", stripe_verified: true }] });
     expect("_meta" in chain && chain._meta).toMatchObject({ server_now: clock.now(), recovered: { act_flight: 41_200 } });
     expect("_meta" in chain && chain._meta.windows.act_flight).toBe("2026-10-26T10:00:00.000Z");
@@ -224,7 +236,7 @@ describe("tools wired to the orchestrator", () => {
     expect(frozen).toMatchObject({ accepted: [], requires_human: ["act_flight"] });
     expect(rt.fakePayments?.refunds.size).toBe(0);
 
-    await rt.proxy.onHumanReply({ kind: "keep", chain_id: `chain_${task_id}`, received_at: clock.now() });
+    await rt.proxy.onHumanReply({ kind: "keep", chain_id: await chainIdFor(task_id), received_at: clock.now() });
     const after = (await tools.undo({ action_ids: ["act_flight"], reason: "wrong date" })).structuredContent;
     expect(after).toMatchObject({ accepted: ["act_flight"] });
   });
@@ -232,15 +244,16 @@ describe("tools wired to the orchestrator", () => {
   it("a correction waits for confirmation instead of acting", async () => {
     const { task_id } = await logTask();
     await captureFlight(task_id);
-    await rt.proxy.onHumanReply({ kind: "correction", chain_id: `chain_${task_id}`, corrected_text: "ugh no the 13th", received_at: clock.now() });
-    expect(rt.proxy.pendingCorrections.get(`chain_${task_id}`)?.corrected_text).toBe("ugh no the 13th");
+    const chain_id = await chainIdFor(task_id);
+    await rt.proxy.onHumanReply({ kind: "correction", chain_id, corrected_text: "ugh no the 13th", received_at: clock.now() });
+    expect(rt.proxy.pendingCorrections.get(chain_id)?.corrected_text).toBe("ugh no the 13th");
     expect((await rt.store.getAction("act_flight"))?.state).toBe("found");
   });
 
   it("a repeated confirmation with the same ref does not create a second action", async () => {
     const { task_id } = await logTask();
-    await captureFlight(task_id);
-    await rt.proxy.onAction(action(task_id, { action_id: "act_flight_dup", summary: "Flight SFO to JFK, Nov 3", amount: 41_200, ref: "AIR-1" }));
+    const flight = await captureFlight(task_id);
+    await rt.proxy.onAction(action(task_id, { action_id: "act_flight_dup", summary: "Flight SFO to JFK, Nov 3", amount: 41_200, ref: flight.ref }));
     expect(await rt.store.listActions(task_id)).toHaveLength(1);
   });
 

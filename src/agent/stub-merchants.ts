@@ -28,9 +28,15 @@ interface PendingBooking {
 }
 
 const MERCHANTS: MerchantInfo[] = [
-  { merchant_id: "airline", name: "Demo Airline", category: "flight", has_agent: true, agent_identity: "airline-agent" },
+  { merchant_id: "airline", name: "Demo Airline", category: "flight", has_agent: false },
   { merchant_id: "hotel", name: "Demo Hotel", category: "hotel", has_agent: true, agent_identity: "hotel-agent" },
-  { merchant_id: "transfer", name: "Demo Transfer", category: "transfer", has_agent: false, support_email: "support@transfer.example" },
+  {
+    merchant_id: "transfer",
+    name: "Demo Transfer",
+    category: "transfer",
+    has_agent: false,
+    support_email: "support@metrotransfer.example",
+  },
 ];
 
 function confirmationType(merchantId: string): JsonLdConfirmation["@type"] {
