@@ -19,7 +19,7 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 
 ## Karan's Codex
 
-- Codex now works in ../tripwire-codex on branch karan/codex, and Karan merges it into main. Run `npm ci` there first; node_modules is not shared between worktrees.
+- Codex now works in ../tripwire-codex on branch karan-codex (renamed from karan/codex, which git cannot hold next to a branch named karan). It merges into karan, not main: commit, then run `git fetch && git rebase origin/karan`, and Karan merges it. Run `npm ci` there first; node_modules is not shared between worktrees.
 
 ### Scripted demo: end the agent's session before the late confirmations
 - Team rule: the agent may only self-undo free, full-refund, self-serve actions during its session. In the scripted demo the whole chain must go to the human.
