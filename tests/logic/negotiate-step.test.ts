@@ -351,3 +351,26 @@ describe("negotiate_step: purity", () => {
     expect(second).toEqual(first);
   });
 });
+
+describe("negotiate_step: the second counter after a push back (seen in the live hotel run)", () => {
+  const second = counter("partial_refund", 54400, 2);
+
+  it("returns accept_counter when the driver kept the state from the push back", () => {
+    const result = negotiateStep(state({ state: "pushed_back", round: 2, push_backs_used: 1, last_counter: { kind: "store_credit", amount: 64000 } }), second, PREFERENCES);
+    expect(result.outgoing).toMatchObject({ type: "accept_counter", round: 3 });
+  });
+
+  it("returns accept_counter even when the driver never updated its state after the push back", () => {
+    for (const stale of [state({ state: "requested", round: 0 }), state({ state: "countered", round: 1 }), state({ state: "pushed_back", round: 1, push_backs_used: 0 })]) {
+      expect(negotiateStep(stale, second, PREFERENCES).outgoing).toMatchObject({ type: "accept_counter", round: 3 });
+    }
+  });
+
+  it("returns accept_counter for the exact 85% offer, and for any offer at or above the 80% minimum", () => {
+    const pushed = state({ state: "pushed_back", round: 2, push_backs_used: 1 });
+    for (const amount of [51200, 54400, 63999]) {
+      expect(negotiateStep(pushed, counter("partial_refund", amount, 2), PREFERENCES).outgoing?.type).toBe("accept_counter");
+    }
+    expect(negotiateStep(pushed, counter("partial_refund", 51199, 2), PREFERENCES).outgoing?.type).toBe("ask_human");
+  });
+});
