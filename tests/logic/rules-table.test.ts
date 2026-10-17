@@ -5,6 +5,7 @@ import {
   type RuleKey,
   costOf,
   getRule,
+  ruleKeyForAction,
   ruleKeyForCategory,
 } from "../../src/logic/rules-table.js";
 import type { Action, ActionCategory, RouteKind } from "../../src/types.js";
@@ -143,5 +144,22 @@ describe("rules table agrees with reversibility()", () => {
     const message = plain({ category: "message", merchant: "host", amount: 0 });
     expect(reversibility(message, DEMO_NOW)).toMatchObject({ kind: "correct_message", window_ends_at: null });
     expect(getRule("message").window).toBeNull();
+  });
+});
+
+describe("rules table: keyed by merchant, then category", () => {
+  it("uses the entry named by the merchant id when there is one", () => {
+    expect(ruleKeyForAction({ merchant: "final_sale", category: "store" })).toBe("final_sale");
+  });
+
+  it("falls back to the category for any other merchant", () => {
+    expect(ruleKeyForAction({ merchant: "Acme Outfitters", category: "store" })).toBe("store");
+    expect(ruleKeyForAction({ merchant: "Skyline Demo Air", category: "flight" })).toBe("airline");
+  });
+
+  it("makes a final-sale item not reversible, whatever its category's window says", () => {
+    const item: Action = { ...flight, merchant: "final_sale", category: "store", dates: undefined, amount: 9900 };
+    expect(reversibility(item, item.received_at)).toMatchObject({ kind: "none", window_ends_at: null, refundable: false, cost_to_reverse: 0 });
+    expect(reversibility(item, item.received_at).rule).toContain("not reversible");
   });
 });

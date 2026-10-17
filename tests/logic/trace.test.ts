@@ -93,3 +93,34 @@ describe("trace: separate mistakes stay separate", () => {
     expect(chains[0].window_ends_at).toBeNull();
   });
 });
+
+describe("trace: the root is the earliest booked action (Contract v2)", () => {
+  const intent = demoIntent();
+
+  it("makes the flight the root in the demo", () => {
+    const actions = demoActions(true);
+    expect(trace(intent, actions, compare(intent, actions))[0].root_action_id).toBe("act_flight");
+  });
+
+  it("does not make a message the root, even if the message was received first", () => {
+    const earlyMessage = demoActions(true).map((a) => (a.category === "message" ? { ...a, received_at: "2026-10-17T08:00:00.000Z" } : a));
+    const [chain] = trace(intent, earlyMessage, compare(intent, earlyMessage));
+    expect(chain.root_action_id).toBe("act_flight");
+    expect(chain.chain_id).toBe("chain_act_flight");
+    // The message is still in the chain, in received order, ahead of the flight.
+    expect(chain.action_ids[0]).toBe("act_host_email");
+  });
+
+  it("makes a message the root only when the chain has no booked action", () => {
+    const messageOnly = demoActions(true).filter((a) => a.category === "message");
+    const [chain] = trace(intent, messageOnly, compare(intent, messageOnly));
+    expect(chain.root_action_id).toBe("act_host_email");
+  });
+
+  it("picks the earliest booked action among several", () => {
+    const withoutFlight = demoActions(true).filter((a) => a.category !== "flight");
+    const [chain] = trace(intent, withoutFlight, compare(intent, withoutFlight));
+    // transfer 09:20 is earlier than hotel 11:05
+    expect(chain.root_action_id).toBe("act_transfer");
+  });
+});
