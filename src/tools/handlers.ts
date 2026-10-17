@@ -226,6 +226,14 @@ export function createToolHandlers(getProxy: () => Proxy) {
         if (merchants) {
           await runSelfServeRoute({ merchants, payments: p.deps.payments, store, clock }, chain, { ...action, state: "planned" });
         }
+        // The agent's undo covers only this action. If anything else in the chain is still open, the chain goes
+        // back to waiting for the human (and gets its alert); if everything is settled, it is reversed.
+        const after = await store.getChain(chain.chain_id);
+        if (after?.state === "undoing") {
+          const states = await Promise.all(after.action_ids.map(async (aid) => (await store.getAction(aid))?.state));
+          const settled = states.every((st) => st === "verified" || st === "kept");
+          await store.upsertChain({ ...after, state: settled ? "reversed" : "detected" });
+        }
       }
       await p.logEvent({ kind: "tool", tool_name: "undo", chain_id, outcome: `accepted:${accepted.length}` });
       return ok({ accepted, requires_human, chain_id });
