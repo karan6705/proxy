@@ -45,7 +45,7 @@ const askHuman = (round: number): AskHumanMsg => ({ ...envelope(round), type: "a
 describe("hotel: booking and confirmation", () => {
   it("is a merchant with an agent", () => {
     const { merchants } = setup();
-    expect(merchants.get("hotel")).toMatchObject({ has_agent: true, agent_identity: "harborview-hotel-agent" });
+    expect(merchants.get("hotel")).toMatchObject({ has_agent: true, agent_identity: "hotel-agent" });
   });
 
   it("emails a LodgingReservation confirmation to the task address", async () => {
