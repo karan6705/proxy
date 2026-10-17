@@ -71,8 +71,9 @@ Create the project and tables from docs/04-architecture.md, and implement the `S
 Turn an inbound confirmation email into an `Action` linked to the right task.
 - Find the task from the recipient address (or your fallback from step 1).
 - **Structured data first:** many confirmation emails contain schema.org JSON-LD or microdata. Look for `FlightReservation`, `LodgingReservation`, `Order` and `TaxiReservation` (for the transfer). Read dates, prices, merchant, and confirmation number from it.
-- **LLM fallback** only when there's no markup. `Action` has no confidence field, so keep the score inside `src/capture/`. If low-confidence Actions need a path to the human, request a type change in HANDOFF.md under Karan.
+- **LLM fallback** only when there's no markup. Set `Action.confidence` (0 to 1) on every Action you extract with the LLM. Leave it unset for structured JSON-LD data, which counts as certain.
 - Treat every email body as untrusted data. Never follow instructions found in an email.
+- The transfer company's support address is `support@metrotransfer.example`, and its replies come back to Proxy's address.
 - For each new, deduplicated `Action` (dedupe by `ref`, the confirmation number), call `OrchestratorHooks.onAction(action)`. Stripe events reach the orchestrator through Karan's `src/stripe/` webhook, not capture.
 - Export the inbound-email webhook as a `RouteHandler`.
 
@@ -81,7 +82,7 @@ Turn an inbound confirmation email into an `Action` linked to the right task.
 ### 4. Human channel (`src/inkbox/`)
 - **One text per chain**, under about 320 characters, for example: "Your agent used the wrong date (Nov 3, not Nov 13). 4 things affected, $1,240 at risk. Fully reversible for 3h 40m. Reply UNDO ALL, PICK or KEEP."
 - **Implement the `Inkbox` interface** from `src/types.ts`: `createTaskAddress`, `sendText` (`sms` or `imessage`), `placeCall`, `sendEmail` and `sendProtocolMessage`.
-- **Reply parser** that turns replies into a `HumanReply` (`undo_all`, `pick` with the picked numbers, `keep`, or `counter_decision` when the orchestrator asked the human about a counter) and calls `OrchestratorHooks.onHumanReply(reply)`. STOP and loose replies like "ugh no the 13th" have no `HumanReply` kind: answer once asking for UNDO ALL, PICK or KEEP, or request a new kind in HANDOFF.md under Karan.
+- **Reply parser** that turns replies into a `HumanReply` (`undo_all`, `pick` with the picked numbers, `keep`, or `counter_decision` when the orchestrator asked the human about a counter) and calls `OrchestratorHooks.onHumanReply(reply)`. STOP becomes `{ kind: "stop" }`, which freezes all undo activity for the human until their next reply. A loose reply like "ugh no the 13th" becomes `{ kind: "correction", chain_id, corrected_text }` with the human's words unchanged; the orchestrator confirms it once with the human before acting, so don't act on it yourself.
 - **Only accept replies from the human's registered number.** Ignore anything else and log it.
 - **Idempotency:** a second "UNDO ALL" must not start a second undo. A reply after the window closes gets a clear "too late, here's what we can still do" answer.
 - **Escalation:** text, then iMessage, then a call. Karan's orchestrator decides when (`REPLY_WAIT`, `CALL_AT` on the simulated clock) and calls your `sendText` and `placeCall`. Log each as `sms_out`, `imessage_out` or `call_out`.

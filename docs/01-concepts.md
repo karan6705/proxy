@@ -87,7 +87,7 @@ These are the rules our mock merchants use. They are based on common real-world 
 | Ordered the wrong physical item | The store's return window | Starts the return, gets the label, tracks the refund |
 | Emailed a person the wrong thing | Immediately | Sends a correction |
 
-The demo uses mock merchants for all of these. Our airline and hotel have their own merchant agents, and the others do not, so we show both paths.
+The demo uses mock merchants for all of these. Our hotel has its own merchant agent; the airline cancels self-serve under the 24-hour rule, and the others are reached by support email, so we show every path.
 
 ## How the human stays in control
 

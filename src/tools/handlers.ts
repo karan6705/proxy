@@ -55,9 +55,9 @@ export function createToolHandlers(getProxy: () => Proxy) {
       .map((a) => a.action_id);
   }
 
-  async function planFor(p: Proxy, chains: Chain[], preferences: Intent["preferences"]): Promise<PlanStep[]> {
+  function planFor(p: Proxy, chains: Chain[], actions: Action[], preferences: Intent["preferences"]): PlanStep[] {
     const now = p.deps.clock.now();
-    return chains.flatMap((c) => p.deps.logic.plan_undo(c, preferences, now));
+    return chains.flatMap((c) => p.deps.logic.plan_undo(c, actions.filter((a) => c.action_ids.includes(a.action_id)), preferences, now));
   }
 
   return {
@@ -114,7 +114,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
       sessions.touch(task_id);
       const { mismatches, chains } = await p.refreshChains(task_id);
       const actions = await store.listActions(task_id);
-      const plan = await planFor(p, chains, intent.preferences);
+      const plan = planFor(p, chains, actions, intent.preferences);
       await p.logEvent({ kind: "tool", tool_name: "review", task_id, outcome: mismatches.length ? "chain_open" : "clean" });
       return ok({
         status: mismatches.length > 0 ? ("chain_open" as const) : ("clean" as const),
@@ -133,6 +133,11 @@ export function createToolHandlers(getProxy: () => Proxy) {
       let chain_id: string | null = null;
 
       for (const id of action_ids) {
+        // STOP from the human freezes all undo activity, including the agent's self-undo.
+        if (p.isFrozen()) {
+          requires_human.push(id);
+          continue;
+        }
         const action = await store.getAction(id);
         if (!action) {
           requires_human.push(id);
@@ -146,8 +151,8 @@ export function createToolHandlers(getProxy: () => Proxy) {
         sessions.touch(action.task_id);
         // Enforce the self-undo rule here too, not just in review.
         const { mismatches, chains } = await p.refreshChains(action.task_id);
-        const plan = await planFor(p, chains, intent.preferences);
         const actions = await store.listActions(action.task_id);
+        const plan = planFor(p, chains, actions, intent.preferences);
         if (!fixable(p, action.task_id, actions, mismatches, plan).includes(id)) {
           requires_human.push(id);
           continue;
@@ -188,12 +193,15 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const chain = await store.getChain(chain_id);
       if (!chain) return fail("not_found", `No chain ${chain_id}. Use a chain_id from review or list_chains.`, false, "fix_now");
       const intent = await store.getIntent(chain.task_id);
-      const plan = intent ? logic.plan_undo(chain, intent.preferences, clock.now()) : [];
-      const routeOf = new Map(plan.map((s) => [s.action_id, s.route]));
-      const actions: ChainActionView[] = [];
+      const members: Action[] = [];
       for (const id of chain.action_ids) {
         const a = await store.getAction(id);
-        if (!a) continue;
+        if (a) members.push(a);
+      }
+      const plan = intent ? logic.plan_undo(chain, members, intent.preferences, clock.now()) : [];
+      const routeOf = new Map(plan.map((s) => [s.action_id, s.route]));
+      const actions: ChainActionView[] = [];
+      for (const a of members) {
         actions.push({
           action_id: a.action_id,
           merchant: a.merchant,

@@ -86,6 +86,11 @@ export interface Action {
   source: ActionSource;
   received_at: Timestamp;
   state: ActionState;
+  /**
+   * 0 to 1, set by capture: how sure extraction is. Omitted means certain (structured JSON-LD data,
+   * Stripe events, the agent's own actions). Set it for LLM extraction.
+   */
+  confidence?: number;
 }
 
 /** Fields compare() checks: dates, amount over budget, wrong term, wrong item, duplicate. */
@@ -478,7 +483,14 @@ export type HumanReply =
   | { kind: "pick"; chain_id: ChainId; picks: number[]; received_at: Timestamp }
   | { kind: "keep"; chain_id: ChainId; received_at: Timestamp }
   /** Answer to ask_human during a negotiation. */
-  | { kind: "counter_decision"; chain_id: ChainId; negotiation_id: NegotiationId; accept: boolean; received_at: Timestamp };
+  | { kind: "counter_decision"; chain_id: ChainId; negotiation_id: NegotiationId; accept: boolean; received_at: Timestamp }
+  /** STOP: freezes all undo activity for this human, across every chain, until they reply again. */
+  | { kind: "stop"; received_at: Timestamp }
+  /**
+   * A free-text correction such as "ugh no the 13th". The orchestrator confirms it once with the
+   * human before acting on it.
+   */
+  | { kind: "correction"; chain_id: ChainId; corrected_text: string; received_at: Timestamp };
 
 export type StripeEventKind = "charge.succeeded" | "charge.refunded" | "refund.updated" | "charge.dispute.created";
 
@@ -579,10 +591,18 @@ export interface Sessions {
 /** src/logic/ (Dhwanil). Pure functions; anything time-dependent takes `now`. */
 export interface Logic {
   compare(intent: Intent, actions: Action[]): Mismatch[];
+  /**
+   * Groups a root mistake with the actions that depend on it. The root is the earliest booked
+   * action with a mismatch: among actions whose category is not "message", the earliest received_at.
+   * A message is the root only when the chain has no booked action.
+   */
   trace(intent: Intent, actions: Action[], mismatches: Mismatch[]): Chain[];
   reversibility(action: Action, now: Timestamp): Reversibility;
-  /** Damage minimizer: cheapest fix per action within the window and preferences, most urgent first. */
-  plan_undo(chain: Chain, preferences: Preferences, now: Timestamp): PlanStep[];
+  /**
+   * Damage minimizer and route selection: cheapest fix per action within the window and preferences,
+   * most urgent first. `actions` are the chain's actions (chain.action_ids resolved).
+   */
+  plan_undo(chain: Chain, actions: Action[], preferences: Preferences, now: Timestamp): PlanStep[];
   /** Sorts by money_at_risk / max(hours_left, MIN_HOURS). */
   rank(chains: Chain[], now: Timestamp): Chain[];
   negotiate_step(state: NegotiationState, message: MerchantProtocolMessage, preferences: Preferences): NegotiateStepResult;
