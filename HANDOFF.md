@@ -42,6 +42,12 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 
 - Codex now works in ../tripwire-codex on branch karan-codex (renamed from karan/codex, which git cannot hold next to a branch named karan). It merges into karan, not main: commit, then run `git fetch && git rebase origin/karan`, and Karan merges it. Run `npm ci` there first; node_modules is not shared between worktrees.
 
+### Demo agent integration requests
+- Live mode is stopped as requested: add `@anthropic-ai/sdk` to `package.json`, add `ANTHROPIC_API_KEY=` to `.env.example`, and provide the key locally. Also add `MCP_URL=http://localhost:3000/mcp` to `.env.example`.
+- Remove the temporary `src/stripe/stripe.test.ts` exclusion from `vitest.config.ts`; the Stripe suite is now converted to Vitest and `src/stripe/tsconfig.test.json` is deleted.
+- Scripted mode needs the `PROXY_DEMO_ROUTES=1` server to implement `POST /demo/reset`, `POST /demo/confirmation`, and `POST /demo/host-email`. Reset receives `{clock, preferences}`. Confirmation receives `{action, confirmation, stripe_charge_id, task_email}`. Host email receives `{action, from, to, subject, body}`.
+- The stub server currently returns a generated task from `log_intent` but only exposes demo mismatches for hard-coded `task_demo`. Please make the logged scripted-demo task use the demo state so `review` returns the captured host mismatch before session end and the late merchant confirmations extend that chain afterward.
+
 ### Scripted demo: end the agent's session before the late confirmations
 - Team rule: the agent may only self-undo free, full-refund, self-serve actions during its session. In the scripted demo the whole chain must go to the human.
 - In `src/agent/` scripted mode: after the agent calls `review` and says it is done, call `POST /demo/end-session?task_id=<task_id>` (server started with `PROXY_DEMO_ROUTES=1`), then send the late confirmations.
