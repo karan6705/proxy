@@ -31,22 +31,12 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 
 ## Karan's Codex
 
-### Answers from Karan
-- Done: `@anthropic-ai/sdk` and `@modelcontextprotocol/client` (you import it directly) are in package.json, and `tsx` is a dev dependency. `ANTHROPIC_API_KEY=` and `MCP_URL=http://localhost:3000/mcp` are in `.env.example`.
-- Done: `POST /demo/reset`, `/demo/confirmation` and `/demo/host-email` exist behind `PROXY_DEMO_ROUTES=1`, with the bodies you described. The logged task now uses real server state, so any task id works, not just `task_demo`.
-- Needed from you: `npm run demo:reset` runs `src/agent/reset.ts`, which doesn't exist yet. Please add it as a thin wrapper that calls `resetScriptedDemo(createHttpDemoControl())`.
-
-### Convert src/stripe/stripe.test.ts to Vitest
-- `npm test` now runs every `src/**/*.test.ts` with Vitest. `src/stripe/stripe.test.ts` uses `node:test`, which Vitest can't run, so it is excluded in `vitest.config.ts` for now.
-- Please rewrite it with `import { describe, it, expect } from "vitest"`, delete `src/stripe/tsconfig.test.json` if nothing else needs it, and ask Karan (under "Karan") to remove the exclude line.
-
 - Codex now works in ../tripwire-codex on branch karan-codex (renamed from karan/codex, which git cannot hold next to a branch named karan). It merges into karan, not main: commit, then run `git fetch && git rebase origin/karan`, and Karan merges it. Run `npm ci` there first; node_modules is not shared between worktrees.
 
-### Demo agent integration requests
-- Live mode is stopped as requested: add `@anthropic-ai/sdk` to `package.json`, add `ANTHROPIC_API_KEY=` to `.env.example`, and provide the key locally. Also add `MCP_URL=http://localhost:3000/mcp` to `.env.example`.
-- Remove the temporary `src/stripe/stripe.test.ts` exclusion from `vitest.config.ts`; the Stripe suite is now converted to Vitest and `src/stripe/tsconfig.test.json` is deleted.
-- Scripted mode needs the `PROXY_DEMO_ROUTES=1` server to implement `POST /demo/reset`, `POST /demo/confirmation`, and `POST /demo/host-email`. Reset receives `{clock, preferences}`. Confirmation receives `{action, confirmation, stripe_charge_id, task_email}`. Host email receives `{action, from, to, subject, body}`.
-- The stub server currently returns a generated task from `log_intent` but only exposes demo mismatches for hard-coded `task_demo`. Please make the logged scripted-demo task use the demo state so `review` returns the captured host mismatch before session end and the late merchant confirmations extend that chain afterward.
+### Answers from Karan
+- Done: the Stripe suite runs under Vitest (exclusion removed). `@anthropic-ai/sdk` and `@modelcontextprotocol/client` (you import it directly) are in package.json, and `tsx` is a dev dependency. `ANTHROPIC_API_KEY=` and `MCP_URL=http://localhost:3000/mcp` are in `.env.example`.
+- Done: `POST /demo/reset`, `/demo/confirmation` and `/demo/host-email` exist behind `PROXY_DEMO_ROUTES=1`, with the bodies you described. The logged task now uses real server state, so any task id works, not just `task_demo`.
+- Needed from you: `npm run demo:reset` runs `src/agent/reset.ts`, which doesn't exist yet. Please add it as a thin wrapper that calls `resetScriptedDemo(createHttpDemoControl())`.
 
 ### Scripted demo: end the agent's session before the late confirmations
 - Team rule: the agent may only self-undo free, full-refund, self-serve actions during its session. In the scripted demo the whole chain must go to the human.

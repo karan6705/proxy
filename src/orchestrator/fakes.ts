@@ -66,7 +66,8 @@ export function createFakePayments(opts: { settleRefunds?: boolean } = {}) {
   const settle = opts.settleRefunds ?? true;
   const charges = new Map<string, FakeCharge>();
   const refundsByKey = new Map<string, { refund_id: string; charge_id: string; amount: Cents }>();
-  const payments: Pick<Payments, "findChargeForAction" | "refund" | "verifyRefund"> = {
+  let disputes = 0;
+  const payments: Payments = {
     async findChargeForAction(action) {
       for (const [id, c] of charges) if (c.action_id === action.action_id) return id;
       return null;
@@ -87,6 +88,11 @@ export function createFakePayments(opts: { settleRefunds?: boolean } = {}) {
       const refunded_amount = c?.refunded ?? 0;
       return { verified: refunded_amount >= amount, refunded_amount };
     },
+    async createDispute(charge_id) {
+      if (!charges.has(charge_id)) throw new Error(`No charge ${charge_id}`);
+      disputes += 1;
+      return { dispute_id: `dp_fake_${disputes}` };
+    },
   };
   return {
     payments,
@@ -97,7 +103,7 @@ export function createFakePayments(opts: { settleRefunds?: boolean } = {}) {
   };
 }
 
-export function createMemoryStore() {
+export function createRecordingStore() {
   const actions = new Map<string, Action>();
   const steps: Step[] = [];
   const store: Pick<Store, "upsertAction" | "appendStep" | "getAction"> = {

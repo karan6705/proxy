@@ -1,14 +1,14 @@
 // Proxy MCP server: six tools, the mistakes resource, and mountRoutes for other folders' HTTP routes.
-// Tools are stubs returning typed demo data until Store, Logic and the orchestrator are wired in.
-import { createHash } from "node:crypto";
+// Tools run on the orchestrator with in-memory stand-ins until Sarah's and Dhwanil's code merges.
 import { MCPServer } from "mcp-use";
+import { z } from "zod";
 import { createSimulatedClock } from "./orchestrator/clock.js";
 import { DEFAULT_PARAMS } from "./orchestrator/params.js";
-import { checkSelfUndo } from "./orchestrator/self-undo.js";
-import { createSessions } from "./orchestrator/sessions.js";
-import type { HttpMethod, LogIntentInput, RouteHandler, RouteRequest } from "./types.js";
+import { createRuntime, type Runtime } from "./orchestrator/runtime.js";
+import type { Action, HttpMethod, Preferences, RouteHandler, RouteRequest } from "./types.js";
 import { MISTAKES_RESOURCE_URI } from "./types.js";
-import { advertise, fail, handler, ok } from "./tools/result.js";
+import { createToolHandlers } from "./tools/handlers.js";
+import { advertise, handler } from "./tools/result.js";
 import {
   getChainInput,
   getChainOutput,
@@ -23,17 +23,7 @@ import {
   undoInput,
   undoOutput,
 } from "./tools/schemas.js";
-import {
-  DEMO_CHAIN_ID,
-  DEMO_NOW,
-  DEMO_TASK_ID,
-  demoActions,
-  demoChain,
-  demoChainSummary,
-  demoLessons,
-  demoMismatches,
-  demoReversibility,
-} from "./tools/stubs.js";
+import { DEMO_NOW } from "./tools/stubs.js";
 
 const server = new MCPServer({
   name: "proxy",
@@ -49,33 +39,10 @@ const server = new MCPServer({
   cors: {},
 });
 
-// --- stub state, replaced by Store ---
 // Demo time starts at the seeded DEMO_NOW and runs at real speed, so idle sessions end on their own.
 const clock = createSimulatedClock(DEMO_NOW, 1);
-const sessions = createSessions(clock, DEFAULT_PARAMS.SESSION_IDLE_MS);
-
-/** The demo actions the agent may undo itself right now (see src/orchestrator/self-undo.ts). */
-function demoFixableNow(): string[] {
-  const flagged = new Set(demoMismatches.map((m) => m.action_id));
-  return demoActions
-    .filter(
-      (a) =>
-        checkSelfUndo({
-          flagged: flagged.has(a.action_id),
-          route: a.route,
-          reversibility: demoReversibility[a.category],
-          session_active: sessions.isActive(DEMO_TASK_ID),
-          now: clock.now(),
-        }).allowed,
-    )
-    .map((a) => a.action_id);
-}
-const tasksByKey = new Map<string, { task_id: string; fingerprint: string }>();
-const knownTasks = new Set<string>([DEMO_TASK_ID]);
-
-function taskIdFor(key: string): string {
-  return "task_" + createHash("sha256").update(key).digest("hex").slice(0, 12);
-}
+let runtime: Runtime = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES);
+const tools = createToolHandlers(() => runtime.proxy);
 
 const writeHints = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const readHints = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
@@ -93,23 +60,7 @@ export const logIntent = server.tool(
     outputSchema: logIntentOutput,
     annotations: writeHints,
   },
-  handler(logIntentInput, async (input) => {
-    const fingerprint = JSON.stringify({ goal: input.goal, constraints: input.constraints, preferences: input.preferences });
-    const existing = tasksByKey.get(input.idempotency_key);
-    if (existing && existing.fingerprint !== fingerprint) {
-      return fail(
-        "idempotency_conflict",
-        "This idempotency_key was already used with a different intent. Use a new key for a new task.",
-        false,
-        "fix_now",
-      );
-    }
-    const task_id = existing?.task_id ?? taskIdFor(input.idempotency_key);
-    tasksByKey.set(input.idempotency_key, { task_id, fingerprint });
-    knownTasks.add(task_id);
-    sessions.touch(task_id);
-    return ok({ task_id, task_email: `${task_id}@tasks.proxy.example` });
-  }),
+  handler(logIntentInput, tools.log_intent),
 );
 
 export const reversibility = server.tool(
@@ -124,7 +75,7 @@ export const reversibility = server.tool(
     outputSchema: reversibilityOutput,
     annotations: readHints,
   },
-  handler(reversibilityInput, async (input) => ok(demoReversibility[input.category])),
+  handler(reversibilityInput, tools.reversibility),
 );
 
 export const review = server.tool(
@@ -139,28 +90,7 @@ export const review = server.tool(
     outputSchema: reviewOutput,
     annotations: readHints,
   },
-  handler(reviewInput, async ({ task_id }) => {
-    if (!knownTasks.has(task_id)) {
-      return fail("not_found", `No task ${task_id}. Call log_intent first and use its task_id.`, false, "fix_now");
-    }
-    sessions.touch(task_id);
-    if (task_id !== DEMO_TASK_ID) {
-      return ok({
-        status: "clean" as const,
-        mismatches: [],
-        fixable_now: [],
-        chain_ids: [],
-        evidence_seen: { emails: 0, stripe_events: 0, actions: 0 },
-      });
-    }
-    return ok({
-      status: "chain_open" as const,
-      mismatches: demoMismatches,
-      fixable_now: demoFixableNow(),
-      chain_ids: [DEMO_CHAIN_ID],
-      evidence_seen: { emails: 4, stripe_events: 3, actions: 4 },
-    });
-  }),
+  handler(reviewInput, tools.review),
 );
 
 export const undo = server.tool(
@@ -175,14 +105,7 @@ export const undo = server.tool(
     outputSchema: undoOutput,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   },
-  handler(undoInput, async ({ action_ids }) => {
-    // Enforce the self-undo rule here too: only ids that would be in review.fixable_now right now.
-    if (action_ids.some((id) => demoActions.some((a) => a.action_id === id))) sessions.touch(DEMO_TASK_ID);
-    const fixable = new Set(demoFixableNow());
-    const accepted = action_ids.filter((id) => fixable.has(id));
-    const requires_human = action_ids.filter((id) => !fixable.has(id));
-    return ok({ accepted, requires_human, chain_id: accepted.length > 0 ? DEMO_CHAIN_ID : null });
-  }),
+  handler(undoInput, tools.undo),
 );
 
 export const getChain = server.tool(
@@ -197,12 +120,7 @@ export const getChain = server.tool(
     outputSchema: getChainOutput,
     annotations: readHints,
   },
-  handler(getChainInput, async ({ chain_id }) => {
-    if (chain_id !== DEMO_CHAIN_ID) {
-      return fail("not_found", `No chain ${chain_id}. Use a chain_id from review or list_chains.`, false, "fix_now");
-    }
-    return ok(demoChain);
-  }),
+  handler(getChainInput, tools.get_chain),
 );
 
 export const listChains = server.tool(
@@ -217,7 +135,7 @@ export const listChains = server.tool(
     outputSchema: listChainsOutput,
     annotations: readHints,
   },
-  handler(listChainsInput, async ({ task_id }) => ok({ chains: task_id === undefined || task_id === DEMO_TASK_ID ? [demoChainSummary] : [] })),
+  handler(listChainsInput, tools.list_chains),
 );
 
 server.resource(
@@ -229,7 +147,7 @@ server.resource(
     mimeType: "application/json",
   },
   async (uri) => ({
-    contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify({ lessons: demoLessons }) }],
+    contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(await tools.mistakes()) }],
   }),
 );
 
@@ -274,17 +192,105 @@ mountRoutes([
   },
 ]);
 
-// Scripted demo only: the demo agent ends its session before the late confirmations arrive,
-// so the whole chain goes to the human. Off unless PROXY_DEMO_ROUTES=1.
+// Scripted demo only, off unless PROXY_DEMO_ROUTES=1. The demo agent resets state, sends the host
+// email and the (late) merchant confirmations here, and ends its session before they arrive.
+const demoAction = z.object({
+  action_id: z.string().min(1),
+  task_id: z.string().min(1),
+  merchant: z.string().min(1),
+  category: z.enum(["flight", "hotel", "transfer", "saas", "store", "message"]),
+  summary: z.string(),
+  amount: z.number().int().nonnegative(),
+  dates: z.object({ start: z.string(), end: z.string().optional() }).optional(),
+  ref: z.string(),
+  source: z.enum(["email", "stripe", "agent"]),
+  received_at: z.string(),
+  state: z.string(),
+});
+const demoReset = z.object({
+  clock: z.string().optional(),
+  preferences: z.object({ no_store_credit: z.boolean(), min_partial_refund_pct: z.number(), auto_undo: z.boolean() }).partial().optional(),
+});
+const demoConfirmation = z.object({ action: demoAction, stripe_charge_id: z.string().min(1), task_email: z.string() }).passthrough();
+const demoHostEmail = z.object({ action: demoAction, from: z.string(), to: z.string(), subject: z.string(), body: z.string() });
+
+function parseBody<S extends z.ZodType>(schema: S, req: RouteRequest): z.output<S> | string {
+  let json: unknown;
+  try {
+    json = req.rawBody === "" ? {} : JSON.parse(req.rawBody);
+  } catch {
+    return "Body is not valid JSON";
+  }
+  const r = schema.safeParse(json);
+  return r.success ? r.data : r.error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; ");
+}
+
+const bad = (message: string) => ({ status: 400, body: { ok: false, message } });
+
 if (process.env.PROXY_DEMO_ROUTES === "1") {
   mountRoutes([
+    {
+      method: "POST",
+      path: "/demo/reset",
+      handle: async (req) => {
+        const body = parseBody(demoReset, req);
+        if (typeof body === "string") return bad(body);
+        try {
+          clock.set(body.clock ?? DEMO_NOW);
+        } catch {
+          return bad("clock must be an ISO timestamp");
+        }
+        const preferences: Preferences = { ...DEFAULT_PARAMS.DEFAULT_PREFERENCES, ...body.preferences };
+        runtime = createRuntime(clock, DEFAULT_PARAMS, preferences);
+        return { status: 200, body: { ok: true, clock: clock.now(), preferences } };
+      },
+    },
+    {
+      method: "POST",
+      path: "/demo/confirmation",
+      handle: async (req) => {
+        const body = parseBody(demoConfirmation, req);
+        if (typeof body === "string") return bad(body);
+        const action = { ...body.action, source: "email", state: "found", received_at: clock.now() } as Action;
+        if (!(await runtime.store.getIntent(action.task_id))) return bad(`Unknown task ${action.task_id}`);
+        // Let the fake Stripe and the stand-in airline know about the booking, so self-serve undo can run.
+        runtime.fakePayments?.addCharge(body.stripe_charge_id, action.action_id, action.amount);
+        runtime.merchants.bookings.set(action.ref, {
+          request: {
+            merchant_id: action.merchant,
+            task_id: action.task_id,
+            task_email: body.task_email,
+            item: action.summary,
+            ...(action.dates ? { dates: action.dates } : {}),
+            amount: action.amount,
+            booked_at: body.action.received_at,
+          },
+          charge_id: body.stripe_charge_id,
+          cancelled: false,
+        });
+        await runtime.proxy.onAction(action);
+        return { status: 200, body: { ok: true, action_id: action.action_id } };
+      },
+    },
+    {
+      method: "POST",
+      path: "/demo/host-email",
+      handle: async (req) => {
+        const body = parseBody(demoHostEmail, req);
+        if (typeof body === "string") return bad(body);
+        const action = { ...body.action, source: "agent", state: "found", received_at: clock.now() } as Action;
+        if (!(await runtime.store.getIntent(action.task_id))) return bad(`Unknown task ${action.task_id}`);
+        await runtime.proxy.onAction(action);
+        return { status: 200, body: { ok: true, action_id: action.action_id } };
+      },
+    },
     {
       method: "POST",
       path: "/demo/end-session",
       handle: async (req) => {
         const task_id = req.query.task_id;
-        if (!task_id) return { status: 400, body: { ok: false, message: "task_id query parameter is required" } };
-        sessions.end(task_id);
+        if (!task_id) return bad("task_id query parameter is required");
+        runtime.proxy.deps.sessions.end(task_id);
         return { status: 200, body: { ok: true, task_id, session_active: false } };
       },
     },
