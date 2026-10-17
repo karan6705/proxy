@@ -203,7 +203,7 @@ describe("tools wired to the orchestrator", () => {
     const fake = rt.fakePayments!;
     fake.addCharge("ch_hotel", "act_hotel", 64_000);
     const agreed = 54_400; // 85% of 64,000
-    await rt.store.upsertChain({ ...chain, plan: [{ action_id: "act_hotel", route: "protocol", option: "cancel", cost: 9_600, deadline: null, refund_amount: agreed }] });
+    await rt.store.upsertChain({ ...chain, plan: [{ action_id: "act_hotel", route: "reversal_protocol", option: "cancel", cost: 9_600, deadline: null, refund_amount: agreed }] });
     await fake.payments.refund("ch_hotel", agreed, "refund:act_hotel");
     const hotel = (await rt.store.getAction("act_hotel"))!;
     await rt.store.upsertAction({ ...hotel, state: "verified" });
@@ -218,7 +218,7 @@ describe("tools wired to the orchestrator", () => {
     await rt.proxy.onAction(action(task_id, { action_id: "act_hotel", merchant: "hotel", category: "hotel", summary: "Hotel, 3 nights", amount: 64_000, ref: "HTL-1", dates: { start: "2026-11-03", end: "2026-11-06" } }));
     const chain = (await rt.store.listChains(task_id))[0]!;
     rt.fakePayments!.addCharge("ch_hotel", "act_hotel", 64_000);
-    await rt.store.upsertChain({ ...chain, plan: [{ action_id: "act_hotel", route: "protocol", option: "cancel", cost: 9_600, deadline: null, refund_amount: 54_400 }] });
+    await rt.store.upsertChain({ ...chain, plan: [{ action_id: "act_hotel", route: "reversal_protocol", option: "cancel", cost: 9_600, deadline: null, refund_amount: 54_400 }] });
     await rt.fakePayments!.payments.refund("ch_hotel", 30_000, "refund:act_hotel");
     const hotel = (await rt.store.getAction("act_hotel"))!;
     await rt.store.upsertAction({ ...hotel, state: "verified" });
