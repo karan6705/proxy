@@ -19,8 +19,8 @@ async function setup(controls = true) {
   await store.upsertChain(chain);
   await store.logEvent({ run_id: "r", arm: "proxy", scenario_id: "demo", layer: "scripted", kind: "email_in", tool_name: null, task_id: "t1", chain_id: null, action_id: null, outcome: "captured:jsonld", tokens_in: null, tokens_out: null, timestamp: now });
   const replies: HumanReply[] = [];
-  const channel = createHumanChannel({ store, clock, humanNumber: "+15555550102", hooks: { onHumanReply: async (r) => void replies.push(r) }, sendText: async () => ({ message_id: "m" }) });
-  const routes = createWebRoutes({ store, clock, channel, humanNumber: "+15555550102", controls });
+  const channel = createHumanChannel({ store, clock, humanNumber: "+15550000000", hooks: { onHumanReply: async (r) => void replies.push(r) }, sendText: async () => ({ message_id: "m" }) });
+  const routes = createWebRoutes({ store, clock, channel, humanNumber: "+15550000000", controls });
   const call = (method: string, path: string, rawBody = "", headers: Record<string, string> = {}) =>
     routes.find((r) => r.method === method && r.path === path)!.handle({ method: method as "GET", path, headers, query: {}, rawBody });
   return { call, replies };
@@ -33,6 +33,12 @@ describe("web routes", () => {
     expect(res.status).toBe(200);
     expect(String(res.body)).toContain("<title>Proxy live</title>");
     expect(PAGE_HTML).not.toMatch(/innerHTML|insertAdjacentHTML|document\.write/);
+  });
+
+  it("ships a page script that parses and has the three reply buttons", () => {
+    const js = PAGE_HTML.match(/<script>([\s\S]*)<\/script>/)![1];
+    expect(() => new Function(js)).not.toThrow();
+    for (const label of ["UNDO ALL", "PICK", "KEEP", "Undo selected"]) expect(js).toContain(label);
   });
 
   it("reports chains, actions with Stripe verification, and events", async () => {
@@ -50,6 +56,12 @@ describe("web routes", () => {
     expect((await post()).status).toBe(200);
     await post();
     expect(replies).toMatchObject([{ kind: "undo_all", chain_id: "c1" }]);
+  });
+
+  it("a pick from the buttons reaches onHumanReply with the numbers", async () => {
+    const { call, replies } = await setup();
+    await call("POST", "/web/reply", JSON.stringify({ chain_id: "c1", kind: "pick", picks: [1] }));
+    expect(replies).toMatchObject([{ kind: "pick", chain_id: "c1", picks: [1] }]);
   });
 
   it("is off when controls are off, and rejects bad input", async () => {
