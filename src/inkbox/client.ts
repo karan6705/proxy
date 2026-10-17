@@ -2,7 +2,9 @@
 // INKBOX_DRY_RUN=1 logs what would be sent and sends nothing.
 import { makeEvent, DEMO_EVENT_CONTEXT, type EventContext } from "../db/events.js";
 import type { Clock, EventKind, Inkbox, OutboundEmail, ProxyProtocolMessage, Store, TaskId } from "../types.js";
-import { createClient, loadSdk, type InkboxSdk } from "./sdk.js";
+import { createA2AAccess, type A2AAccess } from "./a2a.js";
+import { protocolSubject } from "./protocol.js";
+import { createClient, type InkboxSdk } from "./sdk.js";
 
 export interface InkboxClientOptions {
   /** Handle of Proxy's own identity, e.g. "proxy-agent"; "proxy" is reserved by Inkbox. Created on first use if missing. */
@@ -14,6 +16,8 @@ export interface InkboxClientOptions {
   log?: (line: string) => void;
   /** Injected in tests; defaults to a real client built from INKBOX_API_KEY. */
   sdk?: () => Promise<InkboxSdk>;
+  /** Proxy's own A2A access; defaults to a key scoped to the Proxy identity. Injected in tests. */
+  a2a?: A2AAccess;
   /** Domain used for task addresses in dry-run. */
   dryRunDomain?: string;
 }
@@ -48,7 +52,9 @@ export function createInkbox(opts: InkboxClientOptions = {}): Inkbox {
     await opts.store?.logEvent(makeEvent(ctx(), now(), { kind, outcome, ...ids }));
   };
 
-  let a2aP: Promise<{ asProxy: InkboxSdk; identity: InkboxSdk }> | undefined;
+  const a2a = opts.a2a ?? createA2AAccess({ admin: sdk, handle, apiKey: process.env.INKBOX_PROXY_API_KEY || undefined });
+  /** negotiation_id -> A2A task id, so a push back or accept_counter continues the same task. */
+  const tasks = new Map<string, string>();
   let counter = 0;
   const fakeId = (p: string) => `dry_${p}_${++counter}`;
 
@@ -133,39 +139,36 @@ export function createInkbox(opts: InkboxClientOptions = {}): Inkbox {
         return { via: "a2a" as const };
       }
       try {
-        const via = await sendA2A(to_identity, payload);
+        const via = await sendA2A(to_identity, message, payload);
         await record("a2a", `a2a:${message.type}`, ids);
         return { via };
       } catch (a2aErr) {
         // Same JSON by email when the merchant has no A2A endpoint or the call fails.
         const id = await proxyIdentity();
         const peer = await (await sdk()).getIdentity(to_identity);
-        await id.sendEmail({ to: [peer.emailAddress], subject: `[proxy:${message.type}] ${message.negotiation_id}`, bodyText: payload });
+        await id.sendEmail({ to: [peer.emailAddress], subject: protocolSubject(message.type, message.negotiation_id), bodyText: payload });
         await record("a2a", `email_fallback:${message.type}:${(a2aErr as Error).name}`, ids);
         return { via: "email" as const };
       }
     },
   };
 
-  /** A2A needs the sender's own agent-scoped key, minted once and kept in memory only. */
-  async function sendA2A(to_identity: string, payload: string): Promise<"a2a"> {
-    a2aP ??= (async () => {
-      const admin = await sdk();
-      const me = await proxyIdentity();
-      const { Inkbox } = await loadSdk();
-      const apiKey = process.env.INKBOX_PROXY_API_KEY || (await admin.apiKeys.create({ label: "proxy-a2a", scopedIdentityId: me.id })).apiKey;
-      const asProxy = await new Inkbox({ apiKey }).ready();
-      return { asProxy, identity: await asProxy.getIdentity(handle) };
-    })();
-    const { asProxy, identity } = await a2aP.catch((e) => {
-      a2aP = undefined;
-      throw e;
-    });
-    const dir = await asProxy.a2a.organizationDirectory({ q: to_identity });
+  /** Sends on the task already open for this negotiation, or opens one with the merchant. */
+  async function sendA2A(to_identity: string, message: ProxyProtocolMessage, payload: string): Promise<"a2a"> {
+    const { inkbox, identity } = await a2a.identity();
+    const client = await identity.a2aClient();
+    let taskId = tasks.get(message.negotiation_id);
+    if (!taskId && message.type !== "request_reversal") {
+      // After a restart: find the task this negotiation opened.
+      const found = await identity.a2aSentTasks({ workerHandle: to_identity, q: message.negotiation_id, limit: 1 });
+      taskId = found.items?.[0]?.id;
+    }
+    const dir = await inkbox.a2a.organizationDirectory({ q: to_identity });
     const peer = dir.items.find((i: { cardUrl: string }) => i.cardUrl.includes(`/${to_identity}/`));
     if (!peer) throw new Error(`${to_identity} is not in the A2A directory`);
-    const client = await identity.a2aClient();
-    await client.send(await client.fetchCard(peer.cardUrl), { text: payload });
+    const sent = await client.send(await client.fetchCard(peer.cardUrl), { text: payload, ...(taskId ? { taskId } : {}) });
+    const opened = sent?.task?.id ?? sent?.id;
+    if (opened) tasks.set(message.negotiation_id, String(opened));
     return "a2a";
   }
 }
