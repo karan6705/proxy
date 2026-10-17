@@ -206,15 +206,15 @@ describe("dispute evidence", () => {
       message_timeline: [
         {
           at: "2026-11-01T14:05:00.000Z",
-          from: "proxy@demo.example",
-          to: "support@metrotransfer.example",
-          body: "Cancel transfer TRANSFER-003 and refund the charge.",
+          channel: "email",
+          direction: "outbound",
+          summary: "Asked support to cancel transfer TRANSFER-003 and refund the charge.",
         },
         {
           at: "2026-11-01T14:10:00.000Z",
-          from: "support@metrotransfer.example",
-          to: "proxy@demo.example",
-          body: "Cancellation was denied.",
+          channel: "email",
+          direction: "inbound",
+          summary: "Cancellation was denied.",
         },
       ],
       deadline: "2026-11-01T18:00:00.000Z",

@@ -14,6 +14,7 @@
 8. **`EventKind` gains `imessage_in`.** Log inbound iMessages with it, not `sms_in` with an `imessage:` outcome. (Sarah)
 9. **`Action.confidence`** (item 2) is how capture marks LLM extractions. Actions under 0.5 are dropped and logged, never passed to `onAction`. (Sarah)
 10. **Task ids are restricted to `[a-z0-9_]`** (`TASK_ID_PATTERN` in `types.ts`), because a task id becomes an Inkbox handle (`task_demo` becomes `task-demo@...`). `log_intent` returns `invalid_input` otherwise, and so do `review` and `list_chains` for a malformed `task_id`. (Everyone)
+11. **`EvidencePacket.message_timeline` is optional** and contains `{ at, channel, direction, summary }` entries, so dispute evidence can carry the communication audit trail without a Stripe-local type extension. (Karan's Codex)
 - **Sarah, still to adapt from item 3:** the human channel should forward STOP as `{ kind: "stop" }` (it currently ignores it as `opt_out`), and loose replies as `{ kind: "correction", chain_id, corrected_text }` (it currently asks the human to clarify).
 
 

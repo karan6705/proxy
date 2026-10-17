@@ -9,18 +9,6 @@ export interface StripeDisputeEvidence {
   uncategorized_text: string;
 }
 
-export interface DisputeMessage {
-  at: Timestamp;
-  from: string;
-  to: string;
-  body: string;
-}
-
-/** Stripe-local extension until the shared EvidencePacket contract carries the message timeline. */
-export interface DisputeEvidencePacket extends EvidencePacket {
-  message_timeline: DisputeMessage[];
-}
-
 export interface DisputeChainEvidence {
   intent: Intent;
   order: Action;
@@ -28,7 +16,7 @@ export interface DisputeChainEvidence {
   stripe_charge_id: string | null;
   mismatch: Mismatch;
   why_wrong: string;
-  message_timeline: DisputeMessage[];
+  message_timeline: NonNullable<EvidencePacket["message_timeline"]>;
   deadline: Timestamp;
 }
 
@@ -47,9 +35,7 @@ function truncate(value: string, max: number): string {
 }
 
 export function buildDisputeEvidence(packet: EvidencePacket): StripeDisputeEvidence {
-  const messageTimeline = "message_timeline" in packet
-    ? (packet as DisputeEvidencePacket).message_timeline
-    : [];
+  const messageTimeline = packet.message_timeline ?? [];
   const audit = {
     order: packet.order,
     intent: packet.intent,
@@ -64,7 +50,7 @@ export function buildDisputeEvidence(packet: EvidencePacket): StripeDisputeEvide
     customer_communication: truncate(
       [
         packet.confirmation_excerpt,
-        ...messageTimeline.map((message) => `${message.at} ${message.from} -> ${message.to}: ${message.body}`),
+        ...messageTimeline.map((message) => `${message.at} ${message.direction} via ${message.channel}: ${message.summary}`),
       ].join("\n"),
       20_000,
     ),
@@ -75,7 +61,7 @@ export function buildDisputeEvidence(packet: EvidencePacket): StripeDisputeEvide
   };
 }
 
-export function buildDisputePacket(chain: DisputeChainEvidence): DisputeEvidencePacket {
+export function buildDisputePacket(chain: DisputeChainEvidence): EvidencePacket {
   if (!chain.mismatch.evidence) throw new Error("Dispute evidence requires receipt-backed mismatch evidence");
   if (chain.message_timeline.length === 0) throw new Error("Dispute evidence requires a message timeline");
   return {
