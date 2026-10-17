@@ -184,6 +184,7 @@ describe("tools wired to the orchestrator", () => {
     const u = (await tools.undo({ action_ids: ["act_flight", "act_unknown"], reason: "wrong date" })).structuredContent;
     expect(u).toMatchObject({ ok: true, accepted: ["act_flight"], requires_human: ["act_unknown"] });
     expect((await rt.store.getAction("act_flight"))?.state).toBe("verified");
+    expect((await rt.store.getChain(await chainIdFor(task_id)))?.state).toBe("reversed");
 
     const again = (await tools.undo({ action_ids: ["act_flight"], reason: "retry" })).structuredContent;
     expect(again).toMatchObject({ accepted: ["act_flight"] });
