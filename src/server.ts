@@ -275,21 +275,9 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
         if (typeof body === "string") return bad(body);
         const action = { ...body.action, source: "email", state: "found", received_at: clock.now() } as Action;
         if (!(await runtime.store.getIntent(action.task_id))) return bad(`Unknown task ${action.task_id}`);
-        // Let the fake Stripe and the stand-in airline know about the booking, so self-serve undo can run.
+        // Legacy direct confirmations still register fake charges. The normal scripted path books through
+        // the real merchant routes, which already own the order and its charge.
         runtime.fakePayments?.addCharge(body.stripe_charge_id, action.action_id, action.amount);
-        runtime.merchants.bookings.set(action.ref, {
-          request: {
-            merchant_id: action.merchant,
-            task_id: action.task_id,
-            task_email: body.task_email,
-            item: action.summary,
-            ...(action.dates ? { dates: action.dates } : {}),
-            amount: action.amount,
-            booked_at: body.action.received_at,
-          },
-          charge_id: body.stripe_charge_id,
-          cancelled: false,
-        });
         await runtime.proxy.onAction(action);
         return { status: 200, body: { ok: true, action_id: action.action_id } };
       },

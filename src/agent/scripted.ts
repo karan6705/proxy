@@ -10,12 +10,13 @@ import type {
   UndoOutput,
 } from "../types.js";
 import { connectToolClient, type ToolClient } from "./mcp-client.js";
+import { createHttpMerchants, type DemoBookingMerchants } from "./http-merchants.js";
 import { createOfflineDemoControl, createOfflineToolClient } from "./offline.js";
-import { createDemoPayments, createMockAgentPayments, type AgentPayments } from "./payments.js";
+import { createMockAgentPayments, type AgentPayments } from "./payments.js";
 import { StubMerchants, type ConfirmationEnvelope, type ConfirmationSink } from "./stub-merchants.js";
 
 export const DEFAULT_MCP_URL = "http://localhost:3000/mcp";
-export const DEMO_START = "2026-11-01T14:00:00.000Z";
+export const DEMO_START = "2026-10-25T14:00:00.000Z";
 export const LATE_CONFIRMATION_DELAY_MS = 5 * 60_000;
 export const DEMO_PREFERENCES = {
   no_store_credit: true,
@@ -56,7 +57,8 @@ export interface DemoLogger {
 
 export interface ScriptedDemoOptions {
   client: ToolClient;
-  payments: AgentPayments;
+  payments?: AgentPayments;
+  merchants?: DemoBookingMerchants;
   clock: SimulatedClock;
   control: DemoControl;
   logger?: DemoLogger;
@@ -200,7 +202,10 @@ export async function runScriptedDemo(options: ScriptedDemoOptions): Promise<Scr
     return result;
   });
 
-  const merchants = new StubMerchants(options.payments, options.control);
+  const merchants = options.merchants ?? new StubMerchants(
+    options.payments ?? (() => { throw new Error("Scripted stub merchants require a Payments adapter"); })(),
+    options.control,
+  );
   const bookings = await step("bookings", async () => {
     const result = await Promise.all([
       merchants.book(booking("airline", intent.task_id, intent.task_email, "Flight SFO to JFK, Nov 3", 41_200, options.clock)),
@@ -300,7 +305,7 @@ async function main(): Promise<void> {
   try {
     await runScriptedDemo({
       client,
-      payments: offline ? createMockAgentPayments() : createDemoPayments(),
+      ...(offline ? { payments: createMockAgentPayments() } : { merchants: createHttpMerchants(mcpUrl) }),
       clock: createDemoClock(),
       control,
       onStep: offline
