@@ -58,6 +58,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     params,
     defaultPreferences,
     demoTaskId: env.PROXY_DEMO_ROUTES === "1" ? (env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo") : null,
+    humanNumber: env.HUMAN_PHONE?.trim() ?? "",
   });
 
   const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
@@ -74,6 +75,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     sendText: (channel, to, body) => inkbox.sendText(channel, to, body),
     humanNumber: env.HUMAN_PHONE?.trim() ?? "",
   });
+  proxy.setHumanChannel(human);
   const routes = [createInboundEmailRoute({ capture, fetchFullMessage }), ...createHumanRoutes(human)];
 
   return { proxy, store, human, routes, fakePayments, merchants };
