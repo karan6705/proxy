@@ -35,6 +35,12 @@ describe("web routes", () => {
     expect(PAGE_HTML).not.toMatch(/innerHTML|insertAdjacentHTML|document\.write/);
   });
 
+  it("ships a page script that parses and has the three reply buttons", () => {
+    const js = PAGE_HTML.match(/<script>([\s\S]*)<\/script>/)![1];
+    expect(() => new Function(js)).not.toThrow();
+    for (const label of ["UNDO ALL", "PICK", "KEEP", "Undo selected"]) expect(js).toContain(label);
+  });
+
   it("reports chains, actions with Stripe verification, and events", async () => {
     const { call } = await setup();
     const body = (await call("GET", "/web/state")).body as any;
@@ -50,6 +56,12 @@ describe("web routes", () => {
     expect((await post()).status).toBe(200);
     await post();
     expect(replies).toMatchObject([{ kind: "undo_all", chain_id: "c1" }]);
+  });
+
+  it("a pick from the buttons reaches onHumanReply with the numbers", async () => {
+    const { call, replies } = await setup();
+    await call("POST", "/web/reply", JSON.stringify({ chain_id: "c1", kind: "pick", picks: [1] }));
+    expect(replies).toMatchObject([{ kind: "pick", chain_id: "c1", picks: [1] }]);
   });
 
   it("is off when controls are off, and rejects bad input", async () => {
