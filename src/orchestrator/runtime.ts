@@ -19,21 +19,12 @@ export interface Runtime {
 
 export function createRuntime(clock: Clock, params: Params, defaultPreferences: Preferences): Runtime {
   const store = createMemoryStore();
-  // Synchronous view of actions for the stand-in plan_undo, whose contract receives only the chain.
-  const actionCache = new Map<string, import("../types.js").Action>();
-  const cachingStore: MemoryStore = {
-    ...store,
-    async upsertAction(action) {
-      actionCache.set(action.action_id, action);
-      return store.upsertAction(action);
-    },
-  };
-  const logic = createStandInLogic((id) => actionCache.get(id), params.MIN_HOURS);
+  const logic = createStandInLogic(params.MIN_HOURS);
   const useStripe = (process.env.STRIPE_SECRET_KEY ?? "").startsWith("sk_test_");
   const fakePayments = useStripe ? null : createFakePayments();
   const merchants = createStubMerchants();
   const proxy = createProxy({
-    store: cachingStore,
+    store,
     logic,
     inkbox: createStandInInkbox(),
     payments: fakePayments ? fakePayments.payments : createPayments(),
@@ -43,5 +34,5 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     params,
     defaultPreferences,
   });
-  return { proxy, store: cachingStore, fakePayments, merchants };
+  return { proxy, store, fakePayments, merchants };
 }
