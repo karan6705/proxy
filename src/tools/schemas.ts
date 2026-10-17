@@ -77,11 +77,20 @@ const preferences = z.object({
   auto_undo: z.boolean(),
 }) satisfies z.ZodType<Preferences>;
 
+const mismatchValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
 const mismatch = z.object({
   action_id: z.string(),
   field: z.enum(["dates", "amount", "term", "item", "duplicate"]),
-  expected: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-  actual: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+  expected: mismatchValue,
+  actual: mismatchValue,
+  evidence: z
+    .object({
+      source_action_id: z.string(),
+      receipt_fields: z.record(z.string(), mismatchValue),
+    })
+    .optional()
+    .describe("The receipt this mismatch was read from"),
 }) satisfies z.ZodType<Mismatch>;
 
 const ok = z.literal(true);
