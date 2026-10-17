@@ -267,7 +267,7 @@ describe("tools wired to the orchestrator", () => {
     expect(frozen).toMatchObject({ accepted: [], requires_human: ["act_flight"] });
     expect(rt.fakePayments?.refunds.size).toBe(0);
 
-    await rt.proxy.onHumanReply({ kind: "keep", chain_id: await chainIdFor(task_id), received_at: clock.now() });
+    await rt.proxy.onHumanReply({ kind: "correction", chain_id: await chainIdFor(task_id), corrected_text: "never mind", received_at: clock.now() });
     const after = (await tools.undo({ action_ids: ["act_flight"], reason: "wrong date" })).structuredContent;
     expect(after).toMatchObject({ accepted: ["act_flight"] });
   });
