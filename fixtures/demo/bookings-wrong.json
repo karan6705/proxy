@@ -1,0 +1,44 @@
+[
+  {
+    "id": "flight",
+    "merchant_id": "airline",
+    "item": "SFO-JFK",
+    "dates": {
+      "start": "2026-11-03"
+    },
+    "amount": 41200,
+    "booked_at": "2026-10-17T09:00:00.000Z"
+  },
+  {
+    "id": "hotel",
+    "merchant_id": "hotel",
+    "item": "Harborview Hotel, 3 nights",
+    "dates": {
+      "start": "2026-11-03",
+      "end": "2026-11-06"
+    },
+    "amount": 64000,
+    "booked_at": "2026-10-17T09:10:00.000Z",
+    "confirm_at": "2026-10-17T11:00:00.000Z"
+  },
+  {
+    "id": "transfer",
+    "merchant_id": "transfer",
+    "item": "Airport transfer, JFK to Harborview Hotel",
+    "dates": {
+      "start": "2026-11-03"
+    },
+    "amount": 18800,
+    "booked_at": "2026-10-17T09:15:00.000Z"
+  },
+  {
+    "id": "host_email",
+    "merchant_id": "host",
+    "item": "Arrival email to the host: arriving 2026-11-03",
+    "dates": {
+      "start": "2026-11-03"
+    },
+    "amount": 0,
+    "booked_at": "2026-10-17T09:25:00.000Z"
+  }
+]
