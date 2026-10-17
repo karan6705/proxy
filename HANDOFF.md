@@ -20,6 +20,13 @@
 
 ## Karan
 
+### Status: UNDO ALL runs end to end (2026-10-17)
+- `src/orchestrator/undo.ts` runs a chain after UNDO ALL or PICK: plan from `plan_undo`, then self-serve (flight), Reversal Protocol (hotel: request, store-credit counter, push back, 85% counter, accept_counter, accept, refund, verify), support email (transfer), and a correction email (host). The chain ends `redo_requested`, and `get_chain` returns the redo instruction.
+- One text per chain, by iMessage (`HUMAN_ALERT_CHANNEL=sms` switches it), sent 1.5 s after the last late confirmation (`PROXY_ALERT_SETTLE_MS`). Without `HUMAN_PHONE`, the alert is recorded but not sent, and the `/web` page buttons reply as the human (demo only).
+- Refunds are verified against the agreed amount (`PlanStep.refund_amount`, the accepted counter), not the booking price. The widget's recovered total uses what Stripe shows.
+- Protocol transport: real Inkbox when `INKBOX_API_KEY` is set and `INKBOX_DRY_RUN` isn't; otherwise the in-process mock agent answers (`PROXY_PROTOCOL_LOOPBACK=1/0` forces either). Real mode starts Sarah's protocol inbox once; for the hotel side run `npm run demo:hotel` next to the server.
+- Not built yet: support-email follow-ups and calls, Stripe disputes for `keep` steps, auto-undo, confirming a free-text correction with the human.
+
 ### Public URL for Inkbox webhooks (until the Manufact deploy is up)
 Inkbox can't reach `localhost`, so `/inkbox/inbound`, `/inkbox/text` and `/inkbox/imessage` need a public URL.
 1. **mcp-use's built-in tunnel (try first):** `npm run dev -- --tunnel`. It prints a public URL that forwards to the whole local server, webhooks included.
@@ -206,6 +213,14 @@ Full negotiation run between `proxy-agent` and `hotel-agent` on real Inkbox: req
 - `src/web`: `createWebRoutes({ store, clock, channel, humanNumber, controls: process.env.PROXY_DEMO_ROUTES === "1" })` gives `GET /web` (the page), `GET /web/state` and `POST /web/reply` (UNDO ALL / PICK / KEEP buttons; they go through the same human channel as a text, so they are idempotent and respect the window). `store` must be `createStoreFromEnv()` or `createMemoryStore()` because the feed needs `recentEvents`. The scoreboard panel shows whatever JSON `scoreboard()` returns; Dhwanil, give me the results file path and format when it exists.
 - Tests: `npm test`.
 
+
+### From Karan (2026-10-17)
+- Merged `origin/sarah` (03ea0e2) into main. `.env.example` keeps Dhwanil's key names (`INKBOX_AIRLINE_API_KEY`, `INKBOX_HOTEL_AGENT_API_KEY`, `INKBOX_TRANSFER_SUPPORT_API_KEY`), because those are what the code reads. Your a2a.ts comment still says `INKBOX_KEY_HOTEL_AGENT`.
+- `createProtocolInbox` starts once in server.ts (real Inkbox only), with hooks that point at the current runtime. Restart point: no Store change was needed. Each processed merchant message is written as a Step with its receive time, and the inbox resumes from the latest one minus 2 minutes. Replays are dropped by negotiation, type, round and amount.
+- Two servers polling the same proxy-agent inbox would both act on each answer. Run only one real-Inkbox server at a time.
+- `/web` is mounted from the runtime. Its buttons are on with `PROXY_DEMO_ROUTES=1`; without `HUMAN_PHONE` they act as a placeholder number that is never texted.
+- `INKBOX_PROXY_API_KEY` isn't in `.env` yet, so each start mints a key. Please send it.
+
 ## Dhwanil
 
 ### A2A transport ownership
@@ -241,6 +256,14 @@ Merchants no longer refund. `selfServeCancel`, the hotel agent and the support d
 ### Status from Dhwanil
 Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/` (`compare`, `trace`, `reversibility`, `plan_undo`, `rank`, `negotiate_step`), the rules table, the airline, hotel agent, transfer company and host merchants with `RouteHandler`s, the demo fixtures in `fixtures/demo/`, and a first Layer 1 scenario runner with a naive arm in `evals/` (5 of ~30 scenarios). Not started: the SaaS and store merchants, the prompt-injection merchant scenario, the other ~25 scenarios, Layer 2 (live agent), the scoreboard page. Sarah still needs to review the expected results in `evals/scenarios.ts`.
 
+
+### From Karan (2026-10-17)
+- Your `logic` is wired in. `plan_undo` gets every action in the chain (it throws otherwise), and PICK filters the steps afterwards. Chain ids stay the same when the root changes, and settled actions stay in the chain so the widget keeps their green rows.
+- `negotiate_step` drives the hotel live. `ignored_text` is counted in the events log, never stored. `ask_human` goes to the human, and Proxy stamps `sent_at` itself.
+- `keep` steps are marked kept. Stripe disputes aren't wired yet, so `route: "stripe_dispute"` on keep is fine as it is.
+- Added scripts: `npm run fixtures:demo`, `npm run evals:layer1`, and `npm run demo:hotel`, which runs Sarah's bridge as `hotel-agent` and answers through the server's `POST /merchants/hotel/agent`, so it uses the server's bookings.
+- `/demo/host-email` now books the message with your host mock (ref `MSG-...`), so the correction email can name it.
+
 ## Karan's Codex
 
 ### Contract v2 changes for src/agent/
@@ -257,3 +280,7 @@ Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/` (`
 - Team rule: the agent may only self-undo free, full-refund, self-serve actions during its session. In the scripted demo the whole chain must go to the human.
 - In `src/agent/` scripted mode: after the agent calls `review` and says it is done, call `POST /demo/end-session?task_id=<task_id>` (server started with `PROXY_DEMO_ROUTES=1`), then send the late confirmations.
 - Sessions also end on their own after `SESSION_IDLE_MS` without a tool call for the task.
+
+### From Karan (2026-10-17)
+- The rehearsal could add a last step: after the late confirmations, wait about 2 s, `POST /web/reply {"chain_id", "kind":"undo_all"}`, and poll `get_chain` until `next_action` is `redo`. I ran it by hand on port 3001: the chain ended `redo_requested`, with flight, hotel (85%) and transfer verified in Stripe.
+- Repeated runs against a fresh memory store reuse the same Stripe charges (same task id, so the same idempotency keys). Proxy then reports "already refunded", which is correct but sends no new refund. Consider adding the run time to the charge idempotency key.
