@@ -19,7 +19,11 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 
 ## Karan's Codex
 
-- Codex now works in ../tripwire-codex on branch karan/codex, and Karan merges it into main. Run `npm ci` there first; node_modules is not shared between worktrees.
+### Convert src/stripe/stripe.test.ts to Vitest
+- `npm test` now runs every `src/**/*.test.ts` with Vitest. `src/stripe/stripe.test.ts` uses `node:test`, which Vitest can't run, so it is excluded in `vitest.config.ts` for now.
+- Please rewrite it with `import { describe, it, expect } from "vitest"`, delete `src/stripe/tsconfig.test.json` if nothing else needs it, and ask Karan (under "Karan") to remove the exclude line.
+
+- Codex now works in ../tripwire-codex on branch karan-codex (renamed from karan/codex, which git cannot hold next to a branch named karan). It merges into karan, not main: commit, then run `git fetch && git rebase origin/karan`, and Karan merges it. Run `npm ci` there first; node_modules is not shared between worktrees.
 
 ### Scripted demo: end the agent's session before the late confirmations
 - Team rule: the agent may only self-undo free, full-refund, self-serve actions during its session. In the scripted demo the whole chain must go to the human.

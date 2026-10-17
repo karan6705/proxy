@@ -22,11 +22,18 @@ Agent 2 asks for package.json or src/types.ts changes under "Karan" in HANDOFF.m
 Rules:
 - Only edit files in your own area. Anyone may read src/types.ts but only Karan edits it, and after the Saturday 12:30 PM freeze a change needs all three people to agree.
 - If you need a change in someone else's area, or a new npm package, add a note under their heading in HANDOFF.md and stop. Only Karan edits package.json.
-- Use short-lived branches named after yourself (karan/..., sarah/..., dhwanil/...), merge to main often, and keep main running.
+- Work on your own branch and keep it running. See "Branches" below.
 - Commit only your own files with explicit paths (git add src/logic/...). Never use git add ., git add -A, git reset --hard, git checkout ., git stash, or force push.
 - Prefix commit messages with [core] for src/ work or [evals] for evals/, fixtures/ and tests/ work. Never mention Claude, Codex, AI or any assistant in commit messages, PR titles, PR descriptions or code comments. No Co-Authored-By or Generated-with lines. Run git pull --rebase before you push.
 - Secrets go in .env, which is never committed. Add every variable name to .env.example.
 - Never run "mcp-use client". It silently edits package.json. Test tools with npm run dev and the inspector instead.
+
+## Branches
+- Each person works on their own branch: karan, sarah, dhwanil. karan-codex (Karan's second agent) merges into karan.
+- Git cannot hold both a branch "karan" and a branch "karan/anything", so never create slash branches under a person's name. Use a hyphen instead (karan-codex).
+- main is the integration branch. Nobody commits to it directly.
+- At each checkpoint (5 PM, 9 PM, 1 AM, 6 AM), rebase on main, run npm test and npm run dev, then open a PR into main. Karan merges them one at a time.
+- Run git fetch && git rebase origin/main at the start of each session.
 
 ## How to work
 - Hackathon speed: small working increments, demo path first. No coverage targets. Write tests only where they protect the demo.
