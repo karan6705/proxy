@@ -195,6 +195,14 @@ export function getRule(key: RuleKey): RuleEntry {
   return RULES_TABLE[key];
 }
 
+/**
+ * The rule that applies to one action. The table is keyed by merchant: an action whose merchant id is a table key
+ * (for example "final_sale") uses that entry, and every other action uses the entry for its category.
+ */
+export function ruleKeyForAction(action: { merchant: string; category: ActionCategory }): RuleKey {
+  return action.merchant in RULES_TABLE ? (action.merchant as RuleKey) : ruleKeyForCategory(action.category);
+}
+
 /** What undoing costs the human, for a given price. A flat fee never exceeds the price. */
 export function costOf(cost: CostRule, amount: Cents): Cents {
   switch (cost.type) {

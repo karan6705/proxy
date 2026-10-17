@@ -2,8 +2,9 @@
 //
 // v1 linking rule: two flagged actions are in the same chain when both have a wrong-dates mismatch and their date
 // ranges overlap (a wrong arrival date drags in the hotel nights, the transfer and the arrival message).
-// Every other mismatch (amount, term, item, duplicate) is its own chain. The chain id is derived from the root
-// action, so tracing again after a late confirmation arrives keeps the same chain id.
+// Every other mismatch (amount, term, item, duplicate) is its own chain. The root is the earliest booked
+// (non-message) action in the chain; a message is the root only when the chain has no booked action. The chain id
+// is derived from the root action, so tracing again after a late confirmation arrives keeps the same chain id.
 
 import type { Action, ActionId, Chain, Intent, Mismatch } from "../types.js";
 import { rangesOverlap, timestampToMs } from "./dates.js";
@@ -60,7 +61,8 @@ export function trace(intent: Intent, actions: Action[], mismatches: Mismatch[])
 
   const chains = [...groups.values()].map((members): Chain => {
     members.sort(byReceived);
-    const root = members[0];
+    // Root rule (Contract v2): the earliest booked action. A message is the root only if there is no booked action.
+    const root = members.find((member) => member.category !== "message") ?? members[0];
     const windows = members
       .map((member) => windowEndsAt(member))
       .filter((end): end is string => end !== null)

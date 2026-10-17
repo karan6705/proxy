@@ -3,6 +3,7 @@
 
 import type { Action, Reversibility, Timestamp } from "../types.js";
 import { MS_PER_DAY, MS_PER_HOUR, dateToMs, msToTimestamp, timestampToMs } from "./dates.js";
+import { getRule, ruleKeyForAction } from "./rules-table.js";
 import {
   FLIGHT_CHANGE_CUTOFF_HOURS,
   FLIGHT_CHANGE_FEE,
@@ -59,6 +60,10 @@ function none(rule: string): Reversibility {
 }
 
 export function reversibility(action: Action, now: Timestamp): Reversibility {
+  // Final-sale items are never reversible, whatever the category says.
+  if (ruleKeyForAction(action) === "final_sale") {
+    return none(getRule("final_sale").rule);
+  }
   const nowMs = timestampToMs(now);
   const primaryEnd = windowEndMs(action);
   const inPrimaryWindow = primaryEnd !== null && nowMs <= primaryEnd;
