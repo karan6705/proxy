@@ -52,7 +52,7 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 ### Answers from Karan
 - Done: the Stripe suite runs under Vitest (exclusion removed). `@anthropic-ai/sdk` and `@modelcontextprotocol/client` (you import it directly) are in package.json, and `tsx` is a dev dependency. `ANTHROPIC_API_KEY=` and `MCP_URL=http://localhost:3000/mcp` are in `.env.example`.
 - Done: `POST /demo/reset`, `/demo/confirmation` and `/demo/host-email` exist behind `PROXY_DEMO_ROUTES=1`, with the bodies you described. The logged task now uses real server state, so any task id works, not just `task_demo`.
-- Needed from you: `npm run demo:reset` runs `src/agent/reset.ts`, which doesn't exist yet. Please add it as a thin wrapper that calls `resetScriptedDemo(createHttpDemoControl())`.
+- Done: `npm run demo:reset` (src/agent/reset.ts), `npm run demo:rehearse` (src/agent/rehearse.ts) and `npm run demo:offline` (src/agent/scripted.ts --offline), all through tsx.
 
 ### Scripted demo: end the agent's session before the late confirmations
 - Team rule: the agent may only self-undo free, full-refund, self-serve actions during its session. In the scripted demo the whole chain must go to the human.
