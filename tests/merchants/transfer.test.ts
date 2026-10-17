@@ -3,7 +3,7 @@ import { createFakeDeps, createMerchants } from "../../src/merchants/index.js";
 import type { BookingRequest } from "../../src/types.js";
 import { DEMO_NOW, extractJsonLd } from "../helpers/demo.js";
 
-const TASK_EMAIL = "task-nyc@inbox.proxy.example";
+const TASK_EMAIL = "task_nyc@tasks.proxy.example";
 const SENDER = "proxy@tasks.proxy.example";
 
 function transferRequest(overrides: Partial<BookingRequest> = {}): BookingRequest {
@@ -72,20 +72,19 @@ describe("transfer company: the support desk", () => {
     ...overrides,
   });
 
-  it("approves a cancellation before the cutoff, refunds through Stripe and replies with REFUND APPROVED", async () => {
+  it("approves a cancellation before the cutoff, agrees the full refund and replies with REFUND APPROVED", async () => {
     const { fake, merchants } = setup();
     const { ref, stripe_charge_id } = await merchants.book(transferRequest());
 
     const reply = await merchants.supportEmail("transfer", email(ref), DEMO_NOW);
 
     expect(reply).toMatchObject({ approved: true, ref, refund_amount: 18800 });
-    expect(reply.stripe_refund_id).toMatch(/^re_test_/);
-    expect(fake.refunds).toEqual([expect.objectContaining({ charge_id: stripe_charge_id, amount: 18800 })]);
+    expect(merchants.getOrder(ref)).toMatchObject({ status: "cancelled", refund_amount: 18800 });
     expect(reply.reply.to).toBe(SENDER);
     expect(reply.reply.subject).toBe(`Re: Cancel booking ${ref}`);
     expect(reply.reply.body).toContain("REFUND APPROVED");
     expect(reply.reply.body).toContain("$188.00");
-    expect(reply.reply.body).toContain(reply.stripe_refund_id as string);
+    expect(reply.reply.body).not.toContain("re_");
     expect(reply.reply.html).toContain("REFUND APPROVED");
     expect(merchants.getOrder(ref)?.status).toBe("cancelled");
   });
@@ -114,7 +113,7 @@ describe("transfer company: the support desk", () => {
     const denied = await late.merchants.supportEmail("transfer", email(b.ref), "2026-11-02T00:00:00.001Z");
     expect(denied.approved).toBe(false);
     expect(denied.reply.body).toContain("REFUND DENIED");
-    expect(late.fake.refunds).toHaveLength(0);
+    expect(late.merchants.getOrder(b.ref)?.status).toBe("confirmed");
   });
 
   it("denies an unknown reference", async () => {
@@ -122,7 +121,7 @@ describe("transfer company: the support desk", () => {
     const reply = await merchants.supportEmail("transfer", email("TRF-NOPE00"), DEMO_NOW);
     expect(reply).toMatchObject({ approved: false, ref: "TRF-NOPE00" });
     expect(reply.reply.body).toContain("REFUND DENIED");
-    expect(fake.refunds).toHaveLength(0);
+    expect(fake.charges).toHaveLength(0);
   });
 
   it("asks for a booking reference when there is none", async () => {
@@ -132,14 +131,23 @@ describe("transfer company: the support desk", () => {
     expect(reply.reply.body).toContain("TRF-ABC123");
   });
 
-  it("does not refund a booking twice", async () => {
-    const { fake, merchants } = setup();
+  it("is idempotent: a second email repeats the same approval and amount, so a retry works", async () => {
+    const { merchants } = setup();
+    const { ref } = await merchants.book(transferRequest());
+    const first = await merchants.supportEmail("transfer", email(ref), DEMO_NOW);
+    const second = await merchants.supportEmail("transfer", email(ref), DEMO_NOW);
+    expect(second).toMatchObject({ approved: true, ref, refund_amount: 18800 });
+    expect(second.reply.body).toContain("REFUND APPROVED");
+    expect(second.reply.body).toContain("already cancelled");
+    expect(second.refund_amount).toBe(first.refund_amount);
+  });
+
+  it("keeps approving a retry after the free-cancellation cutoff has passed", async () => {
+    const { merchants } = setup();
     const { ref } = await merchants.book(transferRequest());
     await merchants.supportEmail("transfer", email(ref), DEMO_NOW);
-    const second = await merchants.supportEmail("transfer", email(ref), DEMO_NOW);
-    expect(second.approved).toBe(false);
-    expect(second.reply.body).toContain("already been refunded");
-    expect(fake.refunds).toHaveLength(1);
+    const retry = await merchants.supportEmail("transfer", email(ref), "2026-11-02T12:00:00.000Z");
+    expect(retry).toMatchObject({ approved: true, refund_amount: 18800 });
   });
 
   it("refuses support emails for merchants that have no support desk", async () => {

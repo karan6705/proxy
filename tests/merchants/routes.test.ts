@@ -21,7 +21,7 @@ async function call(routes: RouteHandler[], method: HttpMethod, path: string, bo
 
 const flightBody = {
   task_id: "task_nyc",
-  task_email: "task-nyc@inbox.proxy.example",
+  task_email: "task_nyc@tasks.proxy.example",
   item: "SFO-JFK",
   dates: { start: "2026-11-03" },
   amount: 41200,
@@ -70,7 +70,7 @@ describe("merchant routes: airline", () => {
     const cancelled = await call(routes, "POST", "/merchants/airline/cancel", { ref });
     expect(cancelled.status).toBe(200);
     expect(cancelled.body).toMatchObject({ ok: true, refund_amount: 41200 });
-    expect(fake.refunds).toHaveLength(1);
+    expect(cancelled.body).toMatchObject({ stripe_refund_id: null });
   });
 
   it("refuses the cancel once the simulated clock passes the 24-hour window", async () => {
@@ -130,7 +130,7 @@ describe("merchant routes: hotel agent", () => {
 });
 
 describe("merchant routes: transfer support desk", () => {
-  it("approves, refunds and delivers the reply email", async () => {
+  it("approves and delivers the reply email, leaving the refund to the orchestrator", async () => {
     const { routes, fake } = setup();
     const { ref } = (
       await call(routes, "POST", "/merchants/transfer/book", {
@@ -149,7 +149,7 @@ describe("merchant routes: transfer support desk", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ approved: true, ref, refund_amount: 18800 });
-    expect(fake.refunds).toHaveLength(1);
+    expect(response.body).not.toHaveProperty("stripe_refund_id");
     const reply = fake.emails.at(-1);
     expect(reply?.to).toBe("proxy@tasks.proxy.example");
     expect(reply?.body).toContain("REFUND APPROVED");

@@ -10,7 +10,7 @@ import type {
 } from "../../src/types.js";
 import { DEMO_NOW, extractJsonLd, requestReversal } from "../helpers/demo.js";
 
-const TASK_EMAIL = "task-nyc@inbox.proxy.example";
+const TASK_EMAIL = "task_nyc@tasks.proxy.example";
 
 function hotelRequest(overrides: Partial<BookingRequest> = {}): BookingRequest {
   return {
@@ -105,19 +105,18 @@ describe("hotel agent: the demo negotiation (store credit, push back, 85%)", () 
     });
   });
 
-  it("counters with an 85% partial refund after the push back, then refunds it on accept_counter", async () => {
+  it("counters with an 85% partial refund after the push back, then agrees to it on accept_counter", async () => {
     const { agent, merchants, fake } = setup();
     const { ref, stripe_charge_id } = await merchants.book(hotelRequest());
 
     await agent.respond(requestReversal(ref, "hotel", 64000), DEMO_NOW);
     const second = await agent.respond(pushBack(2), DEMO_NOW);
     expect(second).toMatchObject({ type: "counter", kind: "partial_refund", amount: 54400, round: 2 });
-    expect(fake.refunds).toHaveLength(0);
+    expect(merchants.getOrder(ref)?.status).toBe("confirmed");
 
     const third = await agent.respond(acceptCounter(3), DEMO_NOW);
     expect(third).toMatchObject({ type: "accept", refund_amount: 54400, round: 3 });
-    expect(fake.refunds).toEqual([expect.objectContaining({ charge_id: stripe_charge_id, amount: 54400 })]);
-    expect(merchants.getOrder(ref)).toMatchObject({ status: "cancelled", refunded_amount: 54400 });
+    expect(merchants.getOrder(ref)).toMatchObject({ status: "cancelled", refund_amount: 54400 });
   });
 
   it("never needs more than 3 rounds", async () => {
@@ -140,7 +139,7 @@ describe("hotel agent: the demo negotiation (store credit, push back, 85%)", () 
     expect((offer.amount / 64000) * 100).toBeGreaterThanOrEqual(80);
   });
 
-  it("holds the same offer if pushed back again, and refunds only once", async () => {
+  it("holds the same offer if pushed back again, and agrees the refund only once", async () => {
     const { agent, merchants, fake } = setup();
     const { ref } = await merchants.book(hotelRequest());
     await agent.respond(requestReversal(ref, "hotel", 64000), DEMO_NOW);
@@ -151,7 +150,7 @@ describe("hotel agent: the demo negotiation (store credit, push back, 85%)", () 
     await agent.respond(acceptCounter(3), DEMO_NOW);
     const replay = await agent.respond(acceptCounter(3), DEMO_NOW);
     expect(replay).toMatchObject({ type: "deny", reason: "No open negotiation." });
-    expect(fake.refunds).toHaveLength(1);
+    expect(merchants.getOrder(ref)).toMatchObject({ status: "cancelled", refund_amount: 54400 });
   });
 
   it("repeats the standing offer while Proxy asks the human", async () => {
@@ -167,7 +166,7 @@ describe("hotel agent: the demo negotiation (store credit, push back, 85%)", () 
     await agent.respond(requestReversal(ref, "hotel", 64000), DEMO_NOW);
     const reply = await agent.respond(acceptCounter(2), DEMO_NOW);
     expect(reply).toMatchObject({ type: "accept", refund_amount: 0 });
-    expect(fake.refunds).toHaveLength(0);
+    expect(merchants.getOrder(ref)).toMatchObject({ status: "credited", refund_amount: 0 });
     expect(merchants.getOrder(ref)?.status).toBe("credited");
   });
 
@@ -184,14 +183,14 @@ describe("hotel agent: other behaviors and refusals", () => {
     const { agent, merchants, fake } = setup({ behavior: "accept_full" });
     const { ref } = await merchants.book(hotelRequest());
     expect(await agent.respond(requestReversal(ref, "hotel", 64000), DEMO_NOW)).toMatchObject({ type: "accept", refund_amount: 64000, round: 1 });
-    expect(fake.refunds).toHaveLength(1);
+    expect(merchants.getOrder(ref)).toMatchObject({ status: "cancelled", refund_amount: 64000 });
   });
 
   it("denies when configured to", async () => {
     const { agent, merchants, fake } = setup({ behavior: "deny" });
     const { ref } = await merchants.book(hotelRequest());
     expect(await agent.respond(requestReversal(ref, "hotel", 64000), DEMO_NOW)).toMatchObject({ type: "deny" });
-    expect(fake.refunds).toHaveLength(0);
+    expect(merchants.getOrder(ref)?.status).toBe("confirmed");
   });
 
   it("denies an unknown booking reference", async () => {

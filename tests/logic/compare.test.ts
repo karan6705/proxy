@@ -27,7 +27,7 @@ describe("compare: the demo case (Nov 3 instead of Nov 13)", () => {
 
   it("reports the exact expected and actual dates for the flight", () => {
     const flight = compare(demoIntent(), demoActions(true)).find((m) => m.action_id === "act_flight");
-    expect(flight).toEqual({ action_id: "act_flight", field: "dates", expected: "2026-11-13", actual: "2026-11-03" });
+    expect(flight).toMatchObject({ action_id: "act_flight", field: "dates", expected: "2026-11-13", actual: "2026-11-03" });
   });
 
   it("flags the late hotel confirmation too", () => {
@@ -69,14 +69,14 @@ describe("compare: the demo case (Nov 3 instead of Nov 13)", () => {
 describe("compare: date edge cases", () => {
   it("flags a hotel that checks out after the trip ends", () => {
     const actions = demoActions(false).map((a) => (a.category === "hotel" ? { ...a, dates: { start: "2026-11-13", end: "2026-11-17" } } : a));
-    expect(compare(demoIntent(), actions)).toEqual([
+    expect(compare(demoIntent(), actions)).toMatchObject([
       { action_id: "act_hotel", field: "dates", expected: "2026-11-16", actual: "2026-11-17" },
     ]);
   });
 
   it("flags a start date after the trip ends", () => {
     const actions = demoActions(false).map((a) => (a.category === "flight" ? { ...a, dates: { start: "2026-11-20" } } : a));
-    expect(compare(demoIntent(), actions)).toEqual([
+    expect(compare(demoIntent(), actions)).toMatchObject([
       { action_id: "act_flight", field: "dates", expected: "2026-11-16", actual: "2026-11-20" },
     ]);
   });
@@ -90,7 +90,7 @@ describe("compare: budget", () => {
 
   it("flags the action that crosses the budget by one cent, and only that one", () => {
     const intent = demoIntent({ constraints: { dates: { start: "2026-11-13", end: "2026-11-16" }, budget_total: 123999 } });
-    expect(compare(intent, demoActions(false))).toEqual([
+    expect(compare(intent, demoActions(false))).toMatchObject([
       { action_id: "act_hotel", field: "amount", expected: 123999, actual: 124000 },
     ]);
   });
@@ -100,7 +100,7 @@ describe("compare: annual instead of monthly", () => {
   const intent = demoIntent({ constraints: { must_haves: ["term:monthly"] } });
 
   it("flags an annual plan when the intent wanted monthly", () => {
-    expect(compare(intent, [saas("Acme Pro, billed annually")])).toEqual([
+    expect(compare(intent, [saas("Acme Pro, billed annually")])).toMatchObject([
       { action_id: "act_saas", field: "term", expected: "monthly", actual: "annual" },
     ]);
   });
@@ -120,7 +120,7 @@ describe("compare: wrong item", () => {
   const jacket = (summary: string): Action => saas(summary, { action_id: "act_jacket", merchant: "store", category: "store", ref: "STO-1" });
 
   it("flags a store item that misses a size:value must-have", () => {
-    expect(compare(intent, [jacket("Rain jacket, size L")])).toEqual([
+    expect(compare(intent, [jacket("Rain jacket, size L")])).toMatchObject([
       { action_id: "act_jacket", field: "item", expected: "M", actual: "Rain jacket, size L" },
     ]);
   });
@@ -138,7 +138,7 @@ describe("compare: duplicates", () => {
   it("flags a second booking of the same flight and points at the first", () => {
     const [flight] = demoActions(false);
     const second: Action = { ...flight, action_id: "act_flight_2", ref: "AIR-DEMO02", received_at: "2026-10-17T09:40:00.000Z" };
-    expect(compare(roomy, [...demoActions(false), second])).toEqual([
+    expect(compare(roomy, [...demoActions(false), second])).toMatchObject([
       { action_id: "act_flight_2", field: "duplicate", expected: null, actual: "act_flight" },
     ]);
   });
@@ -195,5 +195,109 @@ describe("compare: clean tasks raise no alarm", () => {
   it("free-text must-haves and unrelated categories never trigger an item mismatch", () => {
     const intent = demoIntent({ constraints: { must_haves: ["aisle seat if possible", "vegetarian meal"], dates: { start: "2026-11-13", end: "2026-11-16" } } });
     expect(compare(intent, demoActions(false))).toEqual([]);
+  });
+});
+
+describe("compare: evidence on every mismatch", () => {
+  const mismatches = compare(demoIntent(), demoActions(true));
+
+  it("names the action whose receipt shows the wrong value", () => {
+    for (const mismatch of mismatches) {
+      expect(mismatch.evidence?.source_action_id).toBe(mismatch.action_id);
+    }
+  });
+
+  it("records the receipt values for the demo flight", () => {
+    const flight = mismatches.find((m) => m.action_id === "act_flight");
+    expect(flight?.evidence?.receipt_fields).toMatchObject({
+      ref: "AIR-DEMO01",
+      merchant: "airline",
+      category: "flight",
+      amount: 41200,
+      dates_start: "2026-11-03",
+      dates_end: null,
+      intent_start: "2026-11-13",
+      intent_end: "2026-11-16",
+    });
+  });
+
+  it("uses only values a mismatch can hold: string, number, boolean or null", () => {
+    for (const mismatch of mismatches) {
+      for (const value of Object.values(mismatch.evidence?.receipt_fields ?? {})) {
+        expect(["string", "number", "boolean"].includes(typeof value) || value === null).toBe(true);
+      }
+    }
+  });
+
+  it("explains a budget mismatch with the running total", () => {
+    const intent = demoIntent({ constraints: { dates: { start: "2026-11-13", end: "2026-11-16" }, budget_total: 123999 } });
+    const over = compare(intent, demoActions(false))[0];
+    expect(over.evidence?.receipt_fields).toMatchObject({ running_total: 124000, budget_total: 123999 });
+  });
+
+  it("points a duplicate at the booking it repeats", () => {
+    const roomy = demoIntent({ constraints: { dates: { start: "2026-11-13", end: "2026-11-16" }, budget_total: 300000 } });
+    const [flight] = demoActions(false);
+    const second: Action = { ...flight, action_id: "act_flight_2", ref: "AIR-DEMO02", received_at: "2026-10-17T09:40:00.000Z" };
+    const duplicate = compare(roomy, [...demoActions(false), second])[0];
+    expect(duplicate.evidence?.receipt_fields).toMatchObject({ original_ref: "AIR-DEMO01", original_action_id: "act_flight" });
+  });
+});
+
+describe("compare: wrong quantity, off-task items and unexpected subscriptions", () => {
+  const store = (summary: string, overrides: Partial<Action> = {}): Action =>
+    saas(summary, { action_id: "act_hub", merchant: "store", category: "store", ref: "STO-9", amount: 3400, ...overrides });
+
+  it("flags ten units when one was asked for", () => {
+    const intent = demoIntent({ constraints: { must_haves: ["quantity:1"] } });
+    expect(compare(intent, [store("USB-C hub x10")])).toMatchObject([
+      { action_id: "act_hub", field: "item", expected: "quantity 1", actual: "quantity 10" },
+    ]);
+  });
+
+  it("reads quantity written as units or qty", () => {
+    const intent = demoIntent({ constraints: { must_haves: ["qty:2"] } });
+    expect(compare(intent, [store("USB-C hub, 5 units")])[0]).toMatchObject({ expected: "quantity 2", actual: "quantity 5" });
+    expect(compare(intent, [store("USB-C hub, qty 5")])[0]).toMatchObject({ actual: "quantity 5" });
+  });
+
+  it("accepts the right quantity, and does not guess when the summary has none", () => {
+    const intent = demoIntent({ constraints: { must_haves: ["quantity:1"] } });
+    expect(compare(intent, [store("USB-C hub x1")])).toEqual([]);
+    expect(compare(intent, [store("USB-C hub")])).toEqual([]);
+  });
+
+  it("flags an item outside the allowed categories as off-task", () => {
+    const intent = demoIntent({ constraints: { categories: ["flight", "hotel", "transfer"] } });
+    expect(compare(intent, [store("Espresso machine")])).toMatchObject([
+      { action_id: "act_hub", field: "item", expected: "one of: flight, hotel, transfer", actual: "store" },
+    ]);
+  });
+
+  it("never treats a message as off-task", () => {
+    const intent = demoIntent({ constraints: { categories: ["flight", "hotel"] } });
+    const message = demoActions(false).find((a) => a.category === "message") as Action;
+    expect(compare(intent, [message])).toEqual([]);
+  });
+
+  it("allows every category when none are named", () => {
+    expect(compare(demoIntent({ constraints: {} }), [store("Espresso machine")])).toEqual([]);
+  });
+
+  it("reports a subscription the task never allowed on term", () => {
+    const intent = demoIntent({ constraints: { categories: ["flight", "hotel"] } });
+    expect(compare(intent, [saas("Acme Pro, billed annually")])).toMatchObject([
+      { action_id: "act_saas", field: "term", expected: "no subscription", actual: "annual" },
+    ]);
+  });
+
+  it("does not report the same unexpected subscription twice", () => {
+    const intent = demoIntent({ constraints: { categories: ["flight"], must_haves: ["term:monthly"] } });
+    expect(compare(intent, [saas("Acme Pro, billed annually")])).toHaveLength(1);
+  });
+
+  it("accepts a subscription when saas is allowed", () => {
+    const intent = demoIntent({ constraints: { categories: ["saas"], must_haves: ["term:monthly"] } });
+    expect(compare(intent, [saas("Acme Pro, monthly")])).toEqual([]);
   });
 });

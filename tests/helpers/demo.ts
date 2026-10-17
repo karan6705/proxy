@@ -29,7 +29,7 @@ export const PREFERENCES: Preferences = {
 export function demoIntent(overrides: Partial<Intent> = {}): Intent {
   return {
     task_id: "task_nyc",
-    task_email: "task-nyc@inbox.proxy.example",
+    task_email: "task_nyc@tasks.proxy.example",
     goal: "NYC trip for the Nov 13 conference, under $1,500",
     constraints: {
       dates: { start: "2026-11-13", end: "2026-11-16" },

@@ -3,7 +3,7 @@ import { createFakeDeps, createMerchants, MerchantError } from "../../src/mercha
 import type { BookingRequest } from "../../src/types.js";
 import { DEMO_NOW, FLIGHT_BOOKED_AT, extractJsonLd } from "../helpers/demo.js";
 
-const TASK_EMAIL = "task-nyc@inbox.proxy.example";
+const TASK_EMAIL = "task_nyc@tasks.proxy.example";
 const plus = (ts: string, ms: number): string => new Date(Date.parse(ts) + ms).toISOString();
 const HOUR = 60 * 60 * 1000;
 
@@ -154,18 +154,17 @@ describe("airline: bad input and failures", () => {
 });
 
 describe("airline: self-serve cancel (24-hour rule)", () => {
-  it("refunds the full fare 3h 40m before the window closes", async () => {
+  it("agrees the full fare 3h 40m before the window closes, without refunding anything itself", async () => {
     const { fake, merchants } = setup();
-    const { ref, stripe_charge_id } = await merchants.book(flightRequest());
+    const { ref } = await merchants.book(flightRequest());
 
     const result = await merchants.selfServeCancel("airline", ref, DEMO_NOW);
 
-    expect(result).toMatchObject({ ok: true, refund_amount: 41200 });
-    expect(result.stripe_refund_id).toMatch(/^re_test_/);
-    expect(fake.refunds).toEqual([
-      expect.objectContaining({ charge_id: stripe_charge_id, amount: 41200, refund_id: result.stripe_refund_id }),
-    ]);
-    expect(merchants.getOrder(ref)).toMatchObject({ status: "cancelled", refunded_amount: 41200 });
+    // The merchant only agrees the amount. The orchestrator issues and verifies the Stripe refund.
+    expect(result).toEqual({ ok: true, refund_amount: 41200, stripe_refund_id: null });
+    expect(merchants.getOrder(ref)).toMatchObject({ status: "cancelled", refund_amount: 41200 });
+    expect(fake.charges).toHaveLength(1);
+    expect(Object.keys(fake.deps).sort()).toEqual(["charge", "deliver"]);
   });
 
   it("allows the cancel at exactly 24 hours and refuses one millisecond later", async () => {
@@ -179,16 +178,16 @@ describe("airline: self-serve cancel (24-hour rule)", () => {
     expect(refused).toMatchObject({ ok: false, refund_amount: 0, stripe_refund_id: null });
     expect(refused.reason).toContain("24-hour");
     expect(refused.reason).toContain("$75.00");
-    expect(late.fake.refunds).toHaveLength(0);
+    expect(late.merchants.getOrder(b.ref)?.status).toBe("confirmed");
   });
 
   it("does not apply when the flight departs less than 7 days after booking", async () => {
-    const { fake, merchants } = setup();
+    const { merchants } = setup();
     const { ref } = await merchants.book(flightRequest({ dates: { start: "2026-10-20" } }));
     const result = await merchants.selfServeCancel("airline", ref, plus(FLIGHT_BOOKED_AT, HOUR));
     expect(result.ok).toBe(false);
     expect(result.reason).toContain("7 days");
-    expect(fake.refunds).toHaveLength(0);
+    expect(merchants.getOrder(ref)?.status).toBe("confirmed");
   });
 
   it("applies at exactly 7 days out", async () => {
@@ -197,13 +196,22 @@ describe("airline: self-serve cancel (24-hour rule)", () => {
     expect((await merchants.selfServeCancel("airline", ref, "2026-10-20T01:00:00.000Z")).ok).toBe(true);
   });
 
-  it("refuses to cancel the same booking twice and never refunds twice", async () => {
-    const { fake, merchants } = setup();
+  it("is idempotent: cancelling again returns the same agreed refund, so an orchestrator retry works", async () => {
+    const { merchants } = setup();
+    const { ref } = await merchants.book(flightRequest());
+    const first = await merchants.selfServeCancel("airline", ref, DEMO_NOW);
+    const again = await merchants.selfServeCancel("airline", ref, DEMO_NOW);
+    expect(again).toEqual(first);
+    expect(again).toEqual({ ok: true, refund_amount: 41200, stripe_refund_id: null });
+    expect(merchants.getOrder(ref)?.refund_amount).toBe(41200);
+  });
+
+  it("keeps returning the agreed refund on a retry long after the 24-hour window has closed", async () => {
+    const { merchants } = setup();
     const { ref } = await merchants.book(flightRequest());
     await merchants.selfServeCancel("airline", ref, DEMO_NOW);
-    const again = await merchants.selfServeCancel("airline", ref, DEMO_NOW);
-    expect(again).toMatchObject({ ok: false, reason: "This booking is already cancelled." });
-    expect(fake.refunds).toHaveLength(1);
+    const retry = await merchants.selfServeCancel("airline", ref, plus(FLIGHT_BOOKED_AT, 48 * HOUR));
+    expect(retry).toMatchObject({ ok: true, refund_amount: 41200 });
   });
 
   it("refuses an unknown reference", async () => {
@@ -211,11 +219,4 @@ describe("airline: self-serve cancel (24-hour rule)", () => {
     expect(await merchants.selfServeCancel("airline", "AIR-NOPE00", DEMO_NOW)).toMatchObject({ ok: false, reason: "Unknown booking reference." });
   });
 
-  it("reports a Stripe refund failure as an upstream error and keeps the booking", async () => {
-    const { fake, merchants } = setup();
-    const { ref } = await merchants.book(flightRequest());
-    fake.failures.refund = true;
-    await expect(merchants.selfServeCancel("airline", ref, DEMO_NOW)).rejects.toMatchObject({ kind: "upstream_unavailable" });
-    expect(merchants.getOrder(ref)?.status).toBe("confirmed");
-  });
 });
