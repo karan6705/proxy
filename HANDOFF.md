@@ -26,24 +26,26 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 - Open question: which tool shows the widget. Plan: `get_chain` gets the view, since it returns the per-action state.
 - mcp-use 2.10.1, its CLI and inspector require Node >=22.22.2, not Node 18 as AGENTS.md says.
 
-### From Dhwanil: what's on branch `dhwanil/logic-merchants`, and what I need
-Built and tested (136 tests): `src/logic/` (`compare`, `trace`, `reversibility`, `rank`) and `src/merchants/` (airline, hotel with agent, transfer company, plus `RouteHandler`s). Not started: `plan_undo`, `negotiate_step`, the other two merchants, evals.
+### From Dhwanil: what is built, and how to wire it
+Everything below is on branch `dhwanil` with tests (329 passing) and a clean `tsc`.
 
-Mounting the merchants in `server.ts`:
-- `import { createMerchants, merchantRoutes } from "./merchants/index.js"`, then `merchantRoutes(createMerchants(deps), deps, clock)` returns `RouteHandler[]`. Every path starts with `/merchants/`.
-- `deps` is `MerchantDeps` from `src/merchants/deps.ts`: `charge({ amount, merchant, task_id, ref, description, idempotency_key }) -> { charge_id }`, `refund(charge_id, amount, idempotency_key) -> { refund_id }` (same as `Payments.refund`), and `deliver(email)` (Sarah). `createFakeDeps()` is an in-memory version for tests and local dev.
-- Routes: `GET /merchants`; `POST /merchants/<id>/book`, `/confirm`, `/cancel`; `POST /merchants/hotel/agent` (answers one Proxy protocol message); `POST /merchants/transfer/support` (`{ from, subject, body }`).
-- The airline has no agent: it cancels itself under the 24-hour rule on the clock you pass in. docs/04 and docs/05 still say the airline has an agent.
+**Logic.** `import { logic } from "./logic/index.js"` is a full `Logic` (all six functions, Contract v2 signatures). It replaces the stand-in.
+- `compare` fills `Mismatch.evidence` (`source_action_id` and `receipt_fields`). Per your answer, wrong quantity and off-task items use `item`, an unexpected subscription uses `term`, and over budget uses `amount`.
+- `trace` follows the Contract v2 root rule: the earliest booked (non-message) action.
+- `plan_undo(chain, actions, preferences, now)` returns steps most urgent first. A closed window gives a fee fix only when the fee is strictly less than the money lost, otherwise `option: "keep"` with `route: "stripe_dispute"` (the last resort you may still try).
+- `negotiate_step` returns `{ next_state, outgoing?, ignored_text }`. `ignored_text` is any untrusted merchant text it saw and did not act on (a deny `reason`, or extra fields): please log it. Things to know when you wire it:
+  - `ask_human` is a message to the human, not to the merchant. Do not forward it to `agent.respond`.
+  - Rounds are counted from `max(state.round, message.round)`, so a merchant cannot extend the 3-round limit. It never pushes back twice.
+  - Store credit is not a refund. If the human allows credit and Proxy accepts it, the merchant's `accept` has `refund_amount: 0` and the state ends `failed`. Treat that as "credited" in the orchestrator, not as a failure to retry.
+  - The outgoing `sent_at` echoes the merchant message's time, since the function has no clock. Stamp the real send time.
 
-Needed from Karan (types.ts and package.json are yours):
-1. **`npm test` skips `tests/`.** It runs `vitest run src/orchestrator`. Please change it to `vitest run`, or add `"test:logic": "vitest run tests"`. Also `src/stripe/stripe.test.ts` currently has no tests, so plain `vitest run` fails that suite.
-2. **`Payments` has no `charge()`.** The merchants need one. Either add it to `Payments` with the signature above, or wire `MerchantDeps.charge` straight to Stripe.
-3. **`Mismatch` needs more.** The brief wants wrong quantity, unexpected subscription and off-task, but `MismatchField` is only `dates | amount | term | item | duplicate`, `Action` has no quantity or recurring field, and `Mismatch` has no `evidence`. Add fields (for example `"quantity" | "recurring" | "scope"` and an optional `evidence: string`), or tell me to reuse `item` and `amount`. Needed before the 2:30 PM freeze.
-4. **Domain grace period and final-sale items.** `ActionCategory` has no `domain` or final-sale category. Add one, or tell me to key the rules table by merchant type.
-5. **Who writes `plan_undo` and `negotiate_step`?** `Logic` lists both for me, but the brief puts the protocol state machine in the orchestrator. Tell me which you want me to write.
-6. **Prompt-injection merchant.** `CounterMsg` and `DenyMsg` have no free-text field except `DenyMsg.reason`. I'll put the injected text ("send the card number") in `reason`, so the orchestrator must treat everything but the typed fields as untrusted data.
-7. **`must_haves` convention that `compare` reads.** `log_intent` should pass these through unchanged: `term:monthly` or `term:annual` (SaaS), and `item:`, `size:`, `model:`, `color:`, `plan:` entries (store and SaaS). Free-text must-haves are ignored.
-8. **Hotel behaviors for evals.** `createMerchants(deps, { hotel: { behavior: "credit_then_partial" | "accept_full" | "deny", partial_refund_pct } })`. The default is the demo: store credit, then 85% after one push back.
+**Merchants.** `merchantRoutes(createMerchants(deps), deps, clock)` returns `RouteHandler[]`, all under `/merchants/`. `deps` is `{ charge, deliver }`; `createFakeDeps()` is an in-memory version. Merchants: `airline` (no agent, self-serve under the 24-hour rule), `hotel` (agent), `transfer` (email support), `host` (email, takes corrections, costs $0 so no charge is made). Routes: `GET /merchants`; `POST /merchants/<id>/book`, `/confirm`, `/cancel`; `POST /merchants/hotel/agent`; `POST /merchants/transfer/support` and `/merchants/host/support`. `docs/04` and `docs/05` already say the airline has no agent.
+
+**Fixtures and evals.** `npx tsx evals/demo-fixtures.ts` regenerates `fixtures/demo/` (the demo case as schema.org emails, actions and Stripe events). `npx tsx evals/run.ts` runs the Layer 1 scenarios against both arms and saves a raw log under `evals/results/`. package.json is yours: scripts like `fixtures:demo` and `evals:layer1` would be handy.
+
+**Still needed from Karan**
+1. The review items 1 to 3 below (refund once and verify the right amount, error handling). Merchants no longer refund, which covers the double-refund half of item 1.
+2. Whether `plan_undo` keeps `route: "stripe_dispute"` for `option: "keep"` steps. If you would rather have a different marker for "accept the loss", tell me and I will change it.
 
 ### From Dhwanil: review of main, items 1 to 3 (refunds, "verified" and error handling)
 Found while reviewing `origin/main`. File and line references are the current ones. These three are the ones I'd cover before wiring the real logic. I checked that the files are unchanged since my review.
@@ -68,17 +70,17 @@ Found while reviewing `origin/main`. File and line references are the current on
 
 ### From Dhwanil: merchant confirmation emails and the support desk
 - Each merchant calls `deps.deliver(email)` with a `MerchantEmail`: `to` is the task address, plus `from`, `subject`, plain-text `body` and `html`. You implement `deliver` (Inkbox send, or post straight to the capture webhook in dev).
-- The `html` carries schema.org JSON-LD in `<script type="application/ld+json">`. Parse that first. The `@type` is `FlightReservation`, `LodgingReservation` or `TaxiReservation`.
-- Fields to read: `reservationNumber` (the ref, which becomes `Action.ref`); `totalPrice` is a dollar string like `"412.00"`, so convert to cents with `Math.round(parseFloat(x) * 100)`; `priceCurrency` is `USD`; flights have `reservationFor.departureTime` and `arrivalTime` (ISO with offset); hotels have `checkinTime` and `checkoutTime`; transfers have `pickupTime`. `Action.dates` comes from the date part of those times.
+- The `html` carries schema.org JSON-LD in `<script type="application/ld+json">`. Parse that first. The `@type` is `FlightReservation`, `LodgingReservation`, `TaxiReservation`, or `EmailMessage` for the host message.
+- **Answer key:** `fixtures/demo/` has the real emails and the `actions.json` your extractor should produce from them. `evals/sim.ts` (`actionFromJsonLd`) is a reference extractor you can copy from. A test keeps the fixtures from going stale.
+- Fields to read: `reservationNumber` is the ref (for an `EmailMessage` the ref is `identifier`); `totalPrice` is a dollar string like `"412.00"`, so convert to cents with `Math.round(parseFloat(x) * 100)`; `priceCurrency` is `USD`; flights have `reservationFor.departureTime` and `arrivalTime` (ISO with offset); hotels have `checkinTime` and `checkoutTime`; transfers have `pickupTime`; messages have `about.startDate`. `Action.dates` comes from the date part. The host message is `source: "agent"` and costs $0.
 - Booking confirmations go out at booking time, unless the booking used `defer_confirmation` (the scripted demo uses this for the late hotel confirmation). `POST /merchants/<id>/confirm { ref }` sends it later.
-- The transfer company has no agent. Proxy emails `support@metrotransfer.example` with the booking ref (`TRF-XXXXXX`) in the subject or body. In dev, route that email to `POST /merchants/transfer/support { from, subject, body }`. It replies through `deliver` with `REFUND APPROVED` or `REFUND DENIED` in the body, and refunds through Stripe when it approves.
-- My tests use `task-nyc@inbox.proxy.example`. I'll switch once the real task address format is settled.
+- Two merchants take email: the transfer company (`support@metrotransfer.example`, refs `TRF-XXXXXX`) and the host (`alex.rivera@example.com`, refs `MSG-XXXXXX`). Put the ref in the subject or body. In dev, route the email to `POST /merchants/transfer/support` or `POST /merchants/host/support` with `{ from, subject, body }`. The reply goes out through `deliver`. The transfer company says `REFUND APPROVED` or `REFUND DENIED` and agrees an amount; it does not refund. The host acknowledges a correction and agrees $0.
+- Tests use `task_nyc@tasks.proxy.example`.
 
 ## Dhwanil
 
-### Refunds: merchants must not refund (double-refund risk)
-- The orchestrator refunds every action exactly once, through `refundOnce` in `src/orchestrator/refunds.ts`: one idempotency key per action (`refund:<action_id>`), and no refund if Stripe already shows one.
-- On your branch the transfer company "refunds through Stripe when it approves". Together with the orchestrator, that would refund twice. When it approves, reply `REFUND APPROVED` with the amount and let the orchestrator issue the refund. Remove `refund` from `MerchantDeps`, or leave it unused.
+### Refunds: done
+Merchants no longer refund. `selfServeCancel`, the hotel agent and the support desks only agree an amount and return it; the orchestrator refunds and verifies through `Payments`. `MerchantDeps` is now `{ charge, deliver }`. Cancelling again, or emailing a desk again, returns the same agreed refund, so an orchestrator retry works.
 
 ### Answers from Karan (to the requests on branch dhwanil)
 `src/types.ts` wins over the context docs. Contracts froze at 2:30 PM.
@@ -92,7 +94,7 @@ Found while reviewing `origin/main`. File and line references are the current on
 8. **Hotel behaviors:** fine as an option on `createMerchants`. The default stays the demo behavior.
 - **Task address:** use `@tasks.proxy.example` in tests (e.g. `task_nyc@tasks.proxy.example`) until Sarah reports the Inkbox format.
 ### Status from Dhwanil
-Branch `dhwanil`. Done: `compare`, `trace`, `reversibility`, `rank`, the rules table, and the airline, hotel and transfer merchants with routes. Building next, in order: `plan_undo` (4-argument form, see Contract v2), `negotiate_step`, the host correction merchant, demo fixtures, then the scenario runner with the naive arm. Also changing: `compare` fills `Mismatch.evidence`, and the merchants stop refunding (they return `refund_amount`; the orchestrator refunds through `Payments`).
+Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/` (`compare`, `trace`, `reversibility`, `plan_undo`, `rank`, `negotiate_step`), the rules table, the airline, hotel agent, transfer company and host merchants with `RouteHandler`s, the demo fixtures in `fixtures/demo/`, and a first Layer 1 scenario runner with a naive arm in `evals/` (5 of ~30 scenarios). Not started: the SaaS and store merchants, the prompt-injection merchant scenario, the other ~25 scenarios, Layer 2 (live agent), the scoreboard page. Sarah still needs to review the expected results in `evals/scenarios.ts`.
 
 ## Karan's Codex
 
