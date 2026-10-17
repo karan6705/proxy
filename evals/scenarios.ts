@@ -398,8 +398,8 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "S18",
-    title: "Nobody replies, but the human opted in to auto-undo: Proxy acts 20 minutes before the window closes",
-    group: "late confirmation",
+    title: "Nobody replies although the human opted in to auto-undo (known limit: auto-undo is not built yet, so nothing is undone)",
+    group: "known limit",
     intent: intentWith({}, { auto_undo: true }),
     agent_belief: MISREAD_NOV_3,
     assumption: MISREAD_ASSUMPTION,
@@ -410,8 +410,10 @@ export const SCENARIOS: Scenario[] = [
       mismatches: [{ action: "flight", field: "dates" }],
       chains: [{ actions: ["flight"], root: "flight", money_at_risk: 41200 }],
       alert: true,
-      outcomes: { flight: "refund_agreed" },
-      agreed_refund_total: 41200,
+      // The window closes with no reply and the flight stays booked. With auto-undo built, this would be a $412 refund.
+      known_limit: "auto-undo is not built: the 24-hour refund is lost if the human does not reply. Next.",
+      outcomes: { flight: "none" },
+      agreed_refund_total: 0,
     },
   },
 
