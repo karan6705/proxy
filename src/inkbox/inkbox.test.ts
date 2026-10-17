@@ -73,6 +73,13 @@ describe("human channel", () => {
     expect(store.events().at(-1)?.outcome).toBe("ignored:unregistered_number");
   });
 
+  it("logs inbound iMessages as imessage_in and texts as sms_in", async () => {
+    const { channel, store } = await setup();
+    await channel.handleInbound({ from: HUMAN, body: "KEEP", via: "imessage" });
+    await channel.handleInbound({ from: "+14155559999", body: "x", via: "sms" });
+    expect(store.events().filter((e) => e.kind === "imessage_in" || e.kind === "sms_in").map((e) => e.kind)).toEqual(["imessage_in", "sms_in"]);
+  });
+
   it("accepts the human's number in any format", async () => {
     const { channel, replies } = await setup();
     await channel.handleInbound({ from: "1 (415) 555-0100", body: "undo all" });
