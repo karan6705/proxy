@@ -1,0 +1,65 @@
+.lc {
+  --lc-bg: #ffffff;
+  --lc-fg: #1b1d21;
+  --lc-muted: #6b7079;
+  --lc-line: #e4e6ea;
+  --lc-ok: #16794a;
+  --lc-ok-bg: #e7f6ee;
+  --lc-bad: #b42318;
+  --lc-wait: #a3a8b1;
+  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--lc-fg);
+  background: var(--lc-bg);
+  padding: 14px 16px;
+  border-radius: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .lc {
+    --lc-bg: #17191d;
+    --lc-fg: #eceef1;
+    --lc-muted: #9aa0aa;
+    --lc-line: #2a2e35;
+    --lc-ok: #4fd18b;
+    --lc-ok-bg: #12301f;
+    --lc-bad: #ff7a6e;
+    --lc-wait: #5d636d;
+  }
+}
+
+.lc-muted { color: var(--lc-muted); }
+
+.lc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.lc-title { font-weight: 600; font-size: 15px; }
+.lc-sub { color: var(--lc-muted); font-size: 13px; }
+.lc-progress { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--lc-muted); }
+
+.lc-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--lc-line); }
+.lc-row {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  grid-template-areas: "dot what amount" "dot what state";
+  column-gap: 10px;
+  align-items: center;
+  padding: 9px 6px;
+  border-bottom: 1px solid var(--lc-line);
+  transition: background-color 400ms ease;
+}
+.lc-dot { grid-area: dot; width: 10px; height: 10px; border-radius: 50%; background: var(--lc-wait); transition: background-color 400ms ease; }
+.lc-what { grid-area: what; display: flex; flex-direction: column; min-width: 0; }
+.lc-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lc-route { color: var(--lc-muted); font-size: 12px; }
+.lc-amount { grid-area: amount; text-align: right; font-variant-numeric: tabular-nums; }
+.lc-state { grid-area: state; text-align: right; font-size: 12px; color: var(--lc-muted); }
+
+.lc-ok { background: var(--lc-ok-bg); }
+.lc-ok .lc-dot { background: var(--lc-ok); }
+.lc-ok .lc-state { color: var(--lc-ok); font-weight: 600; }
+.lc-bad .lc-dot { background: var(--lc-bad); }
+.lc-bad .lc-state { color: var(--lc-bad); }
+
+.lc-foot { margin-top: 10px; color: var(--lc-muted); font-size: 13px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lc-row, .lc-dot { transition: none; }
+}

@@ -32,8 +32,8 @@ Rules:
 - Each person works on their own branch: karan, sarah, dhwanil. karan-codex (Karan's second agent) merges into karan.
 - Git cannot hold both a branch "karan" and a branch "karan/anything", so never create slash branches under a person's name. Use a hyphen instead (karan-codex).
 - main is the integration branch. Nobody commits to it directly.
-- At each checkpoint (5 PM, 9 PM, 1 AM, 6 AM), rebase on main, run npm test and npm run dev, then open a PR into main. Karan merges them one at a time.
-- Run git fetch && git rebase origin/main at the start of each session.
+- At each checkpoint (5 PM, 9 PM, 1 AM, 6 AM), rebase on main, or git merge origin/main if your branch already has merge commits. Then run npm test and npm run dev, and open a PR into main. Karan merges them one at a time.
+- At the start of each session, run git fetch, then git rebase origin/main, or git merge origin/main if your branch already has merge commits. Rebasing a branch with merge commits flattens them and rewrites commits other branches already contain.
 
 ## How to work
 - Hackathon speed: small working increments, demo path first. No coverage targets. Write tests only where they protect the demo.
