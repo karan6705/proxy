@@ -61,12 +61,11 @@ export function createHumanChannel(deps: HumanChannelDeps) {
 
     if (digits(msg.from) !== registered) {
       // Never reply to a stranger and never echo what they sent.
-      await log("sms_in", "ignored:unregistered_number");
+      await log(via === "imessage" ? "imessage_in" : "sms_in", "ignored:unregistered_number");
       return { status: "ignored", reason: "unregistered_number" };
     }
-    // EventKind has no iMessage-in kind, so both inbound channels log as sms_in with the channel in the outcome.
     const parsed = parseReply(msg.body);
-    await log("sms_in", `${via}:${parsed.kind}`);
+    await log(via === "imessage" ? "imessage_in" : "sms_in", `${via}:${parsed.kind}`);
 
     if (parsed.kind === "opt_out") return { status: "ignored", reason: "opt_out" };
 
