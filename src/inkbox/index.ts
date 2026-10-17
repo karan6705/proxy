@@ -5,3 +5,7 @@ export { parseReply, type ParsedReply } from "./reply.js";
 export { composeChainAlert, formatTimeLeft, type AlertFacts } from "./alert.js";
 export { createVerifier, type WebhookVerifier } from "./verify.js";
 export { createClient, loadSdk } from "./sdk.js";
+export { createA2AAccess, type A2AAccess } from "./a2a.js";
+export { createProtocolInbox, type ProtocolInbox, type ProtocolInboxOptions } from "./inbox.js";
+export { createMerchantBridge, type MerchantBridge, type MerchantBridgeOptions } from "./bridge.js";
+export { parseMerchantMessage, parseProxyMessage, protocolSubject } from "./protocol.js";

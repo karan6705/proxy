@@ -176,6 +176,8 @@ export interface PlanStep {
   cost: Cents;
   /** Latest time this step can still succeed. */
   deadline: Timestamp | null;
+  /** The refund agreed for this action (e.g. an accepted partial-refund counter). Absent means the full action amount. */
+  refund_amount?: Cents;
 }
 
 /** One row of the `steps` table: something the orchestrator did for one action. */
