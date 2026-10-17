@@ -14,9 +14,12 @@
     "deploy": "mcp-use deploy",
     "typecheck": "mcp-use typecheck --entry src/server.ts",
     "test": "vitest run",
-    "check-env": "node --no-warnings --env-file-if-exists=.env scripts/check-env.ts"
+    "check-env": "node --no-warnings --env-file-if-exists=.env scripts/check-env.ts",
+    "demo:reset": "tsx --env-file-if-exists=.env src/agent/reset.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "@modelcontextprotocol/client": "^2.3.1",
     "mcp-use": "2.10.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -26,6 +29,7 @@
     "@types/node": "^22.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }
