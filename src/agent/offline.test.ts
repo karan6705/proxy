@@ -29,11 +29,13 @@ describe("scripted offline mode", () => {
     });
 
     expect(result.task_id).toBe("task_demo");
+    expect(result.task_email).toBe("task-demo@inkboxmail.com");
     expect(client.calls).toEqual(["log_intent", "review"]);
     expect(payments.charges.size).toBe(3);
     expect(control.state.host_actions).toHaveLength(1);
     expect(control.state.ended_tasks).toEqual(["task_demo"]);
     expect(control.state.confirmations).toHaveLength(3);
+    expect(control.state.confirmations.every(({ action }) => action.confidence === undefined)).toBe(true);
     expect(network).not.toHaveBeenCalled();
   });
 });
