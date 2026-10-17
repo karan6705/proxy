@@ -1,6 +1,7 @@
 // The six tools and the mistakes resource, wired to Store, Logic, Inkbox and Payments through the
 // orchestrator. Each returns ok(...) or fail(...), so every error follows the error contract.
 import { createHash } from "node:crypto";
+import { expectedRefund } from "../orchestrator/refunds.js";
 import { checkSelfUndo } from "../orchestrator/self-undo.js";
 import { runSelfServeRoute } from "../orchestrator/routes/self-serve.js";
 import type { Proxy } from "../orchestrator/proxy.js";
@@ -265,13 +266,14 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const verifiedByStripe = new Set<ActionId>();
       for (const a of members) {
         windows[a.action_id] = logic.reversibility(a, now).window_ends_at;
-        if (a.state !== "verified" || a.amount <= 0) continue;
+        const expected = expectedRefund(chain, a);
+        if (a.state !== "verified" || expected <= 0) continue;
         if (!recoveredCache.has(a.action_id)) {
           try {
             const charge = await p.deps.payments.findChargeForAction(a);
             if (charge) {
-              const verification = await p.deps.payments.verifyRefund(charge, a.amount);
-              if (verification.verified && verification.refunded_amount === a.amount) {
+              const verification = await p.deps.payments.verifyRefund(charge, expected);
+              if (verification.verified && verification.refunded_amount === expected) {
                 recoveredCache.set(a.action_id, verification.refunded_amount);
               }
             }
@@ -280,7 +282,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
           }
         }
         const amount = recoveredCache.get(a.action_id);
-        if (amount === a.amount) {
+        if (amount === expected) {
           recovered[a.action_id] = amount;
           verifiedByStripe.add(a.action_id);
         }
