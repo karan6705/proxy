@@ -46,8 +46,8 @@ Needs `@inkbox/sdk` (Karan: see requests below). Every snippet assumes `const in
 | Email out and in | **Yes** | Arrives in about 5 seconds. |
 | Inbound HTML (JSON-LD) | **Yes** | Webhook payload has plain text only; `identity.getMessage(id)` returns `bodyHtml`. Capture fetches it. |
 | Inbound by webhook | Built, **not tested against live Inkbox** | `POST /inkbox/inbound`, signature check with `INKBOX_WEBHOOK_SECRET`. Needs a public URL and a subscription (below). Polling `iterEmails()` works today. |
-| SMS out and in | **Not tested** | Number provisioned, `smsStatus: "ready"`. Needs the human's number, and the human must text `START` first. |
-| iMessage | **Router exists, not tested** | Shared router number `+15555550100`; the human texts `connect @proxy-agent` first. |
+| SMS out and in | **In works, out blocked by the carrier** | Inbound `START` arrived. Outbound is accepted by the API but fails with `40002` (carrier spam filter, "temporary"), twice, with and without a prefix. The human must text `START` first, from the same number that is registered. Retry later; iMessage is the working alert channel today. |
+| iMessage | **Yes, out and in** | Shared router `+15555550100`; the human texts `connect @proxy-agent` first. Outbound was delivered; an inbound `UNDO ALL` from the registered number parsed as `undo_all`. |
 | Outbound phone call | **Not tested** | Needs the human's number. `placeCall` is called in `hosted_agent` mode. |
 | A2A | **Yes** | Needs each sender's **own agent-scoped key**; the admin key is rejected. Verified: Proxy client to `hotel-agent`, task arrives as `submitted`. |
 
@@ -101,7 +101,7 @@ Read `src/logic/compare.ts` and `tests/logic/compare.test.ts` on `origin/dhwanil
 - **Same-ref resend** never reaches `compare` (capture dedupes by ref). Test it at the capture boundary, not as a `compare` scenario.
 
 ### How the pieces plug in (for wiring at 5 PM)
-- `src/db`: `createStoreFromEnv()` (Supabase when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set, otherwise in memory). Run `src/db/schema.sql` once in the Supabase SQL editor; the `events` table rejects updates and deletes with a trigger.
+- `src/db` (**checked live against the team Supabase project on 2026-10-17**: intent, action, chain, step, lesson and event round-trip; the `events` trigger refuses UPDATE and DELETE; test rows with `run_id: live-check` remain because events cannot be deleted): `createStoreFromEnv()` (Supabase when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set, otherwise in memory). Run `src/db/schema.sql` once in the Supabase SQL editor; the `events` table rejects updates and deletes with a trigger.
 - `src/capture`: `createCapture({ store, hooks, clock, llm? })`; routes: `createInboundEmailRoute({ capture, fetchFullMessage })` at `POST /inkbox/inbound`. Mock merchants can use `deliverToCapture(capture)` as their `deliver`.
 - `src/inkbox`: `createInkbox()` implements `Inkbox` (`INKBOX_DRY_RUN=1` logs instead of sending). `createHumanChannel(...)` plus `createHumanRoutes(channel)` give `POST /inkbox/text` and `POST /inkbox/imessage`. `composeChainAlert(...)` builds the one text per chain.
 - `src/web`: `createWebRoutes({ store, clock, channel, humanNumber, controls: process.env.PROXY_DEMO_ROUTES === "1" })` gives `GET /web` (the page), `GET /web/state` and `POST /web/reply` (UNDO ALL / PICK / KEEP buttons; they go through the same human channel as a text, so they are idempotent and respect the window). `store` must be `createStoreFromEnv()` or `createMemoryStore()` because the feed needs `recentEvents`. The scoreboard panel shows whatever JSON `scoreboard()` returns; Dhwanil, give me the results file path and format when it exists.
