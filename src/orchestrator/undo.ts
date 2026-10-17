@@ -383,7 +383,8 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       if (chain.state === "undoing" || chain.state === "reversed" || chain.state === "redo_requested" || chain.state === "redone") return;
       const chosen = picks ? new Set(picks.map((n) => chain.action_ids[n - 1]).filter((id): id is string => Boolean(id))) : null;
       const open = actions.filter((a) => !["verified", "kept"].includes(a.state) && (!chosen || chosen.has(a.action_id)));
-      const plan = logic.plan_undo(chain, open, intent.preferences, clock.now());
+      // plan_undo needs every action in the chain and skips the settled ones itself; PICK narrows it afterwards.
+      const plan = logic.plan_undo(chain, actions, intent.preferences, clock.now()).filter((p) => open.some((a) => a.action_id === p.action_id));
       await store.upsertChain({ ...chain, state: "undoing", plan });
       const fresh = (await store.getChain(chain_id))!;
       for (const p of plan) {

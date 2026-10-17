@@ -103,6 +103,27 @@ describe("UNDO ALL after the agent has left", () => {
     expect(sent).toEqual(["out:request_reversal", "out:push_back", "out:accept_counter"]);
   });
 
+  it("the demo order: the agent self-undoes the flight, then UNDO ALL handles the rest of the chain", async () => {
+    const flight = await booked("airline", "Flight SFO to JFK, Nov 3", 41_200, "flight", { start: "2026-11-03" });
+    await booked("host", "Arrival email", 0, "message", { start: "2026-11-03" });
+    await tools.review({ task_id });
+    expect((await tools.undo({ action_ids: [flight.action_id], reason: "wrong date" })).structuredContent).toMatchObject({ accepted: [flight.action_id] });
+    rt.proxy.deps.sessions.end(task_id);
+    const hotel = await booked("hotel", "Hotel, 3 nights", 64_000, "hotel", { start: "2026-11-03", end: "2026-11-06" });
+    await booked("transfer", "Airport transfer, Nov 3", 18_800, "transfer", { start: "2026-11-03" });
+    await rt.proxy.alertChains(task_id);
+    const [chain] = await rt.store.listChains(task_id);
+    expect(chain).toMatchObject({ state: "alerted" });
+
+    await rt.human.handleInbound({ from: "+14155550100", body: "UNDO ALL", via: "imessage" });
+    await settle(async () => (await rt.store.getChain(chain!.chain_id))?.state === "redo_requested");
+
+    const view = await tools.get_chain({ chain_id: chain!.chain_id });
+    expect(view.structuredContent).toMatchObject({ ok: true, next_action: "redo" });
+    expect("_meta" in view && view._meta.recovered).toMatchObject({ [flight.action_id]: 41_200, [hotel.action_id]: 54_400 });
+    expect(rt.fakePayments?.refunds.size).toBe(3);
+  });
+
   it("does nothing while STOP is in force", async () => {
     await booked("airline", "Flight SFO to JFK, Nov 3", 41_200, "flight", { start: "2026-11-03" });
     rt.proxy.deps.sessions.end(task_id);
