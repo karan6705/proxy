@@ -1,5 +1,6 @@
 // Supabase-backed Store over PostgREST with plain fetch. Server side only: needs the service role key.
 import type { Action, Chain, EventRow, EvidenceSeen, Intent, Lesson, Step, Store } from "../types.js";
+import type { EventReader } from "./memory.js";
 
 export interface SupabaseConfig {
   url: string;
@@ -12,7 +13,7 @@ type Row = Record<string, unknown>;
 const iso = (v: unknown): string => new Date(v as string).toISOString();
 const isoOrNull = (v: unknown): string | null => (v == null ? null : iso(v));
 
-export function createSupabaseStore(config: SupabaseConfig): Store {
+export function createSupabaseStore(config: SupabaseConfig): Store & EventReader {
   const base = `${config.url.replace(/\/$/, "")}/rest/v1`;
   const doFetch = config.fetchImpl ?? fetch;
   const headers = {
@@ -158,6 +159,10 @@ export function createSupabaseStore(config: SupabaseConfig): Store {
         count("actions", `task_id=${eq(task_id)}`),
       ]);
       return { emails, stripe_events, actions };
+    },
+    async recentEvents(limit) {
+      const rows = await select(`events?order=id.desc&limit=${Math.max(1, Math.min(500, limit))}`);
+      return rows.map(({ id: _id, ...r }) => ({ ...r, timestamp: iso(r.timestamp) }) as unknown as EventRow);
     },
     async logEvent(row: EventRow) {
       // Insert only. The table's trigger also rejects updates and deletes.

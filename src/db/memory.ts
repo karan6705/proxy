@@ -13,9 +13,14 @@ import type {
   TaskId,
 } from "../types.js";
 
-export interface MemoryStore extends Store {
-  /** Read-only copy of the append-only log, for tests and the demo page. */
+export interface MemoryStore extends Store, EventReader {
+  /** Read-only copy of the append-only log, for tests. */
   events(): readonly EventRow[];
+}
+
+/** Newest-first read of the append-only log, for the demo page. Not part of Store, which only writes events. */
+export interface EventReader {
+  recentEvents(limit: number): Promise<EventRow[]>;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -95,5 +100,8 @@ export function createMemoryStore(): MemoryStore {
       log.push(Object.freeze(clone(row)));
     },
     events: () => log,
+    async recentEvents(limit) {
+      return log.slice(-limit).reverse().map(clone);
+    },
   };
 }
