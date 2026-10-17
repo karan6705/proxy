@@ -1,0 +1,18 @@
+From: Metro Transfer Co. <bookings@metrotransfer.example>
+To: task_nyc@tasks.proxy.example
+Subject: Transfer confirmed: Nov 3, 2026 (TRF-ADS71I)
+
+Your airport transfer is confirmed
+
+Thank you for booking with Metro Transfer Co.. Your driver will meet you at arrivals.
+
+Booking reference: TRF-ADS71I
+Service: Airport transfer, JFK to Harborview Hotel
+Pickup: JFK Airport, Terminal 4, Arrivals, Nov 3, 2026, 2:00 PM
+Drop-off: Harborview Hotel, 12 Pier Street, New York, NY
+Passengers: 1
+Total paid: $188.00
+
+Free cancellation until 24 hours before pickup. To cancel, email support@metrotransfer.example with your booking reference.
+
+Metro Transfer Co.

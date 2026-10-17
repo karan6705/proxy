@@ -1,0 +1,16 @@
+From: Your agent (copy of a sent message) <agent-copy@tasks.proxy.example>
+To: task_nyc@tasks.proxy.example
+Subject: Copy of your message to Alex Rivera (host): Arrival email to the host: arriving 2026-11-13 (MSG-638FSP)
+
+Your message was sent
+
+A copy of the message your agent sent to Alex Rivera (host).
+
+Reference: MSG-638FSP
+To: Alex Rivera (host) <alex.rivera@example.com>
+Message: Arrival email to the host: arriving 2026-11-13
+Arrival date given: Nov 13, 2026
+
+If the message turns out to be wrong, Proxy can send the host a correction.
+
+Your agent (copy of a sent message)
