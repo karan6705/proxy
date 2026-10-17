@@ -17,7 +17,8 @@ export class MerchantError extends Error {
   }
 }
 
-export type OrderStatus = "confirmed" | "cancelled" | "credited";
+/** cancelled: a refund was agreed. credited: store credit was agreed. corrected: a sent message was corrected. */
+export type OrderStatus = "confirmed" | "cancelled" | "credited" | "corrected";
 
 export interface MerchantOrder {
   ref: string;
@@ -30,8 +31,11 @@ export interface MerchantOrder {
   booked_at: Timestamp;
   charge_id: string;
   status: OrderStatus;
-  refund_id: string | null;
-  refunded_amount: Cents;
+  /**
+   * The refund the merchant agreed to. Merchants never move money: the orchestrator issues and verifies the
+   * refund through Payments, using this amount.
+   */
+  refund_amount: Cents;
   confirmation_sent: boolean;
 }
 
@@ -91,6 +95,8 @@ export interface BookingSpec {
   ref_prefix: string;
   /** "single" needs dates.start. "range" also needs a dates.end after the start. */
   dates: "single" | "range";
+  /** Messages cost nothing, so they may be booked for 0. Everything else needs a positive amount. */
+  allow_zero_amount?: boolean;
   render(order: MerchantOrder): MerchantEmail;
 }
 
@@ -118,8 +124,9 @@ function validate(spec: BookingSpec, request: BookInput): DateRange {
   if (typeof request.item !== "string" || request.item.trim().length === 0) {
     bad("item is required");
   }
-  if (!Number.isInteger(request.amount) || request.amount <= 0) {
-    bad("amount must be a positive whole number of cents");
+  const minimum = spec.allow_zero_amount ? 0 : 1;
+  if (!Number.isInteger(request.amount) || request.amount < minimum) {
+    bad(spec.allow_zero_amount ? "amount must be a whole number of cents, 0 or more" : "amount must be a positive whole number of cents");
   }
   if (typeof request.booked_at !== "string" || Number.isNaN(Date.parse(request.booked_at))) {
     bad("booked_at must be an ISO timestamp");
@@ -183,8 +190,7 @@ export async function placeOrder(ctx: ModuleContext, spec: BookingSpec, request:
     booked_at: request.booked_at,
     charge_id: chargeId,
     status: "confirmed",
-    refund_id: null,
-    refunded_amount: 0,
+    refund_amount: 0,
     confirmation_sent: false,
   });
 
@@ -194,13 +200,10 @@ export async function placeOrder(ctx: ModuleContext, spec: BookingSpec, request:
   return { ref, amount: request.amount, stripe_charge_id: chargeId };
 }
 
-/** Refunds part or all of an order through Stripe and marks it cancelled. */
-export async function refundOrder(ctx: ModuleContext, order: MerchantOrder, amount: Cents, idempotencyKey: string): Promise<string> {
-  try {
-    const refund = await ctx.deps.refund(order.charge_id, amount, idempotencyKey);
-    ctx.orders.update(order.ref, { status: "cancelled", refund_id: refund.refund_id, refunded_amount: amount });
-    return refund.refund_id;
-  } catch (cause) {
-    throw new MerchantError("upstream_unavailable", `Refund failed for ${order.ref}: ${errorMessage(cause)}`);
-  }
+/**
+ * Records that the merchant agreed to refund `amount` and cancels the booking. No money moves here: the merchant
+ * returns the agreed amount, and the orchestrator issues and verifies the refund through Payments.
+ */
+export function agreeRefund(ctx: ModuleContext, order: MerchantOrder, amount: Cents): MerchantOrder {
+  return ctx.orders.update(order.ref, { status: "cancelled", refund_amount: amount });
 }

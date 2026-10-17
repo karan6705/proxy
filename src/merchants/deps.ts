@@ -30,12 +30,14 @@ export interface ChargeArgs {
   idempotency_key: string;
 }
 
+/**
+ * Merchants never refund. They agree a refund amount and return it; the orchestrator issues and verifies
+ * the refund through Payments. So there is no refund here.
+ */
 export interface MerchantDeps {
-  /** Stripe test-mode charge. Payments in types.ts has no charge(), so this is requested in HANDOFF.md. */
+  /** Stripe test-mode charge. Payments in types.ts has no charge(), so Karan backs this with src/stripe/charge.ts. */
   charge(args: ChargeArgs): Promise<{ charge_id: string }>;
-  /** Same signature as Payments.refund. */
-  refund(charge_id: string, amount: Cents, idempotency_key: string): Promise<{ refund_id: string }>;
-  /** Sends a merchant email to the task address. */
+  /** Sends a merchant email to the task address. Sarah backs this with Inkbox. */
   deliver(email: MerchantEmail): Promise<void>;
 }
 
@@ -52,8 +54,8 @@ export interface SupportReply {
   approved: boolean;
   /** The booking reference found in the email, if any. */
   ref: string | null;
+  /** The refund the desk agreed to. 0 when it did not approve. The orchestrator issues it through Payments. */
   refund_amount: Cents;
-  stripe_refund_id: string | null;
   reply: MerchantEmail;
 }
 

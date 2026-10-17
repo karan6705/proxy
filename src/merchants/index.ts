@@ -229,7 +229,6 @@ export function merchantRoutes(merchants: MerchantsImpl, deps: MerchantDeps, clo
             approved: reply.approved,
             ref: reply.ref,
             refund_amount: reply.refund_amount,
-            stripe_refund_id: reply.stripe_refund_id,
             reply_subject: reply.reply.subject,
             reply_body: reply.reply.body,
           });

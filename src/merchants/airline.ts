@@ -11,8 +11,8 @@ import {
   type BookingSpec,
   type MerchantOrder,
   type ModuleContext,
+  agreeRefund,
   placeOrder,
-  refundOrder,
   sendConfirmation as sendOrderConfirmation,
 } from "./orders.js";
 
@@ -108,8 +108,13 @@ export function createAirline(ctx: ModuleContext): MerchantModule {
       if (!order || order.merchant_id !== AIRLINE_INFO.merchant_id) {
         return refuse("Unknown booking reference.");
       }
+      // Idempotent: asking again after a successful cancel returns the same agreed refund, so an orchestrator
+      // retry (for example after a failed Stripe call) works instead of being told "already cancelled".
+      if (order.status === "cancelled") {
+        return { ok: true, refund_amount: order.refund_amount, stripe_refund_id: null };
+      }
       if (order.status !== "confirmed") {
-        return refuse("This booking is already cancelled.");
+        return refuse("This booking cannot be cancelled.");
       }
 
       const bookedMs = timestampToMs(order.booked_at);
@@ -123,8 +128,9 @@ export function createAirline(ctx: ModuleContext): MerchantModule {
         );
       }
 
-      const refundId = await refundOrder(ctx, order, order.amount, `cancel-${order.ref}`);
-      return { ok: true, refund_amount: order.amount, stripe_refund_id: refundId };
+      // The airline agrees to the full fare. It does not touch Stripe: the orchestrator refunds and verifies.
+      agreeRefund(ctx, order, order.amount);
+      return { ok: true, refund_amount: order.amount, stripe_refund_id: null };
     },
   };
 }

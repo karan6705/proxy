@@ -26,8 +26,8 @@ import {
   type BookingSpec,
   type MerchantOrder,
   type ModuleContext,
+  agreeRefund,
   placeOrder,
-  refundOrder,
   sendConfirmation as sendOrderConfirmation,
 } from "./orders.js";
 
@@ -140,7 +140,7 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
             return deny(message, now, "Non-refundable rate: our policy does not allow refunds.");
           }
           if (behavior === "accept_full") {
-            await refundOrder(ctx, order, order.amount, `goodwill-${order.ref}`);
+            agreeRefund(ctx, order, order.amount);
             return accept(message, now, order.amount);
           }
           const offer = { kind: "store_credit" as const, amount: order.amount };
@@ -170,11 +170,12 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           }
           negotiation.phase = "closed";
           if (negotiation.offer.kind === "store_credit") {
-            // Store credit moves no money through Stripe.
-            ctx.orders.update(order.ref, { status: "credited", refunded_amount: 0 });
+            // Store credit moves no money, so the agreed refund is 0.
+            ctx.orders.update(order.ref, { status: "credited", refund_amount: 0 });
             return accept(message, now, 0);
           }
-          await refundOrder(ctx, order, negotiation.offer.amount, `goodwill-${order.ref}`);
+          // The hotel agrees to the partial refund. The orchestrator issues and verifies it through Payments.
+          agreeRefund(ctx, order, negotiation.offer.amount);
           return accept(message, now, negotiation.offer.amount);
         }
 

@@ -12,8 +12,8 @@ import {
   type BookingSpec,
   type MerchantOrder,
   type ModuleContext,
+  agreeRefund,
   placeOrder,
-  refundOrder,
   sendConfirmation as sendOrderConfirmation,
 } from "./orders.js";
 
@@ -95,8 +95,17 @@ export function createTransfer(ctx: ModuleContext): MerchantModule {
         approved: false,
         ref,
         refund_amount: 0,
-        stripe_refund_id: null,
         reply: replyEmail(email.from, email.subject, text),
+      });
+      const approve = (ref: string, amount: number, intro: string): SupportReply => ({
+        approved: true,
+        ref,
+        refund_amount: amount,
+        reply: replyEmail(
+          email.from,
+          email.subject,
+          `Hello,\n\nREFUND APPROVED: ${intro} ${formatMoney(amount)} will return to your original payment method.${signoff}`,
+        ),
       });
       const signoff = `\n\n${TRANSFER_INFO.name} Support`;
 
@@ -110,8 +119,12 @@ export function createTransfer(ctx: ModuleContext): MerchantModule {
       if (!order || order.merchant_id !== TRANSFER_INFO.merchant_id) {
         return decline(ref, `Hello,\n\nREFUND DENIED: we could not find booking ${ref}. Please check the reference and try again.${signoff}`);
       }
+      // Idempotent: a second email about a booking already cancelled repeats the same approval and amount.
+      if (order.status === "cancelled") {
+        return approve(ref, order.refund_amount, `booking ${ref} is already cancelled and`);
+      }
       if (order.status !== "confirmed") {
-        return decline(ref, `Hello,\n\nNo action needed: booking ${ref} has already been refunded.${signoff}`);
+        return decline(ref, `Hello,\n\nREFUND DENIED: booking ${ref} cannot be cancelled.${signoff}`);
       }
 
       const cutoff = dateToMs(order.dates.start) - TRANSFER_FREE_CANCEL_HOURS * MS_PER_HOUR;
@@ -122,18 +135,9 @@ export function createTransfer(ctx: ModuleContext): MerchantModule {
         );
       }
 
-      const refundId = await refundOrder(ctx, order, order.amount, `support-${order.ref}`);
-      return {
-        approved: true,
-        ref,
-        refund_amount: order.amount,
-        stripe_refund_id: refundId,
-        reply: replyEmail(
-          email.from,
-          email.subject,
-          `Hello,\n\nREFUND APPROVED: booking ${ref} is cancelled and ${formatMoney(order.amount)} will return to your original payment method.\n\nRefund reference: ${refundId}${signoff}`,
-        ),
-      };
+      // The desk agrees to the full refund. It does not touch Stripe: the orchestrator refunds and verifies.
+      agreeRefund(ctx, order, order.amount);
+      return approve(ref, order.amount, `booking ${ref} is cancelled and`);
     },
   };
 }
