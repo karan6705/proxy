@@ -18,6 +18,7 @@ import type {
 import { createAirline } from "./airline.js";
 import type { BookInput, MerchantDeps, MerchantModule, SupportEmail, SupportReply } from "./deps.js";
 import { createHost } from "./host.js";
+import type { AddressMode } from "./identities.js";
 import { type HotelAgentOptions, createHotel } from "./hotel.js";
 import { MerchantError, type MerchantErrorKind, type MerchantOrder, OrderBook } from "./orders.js";
 import { createTransfer } from "./transfer.js";
@@ -27,6 +28,17 @@ export type { HotelAgentOptions, HotelBehavior } from "./hotel.js";
 export { MerchantError } from "./orders.js";
 export type { MerchantOrder } from "./orders.js";
 export { createFakeDeps } from "./fakes.js";
+export { createInkboxDeliver } from "./inkbox-deliver.js";
+export type { InkboxDeliverOptions, InkboxLike } from "./inkbox-deliver.js";
+export {
+  IdentityKeys,
+  MERCHANT_IDENTITIES,
+  addressFor,
+  addressMode,
+  identityFor,
+  loadIdentityKeys,
+} from "./identities.js";
+export type { AddressMode, KeyStatus, MerchantIdentity } from "./identities.js";
 export type { FakeCharge, FakeDeps } from "./fakes.js";
 
 export interface MerchantsImpl extends Merchants {
@@ -40,9 +52,24 @@ export interface MerchantsImpl extends Merchants {
   getOrder(ref: string): MerchantOrder | null;
 }
 
-export function createMerchants(deps: MerchantDeps, options: { hotel?: HotelAgentOptions } = {}): MerchantsImpl {
+export interface CreateMerchantsOptions {
+  hotel?: HotelAgentOptions;
+  /**
+   * "test" (the default) uses the .example addresses, as every test and default run does. "real" uses the real
+   * @inkboxmail.com addresses, for end-to-end runs only. addressMode() reads MERCHANT_ADDRESS_MODE.
+   */
+  addresses?: AddressMode;
+}
+
+export function createMerchants(deps: MerchantDeps, options: CreateMerchantsOptions = {}): MerchantsImpl {
   const ctx = { deps, orders: new OrderBook() };
-  const modules: MerchantModule[] = [createAirline(ctx), createHotel(ctx, options.hotel), createTransfer(ctx), createHost(ctx)];
+  const mode = options.addresses ?? "test";
+  const modules: MerchantModule[] = [
+    createAirline(ctx, mode),
+    createHotel(ctx, options.hotel, mode),
+    createTransfer(ctx, mode),
+    createHost(ctx),
+  ];
   const byId = new Map(modules.map((module) => [module.info.merchant_id, module]));
 
   const need = (merchant_id: MerchantId): MerchantModule => {
@@ -223,7 +250,7 @@ export function merchantRoutes(merchants: MerchantsImpl, deps: MerchantDeps, clo
           }
           const reply = await merchants.supportEmail(info.merchant_id, email, clock.now());
           try {
-            await deps.deliver(reply.reply);
+            await deps.deliver({ ...reply.reply, identity: info.merchant_id });
           } catch (cause) {
             throw new MerchantError("upstream_unavailable", `Could not deliver the support reply: ${cause instanceof Error ? cause.message : String(cause)}`);
           }

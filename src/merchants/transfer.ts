@@ -6,6 +6,7 @@ import { MS_PER_HOUR, dateToMs, timestampToMs } from "../logic/dates.js";
 import { TRANSFER_FREE_CANCEL_HOURS } from "../logic/rules.js";
 import type { MerchantInfo, SelfServeCancelResult } from "../types.js";
 import type { MerchantEmail, MerchantModule, SupportEmail, SupportReply } from "./deps.js";
+import { type AddressMode, MERCHANT_IDENTITIES, addressFor } from "./identities.js";
 import { escapeHtml, formatDate, formatMoney, renderEmail } from "./emails.js";
 import { taxiReservation } from "./jsonld.js";
 import {
@@ -25,15 +26,14 @@ export const TRANSFER_INFO: MerchantInfo = {
   support_email: "support@metrotransfer.example",
 };
 
-const FROM = { name: `${TRANSFER_INFO.name} Support`, address: "support@metrotransfer.example" };
 const TELEPHONE = "+1-212-555-0177";
 const PICKUP = "JFK Airport, Terminal 4, Arrivals";
 const DROPOFF = "Harborview Hotel, 12 Pier Street, New York, NY";
 const REF_PATTERN = /\bTRF-[A-Z0-9]{6}\b/;
 
-function render(order: MerchantOrder) {
+function render(order: MerchantOrder, address: string, confirmationFrom: string) {
   return renderEmail({
-    from: { name: TRANSFER_INFO.name, address: "bookings@metrotransfer.example" },
+    from: { name: TRANSFER_INFO.name, address: confirmationFrom },
     to: order.task_email,
     subject: `Transfer confirmed: ${formatDate(order.dates.start)} (${order.ref})`,
     heading: "Your airport transfer is confirmed",
@@ -46,23 +46,23 @@ function render(order: MerchantOrder) {
       ["Passengers", "1"],
       ["Total paid", formatMoney(order.amount)],
     ],
-    footer: `Free cancellation until ${TRANSFER_FREE_CANCEL_HOURS} hours before pickup. To cancel, email ${TRANSFER_INFO.support_email} with your booking reference.`,
+    footer: `Free cancellation until ${TRANSFER_FREE_CANCEL_HOURS} hours before pickup. To cancel, email ${address} with your booking reference.`,
     jsonld: taxiReservation(
       order,
-      { name: TRANSFER_INFO.name, telephone: TELEPHONE, email: TRANSFER_INFO.support_email as string },
+      { name: TRANSFER_INFO.name, telephone: TELEPHONE, email: address },
       { pickup: PICKUP, dropoff: DROPOFF },
       "14:00",
     ),
   });
 }
 
-function replyEmail(to: string, subject: string, text: string): MerchantEmail {
+function replyEmail(to: string, subject: string, text: string, from: { name: string; address: string }): MerchantEmail {
   const html = `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#222">${text
     .split("\n\n")
     .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`)
     .join("")}</body></html>`;
   return {
-    from: FROM,
+    from,
     to,
     subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
     body: text,
@@ -70,11 +70,16 @@ function replyEmail(to: string, subject: string, text: string): MerchantEmail {
   };
 }
 
-export function createTransfer(ctx: ModuleContext): MerchantModule {
-  const spec: BookingSpec = { info: TRANSFER_INFO, ref_prefix: "TRF", dates: "single", render };
+export function createTransfer(ctx: ModuleContext, mode: AddressMode = "test"): MerchantModule {
+  const address = addressFor(MERCHANT_IDENTITIES.transfer, mode);
+  const info: MerchantInfo = { ...TRANSFER_INFO, support_email: address };
+  const deskFrom = { name: `${TRANSFER_INFO.name} Support`, address };
+  // Test mode keeps the separate bookings sender; the real identity sends everything from the one address.
+  const confirmationFrom = mode === "real" ? address : "bookings@metrotransfer.example";
+  const spec: BookingSpec = { info, ref_prefix: "TRF", dates: "single", render: (order) => render(order, address, confirmationFrom) };
 
   return {
-    info: TRANSFER_INFO,
+    info,
     agent: null,
 
     book: (request) => placeOrder(ctx, spec, request),
@@ -86,7 +91,7 @@ export function createTransfer(ctx: ModuleContext): MerchantModule {
         ok: false,
         refund_amount: 0,
         stripe_refund_id: null,
-        reason: `No self-serve cancellation. Email ${TRANSFER_INFO.support_email} with your booking reference.`,
+        reason: `No self-serve cancellation. Email ${address} with your booking reference.`,
       };
     },
 
@@ -95,7 +100,7 @@ export function createTransfer(ctx: ModuleContext): MerchantModule {
         approved: false,
         ref,
         refund_amount: 0,
-        reply: replyEmail(email.from, email.subject, text),
+        reply: replyEmail(email.from, email.subject, text, deskFrom),
       });
       const approve = (ref: string, amount: number, intro: string): SupportReply => ({
         approved: true,
@@ -105,6 +110,7 @@ export function createTransfer(ctx: ModuleContext): MerchantModule {
           email.from,
           email.subject,
           `Hello,\n\nREFUND APPROVED: ${intro} ${formatMoney(amount)} will return to your original payment method.${signoff}`,
+          deskFrom,
         ),
       });
       const signoff = `\n\n${TRANSFER_INFO.name} Support`;

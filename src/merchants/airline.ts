@@ -5,6 +5,7 @@ import { MS_PER_DAY, MS_PER_HOUR, dateToMs, timestampToMs } from "../logic/dates
 import { FLIGHT_CHANGE_FEE, FLIGHT_FREE_CANCEL_HOURS, FLIGHT_MIN_DAYS_OUT } from "../logic/rules.js";
 import type { MerchantInfo, SelfServeCancelResult } from "../types.js";
 import type { MerchantModule } from "./deps.js";
+import { type AddressMode, MERCHANT_IDENTITIES, addressFor } from "./identities.js";
 import { formatDate, formatMoney, renderEmail } from "./emails.js";
 import { type AirportInfo, flightReservation } from "./jsonld.js";
 import {
@@ -24,7 +25,6 @@ export const AIRLINE_INFO: MerchantInfo = {
   support_email: "reservations@skylinedemoair.example",
 };
 
-const FROM = { name: AIRLINE_INFO.name, address: "reservations@skylinedemoair.example" };
 const IATA_CODE = "ZZ";
 
 const AIRPORTS: Record<string, AirportInfo> = {
@@ -52,12 +52,12 @@ function flightNumberFor(ref: string): string {
   return String(100 + (sum % 900));
 }
 
-function render(order: MerchantOrder) {
+function render(order: MerchantOrder, address: string) {
   const route = parseRoute(order.item);
   const flightNumber = flightNumberFor(order.ref);
   const day = order.dates.start;
   return renderEmail({
-    from: FROM,
+    from: { name: AIRLINE_INFO.name, address },
     to: order.task_email,
     subject: `Your flight is confirmed: ${route.from.code} to ${route.to.code} on ${formatDate(day)} (${order.ref})`,
     heading: "Your flight is confirmed",
@@ -84,8 +84,10 @@ function render(order: MerchantOrder) {
   });
 }
 
-export function createAirline(ctx: ModuleContext): MerchantModule {
-  const spec: BookingSpec = { info: AIRLINE_INFO, ref_prefix: "AIR", dates: "single", render };
+export function createAirline(ctx: ModuleContext, mode: AddressMode = "test"): MerchantModule {
+  const address = addressFor(MERCHANT_IDENTITIES.airline, mode);
+  const info: MerchantInfo = { ...AIRLINE_INFO, support_email: address };
+  const spec: BookingSpec = { info, ref_prefix: "AIR", dates: "single", render: (order) => render(order, address) };
 
   const refuse = (reason: string): SelfServeCancelResult => ({
     ok: false,
@@ -95,7 +97,7 @@ export function createAirline(ctx: ModuleContext): MerchantModule {
   });
 
   return {
-    info: AIRLINE_INFO,
+    info,
     agent: null,
     handleSupportEmail: null,
 

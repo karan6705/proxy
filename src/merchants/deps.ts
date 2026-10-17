@@ -19,6 +19,11 @@ import type {
 export interface MerchantEmail extends OutboundEmail {
   from: { name: string; address: string };
   html: string;
+  /**
+   * The merchant this email is sent as. A real deliver (see inkbox-deliver.ts) uses it to pick the sending Inkbox
+   * identity and its key. Set where the email is sent, not where it is written.
+   */
+  identity?: MerchantId;
 }
 
 export interface ChargeArgs {

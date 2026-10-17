@@ -20,6 +20,7 @@ import type {
   Timestamp,
 } from "../types.js";
 import type { MerchantModule } from "./deps.js";
+import { type AddressMode, MERCHANT_IDENTITIES, addressFor } from "./identities.js";
 import { formatDate, formatMoney, nightsBetween, renderEmail } from "./emails.js";
 import { lodgingReservation } from "./jsonld.js";
 import {
@@ -36,11 +37,10 @@ export const HOTEL_INFO: MerchantInfo = {
   name: "Harborview Hotel",
   category: "hotel",
   has_agent: true,
-  agent_identity: "harborview-hotel-agent",
+  agent_identity: "hotel-agent",
   support_email: "reservations@harborviewhotel.example",
 };
 
-const FROM = { name: HOTEL_INFO.name, address: "reservations@harborviewhotel.example" };
 const ADDRESS = { street: "12 Pier Street", locality: "New York", region: "NY", postalCode: "10004", telephone: "+1-212-555-0142" };
 const ROOM = "Standard King Room";
 
@@ -64,11 +64,11 @@ interface Negotiation {
   offer: { kind: CounterKind; amount: Cents };
 }
 
-function render(order: MerchantOrder) {
+function render(order: MerchantOrder, address: string) {
   const checkOut = order.dates.end ?? order.dates.start;
   const nights = nightsBetween(order.dates.start, checkOut);
   return renderEmail({
-    from: FROM,
+    from: { name: HOTEL_INFO.name, address },
     to: order.task_email,
     subject: `Your reservation at ${HOTEL_INFO.name} is confirmed (${order.ref})`,
     heading: "Your reservation is confirmed",
@@ -192,11 +192,13 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
   };
 }
 
-export function createHotel(ctx: ModuleContext, options: HotelAgentOptions = {}): MerchantModule {
-  const spec: BookingSpec = { info: HOTEL_INFO, ref_prefix: "HTL", dates: "range", render };
+export function createHotel(ctx: ModuleContext, options: HotelAgentOptions = {}, mode: AddressMode = "test"): MerchantModule {
+  const address = addressFor(MERCHANT_IDENTITIES.hotel, mode);
+  const info: MerchantInfo = { ...HOTEL_INFO, support_email: address };
+  const spec: BookingSpec = { info, ref_prefix: "HTL", dates: "range", render: (order) => render(order, address) };
 
   return {
-    info: HOTEL_INFO,
+    info,
     agent: createHotelAgent(ctx, options),
     handleSupportEmail: null,
 
