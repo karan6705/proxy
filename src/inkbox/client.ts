@@ -5,7 +5,7 @@ import type { Clock, EventKind, Inkbox, OutboundEmail, ProxyProtocolMessage, Sto
 import { createClient, loadSdk, type InkboxSdk } from "./sdk.js";
 
 export interface InkboxClientOptions {
-  /** Handle of Proxy's own identity, e.g. "proxy". Created on first use if missing. */
+  /** Handle of Proxy's own identity, e.g. "proxy-agent"; "proxy" is reserved by Inkbox. Created on first use if missing. */
   handle?: string;
   dryRun?: boolean;
   store?: Store;
@@ -25,7 +25,7 @@ const last4 = (n: string) => n.replace(/\D/g, "").slice(-4);
 
 export function createInkbox(opts: InkboxClientOptions = {}): Inkbox {
   const dryRun = opts.dryRun ?? process.env.INKBOX_DRY_RUN === "1";
-  const handle = opts.handle ?? process.env.INKBOX_PROXY_HANDLE ?? "proxy";
+  const handle = opts.handle ?? process.env.INKBOX_PROXY_HANDLE ?? "proxy-agent";
   const log = opts.log ?? ((l) => console.log(`[inkbox] ${l}`));
   const now = () => opts.clock?.now() ?? new Date().toISOString();
   const ctx = () => (opts.eventContext ?? (() => DEMO_EVENT_CONTEXT))();
