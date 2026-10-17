@@ -39,7 +39,9 @@ async function openChain(task_id: string): Promise<string> {
     state: "found",
   };
   await rt.proxy.onAction(flight);
-  return `chain_${task_id}`;
+  const chain = (await store.listChains(task_id))[0];
+  if (!chain) throw new Error("Expected an open chain");
+  return chain.chain_id;
 }
 
 beforeEach(() => {
@@ -55,6 +57,54 @@ beforeEach(() => {
 });
 
 describe("texting the human and matching replies to chains", () => {
+  it("keeps the existing chain id when a late booked action replaces the message root", async () => {
+    const task_id = "task_root_change";
+    await store.putIntent(
+      {
+        task_id,
+        task_email: `${task_id}@tasks.proxy.example`,
+        goal: "NYC trip",
+        constraints: { dates: { start: "2026-11-13", end: "2026-11-16" } },
+        preferences: DEFAULT_PARAMS.DEFAULT_PREFERENCES,
+        created_at: clock.now(),
+      },
+      task_id,
+    );
+    await rt.proxy.onAction({
+      action_id: "act_host",
+      task_id,
+      merchant: "host",
+      category: "message",
+      summary: "Arrival email, Nov 3",
+      amount: 0,
+      dates: { start: "2026-11-03" },
+      ref: "MSG-1",
+      source: "agent",
+      received_at: clock.now(),
+      state: "found",
+    });
+    const first = (await store.listChains(task_id))[0]!;
+    expect(first.root_action_id).toBe("act_host");
+
+    clock.advance(1_000);
+    await rt.proxy.onAction({
+      action_id: "act_flight",
+      task_id,
+      merchant: "airline",
+      category: "flight",
+      summary: "Flight, Nov 3",
+      amount: 41_200,
+      dates: { start: "2026-11-03" },
+      ref: "AIR-1",
+      source: "email",
+      received_at: clock.now(),
+      state: "found",
+    });
+    const chains = await store.listChains(task_id);
+    expect(chains).toHaveLength(1);
+    expect(chains[0]).toMatchObject({ chain_id: first.chain_id, root_action_id: "act_flight" });
+  });
+
   it("textHuman sends the text and records the alert on the chain", async () => {
     const chain_id = await openChain("task_a");
     await rt.proxy.textHuman(chain_id, "chain_opened", "Your agent used the wrong date.");
