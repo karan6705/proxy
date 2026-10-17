@@ -51,7 +51,8 @@ export function createCapture(deps: CaptureDeps) {
     const candidates: string[] = [];
     for (const to of email.to) {
       const local = addressOf(to).split("@")[0].split("+")[0];
-      if (local) candidates.push(local, local.toLowerCase());
+      // Inkbox handles are lowercase with hyphens, so task_demo lives at task-demo@...
+      if (local) candidates.push(local, local.toLowerCase(), local.replace(/-/g, "_"), local.toLowerCase().replace(/-/g, "_"));
     }
     const code = email.subject.match(/\[task[:\s]+([A-Za-z0-9_-]+)\]/i)?.[1];
     if (code) candidates.push(code);

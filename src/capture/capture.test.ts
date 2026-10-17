@@ -143,6 +143,7 @@ describe("capture", () => {
     await store.putIntent(intent, "k");
     expect((await capture.handleEmail(mail({ to: ["task_demo+x@tasks.proxy.example"], html: flight }))).status).toBe("captured");
     expect((await capture.handleEmail(mail({ message_id: "m5", to: ["proxy@inkboxmail.com"], subject: "[task:task_demo] hotel", html: hotel }))).status).toBe("captured");
+    expect((await capture.handleEmail(mail({ message_id: "m7", to: ["Task-Demo@inkboxmail.com"], html: taxi }))).status).toBe("captured");
     expect((await capture.handleEmail(mail({ message_id: "m6", to: ["nobody@x.test"], html: taxi }))).status).toBe("no_task");
   });
 
