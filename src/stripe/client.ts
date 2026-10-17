@@ -17,25 +17,40 @@ export interface StripeClientOptions {
   secretKey?: string;
   apiBase?: string;
   fetch?: typeof globalThis.fetch;
+  logError?: (details: StripeErrorLog) => void;
+}
+
+export type StripeSafeErrorCode =
+  | "stripe_authentication_failed"
+  | "stripe_invalid_request"
+  | "stripe_rate_limited"
+  | "stripe_unavailable";
+
+export interface StripeErrorLog {
+  code: StripeSafeErrorCode;
+  status?: number;
+  stripe_code?: string;
+  request_id?: string;
+  detail: string;
 }
 
 export class StripeApiError extends Error {
-  readonly status: number;
-  readonly code?: string;
-  readonly requestId?: string;
+  readonly code: StripeSafeErrorCode;
 
-  constructor(
-    message: string,
-    status: number,
-    code?: string,
-    requestId?: string,
-  ) {
+  constructor(code: StripeSafeErrorCode, message: string) {
     super(message);
     this.name = "StripeApiError";
-    this.status = status;
     this.code = code;
-    this.requestId = requestId;
   }
+}
+
+function safeErrorForStatus(status: number): { code: StripeSafeErrorCode; message: string } {
+  if (status === 401 || status === 403) {
+    return { code: "stripe_authentication_failed", message: "Stripe authentication failed" };
+  }
+  if (status === 429) return { code: "stripe_rate_limited", message: "Stripe is temporarily rate limited" };
+  if (status >= 500) return { code: "stripe_unavailable", message: "Stripe is temporarily unavailable" };
+  return { code: "stripe_invalid_request", message: "Stripe rejected the request" };
 }
 
 function encodeParams(params: Record<string, StripeParam>): URLSearchParams {
@@ -50,6 +65,7 @@ export class StripeClient implements StripeRequester {
   private readonly secretKey: string;
   private readonly apiBase: string;
   private readonly fetchImpl: typeof globalThis.fetch;
+  private readonly logError: (details: StripeErrorLog) => void;
 
   constructor(options: StripeClientOptions = {}) {
     const secretKey = options.secretKey ?? process.env.STRIPE_SECRET_KEY;
@@ -63,6 +79,7 @@ export class StripeClient implements StripeRequester {
     this.secretKey = secretKey;
     this.apiBase = (options.apiBase ?? "https://api.stripe.com").replace(/\/$/, "");
     this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.logError = options.logError ?? ((details) => console.error("[stripe] request failed", details));
   }
 
   async request<T>(
@@ -81,21 +98,43 @@ export class StripeClient implements StripeRequester {
     if (method !== "GET") headers["Content-Type"] = "application/x-www-form-urlencoded";
     if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
 
-    const response = await this.fetchImpl(url, {
-      method,
-      headers,
-      body: method === "GET" ? undefined : encoded.toString(),
-    });
-    const payload = (await response.json()) as T & {
-      error?: { message?: string; code?: string };
-    };
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method,
+        headers,
+        body: method === "GET" ? undefined : encoded.toString(),
+      });
+    } catch (error) {
+      this.logError({
+        code: "stripe_unavailable",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      throw new StripeApiError("stripe_unavailable", "Stripe is temporarily unavailable");
+    }
+
+    let payload: T & { error?: { message?: string; code?: string } };
+    try {
+      payload = (await response.json()) as typeof payload;
+    } catch (error) {
+      this.logError({
+        code: "stripe_unavailable",
+        status: response.status,
+        request_id: response.headers.get("request-id") ?? undefined,
+        detail: error instanceof Error ? error.message : "Stripe returned an invalid response",
+      });
+      throw new StripeApiError("stripe_unavailable", "Stripe returned an invalid response");
+    }
     if (!response.ok) {
-      throw new StripeApiError(
-        payload.error?.message ?? `Stripe request failed with status ${response.status}`,
-        response.status,
-        payload.error?.code,
-        response.headers.get("request-id") ?? undefined,
-      );
+      const safe = safeErrorForStatus(response.status);
+      this.logError({
+        code: safe.code,
+        status: response.status,
+        stripe_code: payload.error?.code,
+        request_id: response.headers.get("request-id") ?? undefined,
+        detail: payload.error?.message ?? `Stripe request failed with status ${response.status}`,
+      });
+      throw new StripeApiError(safe.code, safe.message);
     }
     return payload;
   }

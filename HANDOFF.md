@@ -14,6 +14,7 @@
 8. **`EventKind` gains `imessage_in`.** Log inbound iMessages with it, not `sms_in` with an `imessage:` outcome. (Sarah)
 9. **`Action.confidence`** (item 2) is how capture marks LLM extractions. Actions under 0.5 are dropped and logged, never passed to `onAction`. (Sarah)
 10. **Task ids are restricted to `[a-z0-9_]`** (`TASK_ID_PATTERN` in `types.ts`), because a task id becomes an Inkbox handle (`task_demo` becomes `task-demo@...`). `log_intent` returns `invalid_input` otherwise, and so do `review` and `list_chains` for a malformed `task_id`. (Everyone)
+11. **`EvidencePacket.message_timeline` is optional** and contains `{ at, channel, direction, summary }` entries, so dispute evidence can carry the communication audit trail without a Stripe-local type extension. (Karan's Codex)
 - **Sarah, still to adapt from item 3:** the human channel should forward STOP as `{ kind: "stop" }` (it currently ignores it as `opt_out`), and loose replies as `{ kind: "correction", chain_id, corrected_text }` (it currently asks the human to clarify).
 
 
@@ -97,6 +98,14 @@ Found while reviewing `origin/main`. File and line references are the current on
 - Return a generic message, log the detail server-side with context (tool, task_id, error name), and set `retryable: true` only for known transient errors (`StripeApiError` 429 or 5xx, `upstream_unavailable`).
 
 ## Sarah
+
+### A2A transport ownership
+Sarah owns A2A transport in both directions: inbound Proxy requests route to Dhwanil's hotel agent, and hotel replies route back to the orchestrator. If Inkbox inbound A2A does not work, use email between `proxy-agent` and `hotel-agent` with a structured JSON body. The protocol state machine is unchanged.
+
+### From Karan: demo runs and a Vite warning
+- **Demo runs:** each `/demo/reset` starts a new demo task id (`task_demo_1`, `task_demo_2`, ...), and every run reuses the `task-demo` Inkbox identity. Mail to `task-demo@...` is re-pointed to the current run before it reaches the Store, so nothing is deleted and earlier runs stay as history. Your capture code is unchanged.
+- **Vite warning:** `npm run dev` warns about the variable `import(SDK)` in `src/inkbox/sdk.ts`. Add `/* @vite-ignore */` inside that `import(...)` to silence it and make sure Vite leaves the import alone.
+
 
 ### From Dhwanil: merchant confirmation emails and the support desk
 - Each merchant calls `deps.deliver(email)` with a `MerchantEmail`: `to` is the task address, plus `from`, `subject`, plain-text `body` and `html`. You implement `deliver` (Inkbox send, or post straight to the capture webhook in dev).
@@ -198,6 +207,13 @@ What I did with your earlier points:
 - Tests: `npm test`.
 
 ## Dhwanil
+
+### A2A transport ownership
+Sarah owns A2A transport in both directions: inbound Proxy requests route to Dhwanil's hotel agent, and hotel replies route back to the orchestrator. If Inkbox inbound A2A does not work, use email between `proxy-agent` and `hotel-agent` with a structured JSON body. The protocol state machine is unchanged.
+
+### From Karan: PR #6 merged (contract v2 checks passed)
+- Checked: `logic` is typed as `Logic`, `plan_undo` has the v2 signature, the root rule is implemented, the airline has no agent, the transfer address is `support@metrotransfer.example`, merchants never refund, and `negotiate_step` reads only typed fields. 431 tests passed on the merge.
+- FYI, no change needed: `trace` names chains `chain_<root action>`. When a late booking becomes the root (the flight confirmation arrives after the host email), the id changes. When I wire your Logic, the orchestrator will keep the existing chain id for a chain that shares actions with an open chain, so alerts and steps aren't orphaned.
 
 ### Refunds: done
 Merchants no longer refund. `selfServeCancel`, the hotel agent and the support desks only agree an amount and return it; the orchestrator refunds and verifies through `Payments`. `MerchantDeps` is now `{ charge, deliver }`. Cancelling again, or emailing a desk again, returns the same agreed refund, so an orchestrator retry works.

@@ -25,6 +25,8 @@ import type {
 import { TASK_ID_PATTERN } from "../types.js";
 import { fail, ok } from "./result.js";
 
+const withMeta = <R extends object>(result: R, meta: LiveChainMeta) => ({ ...result, _meta: { ...meta } });
+
 const CLOSED_CHAIN_STATES = new Set<Chain["state"]>(["closed", "kept", "redone", "expired"]);
 
 function taskIdFor(key: string): string {
@@ -35,7 +37,19 @@ function sameIntent(a: Pick<Intent, "goal" | "constraints" | "preferences">, b: 
   return JSON.stringify([a.goal, a.constraints, a.preferences]) === JSON.stringify([b.goal, b.constraints, b.preferences]);
 }
 
+/** View-only data for the live-chain widget, sent as result `_meta` (not part of the tool contract). */
+export interface LiveChainMeta {
+  /** Server time on the (possibly simulated) clock, so the widget can count down. */
+  server_now: string;
+  /** Each action's undo window from Logic.reversibility; null when there is none. */
+  windows: Record<string, string | null>;
+  /** Amount Stripe shows refunded, for verified actions only. */
+  recovered: Record<string, number>;
+}
+
 export function createToolHandlers(getProxy: () => Proxy) {
+  // Refunded amounts don't change once Stripe verified them, so each is fetched once.
+  const recoveredCache = new Map<string, number>();
   /** Which mismatched actions the agent may undo itself right now. */
   function fixable(p: Proxy, task_id: string, actions: Action[], mismatches: Mismatch[], plan: PlanStep[]): ActionId[] {
     const { logic, sessions, clock } = p.deps;
@@ -66,7 +80,11 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const p = getProxy();
       const { store, inkbox, clock, sessions, defaultPreferences } = p.deps;
       const preferences = { ...defaultPreferences, ...input.preferences };
-      const existing = await store.getIntentByIdempotencyKey(input.idempotency_key);
+      // A demo run scopes keys to the run, so the scripted agent can reuse its key every run.
+      const demo = p.deps.demo;
+      const runId = demo ? (demo.current ?? (await p.startDemoTask())) : null;
+      const key = runId ? `${runId}:${input.idempotency_key}` : input.idempotency_key;
+      const existing = await store.getIntentByIdempotencyKey(key);
       if (existing) {
         if (!sameIntent(existing, { goal: input.goal, constraints: input.constraints, preferences })) {
           return fail("idempotency_conflict", "This idempotency_key was already used with a different intent. Use a new key for a new task.", false, "fix_now");
@@ -74,23 +92,26 @@ export function createToolHandlers(getProxy: () => Proxy) {
         sessions.touch(existing.task_id);
         return ok({ task_id: existing.task_id, task_email: existing.task_email });
       }
-      // Each task gets its own Inkbox identity; the demo reuses one pre-created identity.
-      const task_id = p.deps.demoTaskId ?? taskIdFor(input.idempotency_key);
-      if (!TASK_ID_PATTERN.test(task_id)) {
-        return fail("invalid_input", `Task id ${task_id} must use only lowercase letters, digits and underscores.`, false, "fix_now");
+      // Each task gets its own Inkbox identity. A demo run gets a fresh task id but reuses the demo identity.
+      const task_id = runId ?? taskIdFor(input.idempotency_key);
+      const identityTask = demo ? demo.identityTaskId : task_id;
+      for (const id of new Set([task_id, identityTask])) {
+        if (!TASK_ID_PATTERN.test(id)) {
+          return fail("invalid_input", `Task id ${id} must use only lowercase letters, digits and underscores.`, false, "fix_now");
+        }
       }
-      if (p.deps.demoTaskId && (await store.getIntent(task_id))) {
-        return fail("upstream_unavailable", `The demo identity ${task_id} is already used by another task. Reset the demo (POST /demo/reset) first.`, false, "stop");
+      if (demo && (await store.getIntent(task_id))) {
+        return fail("upstream_unavailable", `Demo run ${task_id} already has a task. Reset the demo (POST /demo/reset) first.`, false, "stop");
       }
       let task_email: string;
       try {
         // Sarah's Inkbox client gets or creates the identity task_<id> -> task-<id>@...
-        ({ task_email } = await inkbox.createTaskAddress(task_id));
+        ({ task_email } = await inkbox.createTaskAddress(identityTask));
       } catch {
         return fail("upstream_unavailable", "Could not create the task email address. Retry shortly.", true, "retry");
       }
       const intent: Intent = { task_id, task_email, goal: input.goal, constraints: input.constraints, preferences, created_at: clock.now() };
-      await store.putIntent(intent, input.idempotency_key);
+      await store.putIntent(intent, key);
       sessions.touch(task_id);
       await p.logEvent({ kind: "tool", tool_name: "log_intent", task_id, outcome: "ok" });
       return ok({ task_id, task_email });
@@ -158,6 +179,19 @@ export function createToolHandlers(getProxy: () => Proxy) {
           continue;
         }
         sessions.touch(action.task_id);
+        // A repeated undo is successful once the original attempt has been Stripe-verified.
+        // Real Logic intentionally omits settled actions from new mismatch plans, so handle
+        // this idempotent replay before asking Logic whether the action is still fixable.
+        if (action.state === "verified") {
+          const existingChain = (await store.listChains(action.task_id)).find((candidate) => candidate.action_ids.includes(id));
+          if (existingChain) {
+            accepted.push(id);
+            chain_id = existingChain.chain_id;
+          } else {
+            requires_human.push(id);
+          }
+          continue;
+        }
         // Enforce the self-undo rule here too, not just in review.
         const { mismatches, chains } = await p.refreshChains(action.task_id);
         const actions = await store.listActions(action.task_id);
@@ -209,19 +243,6 @@ export function createToolHandlers(getProxy: () => Proxy) {
       }
       const plan = intent ? logic.plan_undo(chain, members, intent.preferences, clock.now()) : [];
       const routeOf = new Map(plan.map((s) => [s.action_id, s.route]));
-      const actions: ChainActionView[] = [];
-      for (const a of members) {
-        actions.push({
-          action_id: a.action_id,
-          merchant: a.merchant,
-          category: a.category,
-          summary: a.summary,
-          amount: a.amount,
-          state: a.state,
-          route: routeOf.get(a.action_id) ?? null,
-          stripe_verified: a.state === "verified",
-        });
-      }
       const next_action: NextAction =
         chain.state === "reversed" || chain.state === "redo_requested"
           ? "redo"
@@ -234,11 +255,48 @@ export function createToolHandlers(getProxy: () => Proxy) {
               task_id: intent.task_id,
               task_email: intent.task_email,
               corrected_intent: { goal: intent.goal, constraints: intent.constraints },
-              instruction: `Rebook ${actions.map((a) => a.category).join(", ")} to match the intent, using ${intent.task_email}.`,
-              redo_categories: [...new Set(actions.map((a) => a.category))],
+              instruction: `Rebook ${members.map((a) => a.category).join(", ")} to match the intent, using ${intent.task_email}.`,
+              redo_categories: [...new Set(members.map((a) => a.category))],
             }
           : undefined;
-      return ok({
+      const now = clock.now();
+      const windows: LiveChainMeta["windows"] = {};
+      const recovered: LiveChainMeta["recovered"] = {};
+      const verifiedByStripe = new Set<ActionId>();
+      for (const a of members) {
+        windows[a.action_id] = logic.reversibility(a, now).window_ends_at;
+        if (a.state !== "verified" || a.amount <= 0) continue;
+        if (!recoveredCache.has(a.action_id)) {
+          try {
+            const charge = await p.deps.payments.findChargeForAction(a);
+            if (charge) {
+              const verification = await p.deps.payments.verifyRefund(charge, a.amount);
+              if (verification.verified && verification.refunded_amount === a.amount) {
+                recoveredCache.set(a.action_id, verification.refunded_amount);
+              }
+            }
+          } catch {
+            // Stripe unreachable: show nothing rather than a guess; the next poll retries.
+          }
+        }
+        const amount = recoveredCache.get(a.action_id);
+        if (amount === a.amount) {
+          recovered[a.action_id] = amount;
+          verifiedByStripe.add(a.action_id);
+        }
+      }
+      const actions: ChainActionView[] = members.map((a) => ({
+        action_id: a.action_id,
+        merchant: a.merchant,
+        category: a.category,
+        summary: a.summary,
+        amount: a.amount,
+        state: a.state,
+        route: routeOf.get(a.action_id) ?? null,
+        stripe_verified: verifiedByStripe.has(a.action_id),
+      }));
+      const meta: LiveChainMeta = { server_now: now, windows, recovered };
+      return withMeta(ok({
         chain_id: chain.chain_id,
         state: chain.state,
         actions,
@@ -247,12 +305,15 @@ export function createToolHandlers(getProxy: () => Proxy) {
         rounds: chain.steps.reduce((m, s) => Math.max(m, s.round), 0),
         ...(redo ? { redo } : {}),
         next_action,
-      });
+      }), meta);
     },
 
     async list_chains({ task_id }: ListChainsInput) {
-      const { store, logic, clock } = getProxy().deps;
-      const open = (await store.listChains(task_id)).filter((c) => !CLOSED_CHAIN_STATES.has(c.state));
+      const { store, logic, clock, demo } = getProxy().deps;
+      // In the demo, only the current run's chains; earlier runs stay in the Store as history.
+      const scope = task_id ?? demo?.current ?? undefined;
+      if (demo && task_id === undefined && !demo.current) return ok({ chains: [] });
+      const open = (await store.listChains(scope)).filter((c) => !CLOSED_CHAIN_STATES.has(c.state));
       const chains: ChainSummary[] = [];
       for (const c of logic.rank(open, clock.now())) {
         const root = await store.getAction(c.root_action_id);
