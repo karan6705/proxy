@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSimulatedClock } from "../orchestrator/clock.js";
 import { DEFAULT_PARAMS } from "../orchestrator/params.js";
 import { createRuntime, type Runtime } from "../orchestrator/runtime.js";
+import { createStandInInkbox } from "../orchestrator/standin-inkbox.js";
 import type { Action, SimulatedClock } from "../types.js";
 import { createToolHandlers } from "./handlers.js";
 
@@ -17,9 +18,9 @@ let rt: Runtime;
 let tools: ReturnType<typeof createToolHandlers>;
 
 beforeEach(() => {
-  delete process.env.STRIPE_SECRET_KEY;
   clock = createSimulatedClock(START);
-  rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES);
+  // No env: in-memory Store, stand-in Inkbox, fake Stripe. Nothing leaves the process.
+  rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, { env: {}, inkbox: createStandInInkbox() });
   tools = createToolHandlers(() => rt.proxy);
 });
 
