@@ -11,3 +11,4 @@ export function createStoreFromEnv(env: NodeJS.ProcessEnv = process.env): Store 
   const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   return url && serviceRoleKey ? createSupabaseStore({ url, serviceRoleKey }) : createMemoryStore();
 }
+export { DEMO_EVENT_CONTEXT, makeEvent, type EventContext } from "./events.js";
