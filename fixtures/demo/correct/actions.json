@@ -1,0 +1,63 @@
+[
+  {
+    "action_id": "act_flight",
+    "task_id": "task_nyc",
+    "merchant": "airline",
+    "received_at": "2026-10-18T06:05:00.000Z",
+    "state": "found",
+    "category": "flight",
+    "summary": "Flight SFO to JFK",
+    "amount": 41200,
+    "dates": {
+      "start": "2026-11-13"
+    },
+    "ref": "AIR-V3LU09",
+    "source": "email"
+  },
+  {
+    "action_id": "act_hotel",
+    "task_id": "task_nyc",
+    "merchant": "hotel",
+    "received_at": "2026-10-18T06:10:00.000Z",
+    "state": "found",
+    "category": "hotel",
+    "summary": "Harborview Hotel, 3 nights",
+    "amount": 64000,
+    "dates": {
+      "start": "2026-11-13",
+      "end": "2026-11-16"
+    },
+    "ref": "HTL-YYM5JT",
+    "source": "email"
+  },
+  {
+    "action_id": "act_transfer",
+    "task_id": "task_nyc",
+    "merchant": "transfer",
+    "received_at": "2026-10-18T06:15:00.000Z",
+    "state": "found",
+    "category": "transfer",
+    "summary": "Airport transfer, JFK Airport, Terminal 4, Arrivals to Harborview Hotel, 12 Pier Street, New York, NY",
+    "amount": 18800,
+    "dates": {
+      "start": "2026-11-13"
+    },
+    "ref": "TRF-1XCAUR",
+    "source": "email"
+  },
+  {
+    "action_id": "act_host_email",
+    "task_id": "task_nyc",
+    "merchant": "host",
+    "received_at": "2026-10-18T06:20:00.000Z",
+    "state": "found",
+    "category": "message",
+    "summary": "Arrival email to the host: arriving 2026-11-13",
+    "amount": 0,
+    "dates": {
+      "start": "2026-11-13"
+    },
+    "ref": "MSG-638FSP",
+    "source": "agent"
+  }
+]

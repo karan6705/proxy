@@ -1,0 +1,32 @@
+[
+  {
+    "stripe_event_id": "evt_test_1",
+    "kind": "charge.succeeded",
+    "task_id": "task_nyc",
+    "charge_id": "ch_test_1",
+    "amount": 41200,
+    "refunded_amount": 0,
+    "merchant": "airline",
+    "at": "2026-10-18T06:00:00.000Z"
+  },
+  {
+    "stripe_event_id": "evt_test_2",
+    "kind": "charge.succeeded",
+    "task_id": "task_nyc",
+    "charge_id": "ch_test_2",
+    "amount": 64000,
+    "refunded_amount": 0,
+    "merchant": "hotel",
+    "at": "2026-10-18T06:05:00.000Z"
+  },
+  {
+    "stripe_event_id": "evt_test_3",
+    "kind": "charge.succeeded",
+    "task_id": "task_nyc",
+    "charge_id": "ch_test_3",
+    "amount": 18800,
+    "refunded_amount": 0,
+    "merchant": "transfer",
+    "at": "2026-10-18T06:10:00.000Z"
+  }
+]

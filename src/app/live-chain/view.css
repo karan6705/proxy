@@ -32,13 +32,17 @@
 .lc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
 .lc-title { font-weight: 600; font-size: 15px; }
 .lc-sub { color: var(--lc-muted); font-size: 13px; }
-.lc-progress { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--lc-muted); }
+.lc-totals { display: flex; gap: 16px; text-align: right; }
+.lc-total { display: flex; flex-direction: column; }
+.lc-total-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--lc-muted); }
+.lc-total-value { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.lc-total-ok .lc-total-value { color: var(--lc-ok); }
 
 .lc-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--lc-line); }
 .lc-row {
   display: grid;
-  grid-template-columns: 12px 1fr auto;
-  grid-template-areas: "dot what amount" "dot what state";
+  grid-template-columns: 12px 1fr auto auto;
+  grid-template-areas: "dot what time amount" "dot what time state";
   column-gap: 10px;
   align-items: center;
   padding: 9px 6px;
@@ -50,6 +54,8 @@
 .lc-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lc-route { color: var(--lc-muted); font-size: 12px; }
 .lc-amount { grid-area: amount; text-align: right; font-variant-numeric: tabular-nums; }
+.lc-time { grid-area: time; text-align: right; font-size: 12px; color: var(--lc-muted); font-variant-numeric: tabular-nums; padding-right: 8px; }
+.lc-ok .lc-time { color: var(--lc-ok); }
 .lc-state { grid-area: state; text-align: right; font-size: 12px; color: var(--lc-muted); }
 
 .lc-ok { background: var(--lc-ok-bg); }
