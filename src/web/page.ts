@@ -52,15 +52,26 @@ var money=function(c){return "$"+(c/100).toLocaleString("en-US",{maximumFraction
 function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
 function left(ms){if(ms==null)return "no deadline";if(ms<=0)return "window closed";var m=Math.floor(ms/60000),h=Math.floor(m/60);return (h>0?h+"h ":"")+(m%60)+"m left"}
 var tone={detected:"warn",alerted:"warn",undoing:"info",partial:"warn",reversed:"ok",redo_requested:"info",redone:"ok",closed:"ok",kept:"ok",expired:"bad"};
-var picked={};
+var sel={},note={},showAll=false,OPEN=["detected","alerted","undoing","partial"];
+var said={forwarded:"Sent. The orchestrator has the decision.",duplicate:"Already on it. A second tap does nothing.",too_late:"Too late: that window has closed.",kept:"Already kept.",undo_started:"The undo already started.",pick_list:"Choose at least one action.",already_handled:"Already handled.",clarify:"Not understood."};
 function post(chain,kind,picks){
-  return fetch("/web/reply",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chain_id:chain,kind:kind,picks:picks})}).then(function(r){return r.json()});
+  return fetch("/web/reply",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chain_id:chain,kind:kind,picks:picks})}).then(function(r){return r.json()}).then(function(j){
+    var r=j&&j.result;note[chain]=!j.ok?(j.message||"Failed."):(r&&r.status==="forwarded"?said.forwarded:(r&&said[r.reason])||"Done.");
+  }).catch(function(){note[chain]="Could not reach the server."});
 }
 function render(s){
   $("clock").textContent="Sim time "+new Date(s.now).toISOString().replace("T"," ").slice(0,16)+" UTC";
   var box=$("chains");box.textContent="";
   if(!s.chains.length)box.appendChild(el("div","empty","No chains yet. Nothing has gone wrong."));
-  s.chains.forEach(function(c){
+  var ordered=s.chains.slice().reverse();
+  var active=ordered.filter(function(c){return OPEN.indexOf(c.state)>=0});
+  var earlier=ordered.filter(function(c){return OPEN.indexOf(c.state)<0});
+  var shown=showAll?active.concat(earlier):active.length?active:earlier.slice(0,1);
+  if(earlier.length&&active.length){
+    var tg=el("button","",showAll?"Hide earlier chains":"Show "+earlier.length+" earlier chain"+(earlier.length===1?"":"s"));
+    tg.onclick=function(){showAll=!showAll;render(s)};box.appendChild(tg);
+  }
+  shown.forEach(function(c){
     var card=el("div","card"),top=el("div","row");
     var l=el("div");l.appendChild(el("span","pill "+(tone[c.state]||""),c.state));l.appendChild(el("span","mute"," "+c.task_id));
     top.appendChild(l);top.appendChild(el("div","big",money(c.money_at_risk)));card.appendChild(top);
@@ -69,6 +80,10 @@ function render(s){
     var ul=el("ul");
     c.actions.forEach(function(a,i){
       var li=el("li","action"),lf=el("div","left");
+      if(s.controls&&sel[c.chain_id]&&sel[c.chain_id].on){
+        var cb=document.createElement("input");cb.type="checkbox";cb.checked=!!sel[c.chain_id].set[i+1];
+        cb.onchange=function(){sel[c.chain_id].set[i+1]=cb.checked};lf.appendChild(cb);
+      }
       lf.appendChild(el("span","dot "+(a.stripe_verified?"verified":a.state==="failed"?"failed":a.state==="refund_pending"?"pending":"")));
       var t=el("span","t");t.appendChild(document.createTextNode((i+1)+". "+a.summary+" "));t.appendChild(el("span","mute",a.merchant+" · "+a.state+(a.stripe_verified?" · Stripe verified":"")));
       lf.appendChild(t);li.appendChild(lf);li.appendChild(el("span","",money(a.amount)));ul.appendChild(li);
@@ -76,12 +91,24 @@ function render(s){
     card.appendChild(ul);
     var open=["detected","alerted","partial"].indexOf(c.state)>=0;
     if(s.controls&&open){
-      var ctl=el("div","controls");
+      var ctl=el("div","controls"),st=sel[c.chain_id]||(sel[c.chain_id]={on:false,set:{}});
       var u=el("button","primary","UNDO ALL");u.onclick=function(){u.disabled=true;post(c.chain_id,"undo_all")};
-      var p=el("button","","PICK");p.onclick=function(){var v=prompt("Numbers to undo, like 1 3");if(v){var n=v.split(/[ ,]+/).map(Number).filter(Boolean);post(c.chain_id,"pick",n)}};
       var k=el("button","","KEEP");k.onclick=function(){k.disabled=true;post(c.chain_id,"keep")};
-      ctl.appendChild(u);ctl.appendChild(p);ctl.appendChild(k);card.appendChild(ctl);
+      if(!st.on){
+        var p=el("button","","PICK");p.onclick=function(){st.on=true;st.set={}};
+        ctl.appendChild(u);ctl.appendChild(p);ctl.appendChild(k);
+      }else{
+        var go=el("button","primary","Undo selected");go.onclick=function(){
+          var n=Object.keys(st.set).filter(function(x){return st.set[x]}).map(Number);
+          if(!n.length){note[c.chain_id]=said.pick_list;return}
+          st.on=false;post(c.chain_id,"pick",n)};
+        var no=el("button","","Cancel");no.onclick=function(){st.on=false;st.set={}};
+        ctl.appendChild(go);ctl.appendChild(no);
+        ctl.appendChild(el("span","mute","Tick the actions to undo"));
+      }
+      card.appendChild(ctl);
     }
+    if(note[c.chain_id])card.appendChild(el("div","mute",note[c.chain_id]));
     box.appendChild(card);
   });
   var feed=$("feed");feed.textContent="";
