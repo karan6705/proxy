@@ -38,7 +38,7 @@ Buying agent (any) ──MCP──> Proxy MCP server (mcp-use, Manufact Cloud)
                                   │
                        Append-only log (Supabase) ──realtime──> Demo page / MCP App / Scoreboard
 
-Mock merchants (airline*, hotel*, transfer, SaaS, store; *has a merchant agent) ──> confirmation emails + Stripe charges
+Mock merchants (airline, hotel*, transfer, SaaS, store; *has a merchant agent; the airline is self-serve only) ──> confirmation emails + Stripe charges
 Eval harness ──Layer 1: scripted calls, emails, Stripe events on a simulated clock | Layer 2: real agent──> naive arm | Proxy arm ──> grader ──> scoreboard
 ```
 
@@ -65,7 +65,7 @@ Six tools with tight schemas and one resource. All writes are idempotent (task i
 | Object | Fields |
 |---|---|
 | **Intent** | `task_id`, `task_email`, `goal`, `constraints` (`dates`, `budget_total`, `destination`, `categories`, `must_haves`), `preferences` (`no_store_credit`, `min_partial_refund_pct`, `auto_undo`), `created_at` |
-| **Action** | `action_id`, `task_id`, `merchant`, `category` (`flight`, `hotel`, `transfer`, `saas`, `store`, `message`), `summary`, `amount`, `dates`, `ref`, `source` (`email`, `stripe`, `agent`), `received_at`, `state` |
+| **Action** | `action_id`, `task_id`, `merchant`, `category` (`flight`, `hotel`, `transfer`, `saas`, `store`, `message`), `summary`, `amount`, `dates`, `ref`, `source` (`email`, `stripe`, `agent`), `received_at`, `state`, optional `confidence` (0 to 1, set by capture for LLM extraction) |
 | **Mismatch** | `action_id`, `field`, `expected`, `actual` |
 | **Chain** | `chain_id`, `task_id`, `root_action_id`, `action_ids`, `money_at_risk`, `window_ends_at`, `state`, `alerts`, `plan`, `steps` |
 | **Reversibility** | `kind` (`cancel_refund`, `change`, `return`, `correct_message`, `none`), `window_ends_at`, `refundable`, `cost_to_reverse`, `rule` |
@@ -77,9 +77,9 @@ All take `now` from the clock, so they run on the simulated clock.
 | Function | Does |
 |---|---|
 | `compare(intent, actions) -> mismatches[]` | Exact field checks against the intent: dates, amount over budget, wrong term, wrong item, duplicate |
-| `trace(intent, actions, mismatches) -> chains[]` | Groups a root mistake with the actions that depend on it (same wrong field, shared reference, or date overlap) |
+| `trace(intent, actions, mismatches) -> chains[]` | Groups a root mistake with the actions that depend on it (same wrong field, shared reference, or date overlap). The root is the earliest booked action with a mismatch (not a message); in the demo, the flight |
 | `reversibility(action, now) -> Reversibility` | The reversibility rules table |
-| `plan_undo(chain, preferences, now) -> plan[]` | Orders the undo steps by urgency and cost. The **damage minimizer** compares cancel, change and keep for each action and picks the cheapest fix within the window and preferences |
+| `plan_undo(chain, actions, preferences, now) -> plan[]` | Orders the undo steps by urgency and cost. The **damage minimizer** compares cancel, change and keep for each action and picks the cheapest fix within the window and preferences |
 | `rank(chains, now) -> chains[]` | Sorts by `money_at_risk / max(hours_left, MIN_HOURS)` |
 | `negotiate_step(state, message, preferences) -> {next_state, outgoing?}` | One step of the Reversal Protocol state machine |
 
@@ -100,6 +100,8 @@ In the demo, mock merchants book through a scripted agent, charge Stripe test mo
 - **One text per chain**, sent the moment a chain is opened:
   > Your agent used the wrong date (Nov 3, not Nov 13). 4 things are affected, $1,240 at risk. Fully reversible for 3h 40m. Reply UNDO ALL, PICK, or KEEP.
 - **UNDO ALL** starts the undo for every action. **PICK** replies with a numbered list, and the human answers with numbers. **KEEP** closes the chain as kept.
+- **STOP** freezes all undo activity for the human, across every chain, until their next reply.
+- **A free-text correction** such as "ugh no the 13th" is confirmed once with the human before Proxy acts on it.
 - **No reply:** an iMessage after `REPLY_WAIT`, then a phone call at `CALL_AT` of the window. If SMS, iMessage or calls aren't available, the next channel is used.
 - **Auto-undo:** only if the intent's preferences set `auto_undo`. Proxy acts at `AUTO_UNDO_AT` of the window.
 - Only the human's number is accepted. Replies after the window closes get a "too late" text.
@@ -184,9 +186,9 @@ All are ours, and we say so. Each confirms by email with JSON-LD to the task add
 
 | Merchant | Rule | Has an agent |
 |---|---|---|
-| Airline | Full refund within 24 hours if booked at least 7 days out. After that a change fee or non-refundable | Yes (A2A) |
+| Airline | Full refund within 24 hours if booked at least 7 days out. After that a change fee or non-refundable | No (self-serve cancel) |
 | Hotel | Free cancel until a deadline. After that it counters with store credit or a partial refund | Yes (A2A) |
-| Transfer or ride | Free cancel until shortly before | No (email support) |
+| Transfer or ride | Free cancel until shortly before | No (email support at `support@metrotransfer.example`) |
 | SaaS vendor | Refund within a window, annual and monthly plans | No (email support) |
 | Store | Return window, label, tracked refund | No (email support) |
 | Host (a person) | Receives the agent's arrival email | n/a (Proxy sends a correction) |

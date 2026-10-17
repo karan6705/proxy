@@ -66,7 +66,7 @@ Also set: `MIN_HOURS`, `REPLY_WAIT`, `CALL_AT`, `AUTO_UNDO_AT`, `FOLLOW_UP_EVERY
 
 **Sarah**
 - [ ] Supabase tables: `intents`, `actions`, `chains`, `steps`, `lessons`, `events` (no update or delete on `events`).
-- [ ] Inkbox identities: Proxy, merchant support, airline agent, hotel agent.
+- [ ] Inkbox identities: Proxy, merchant support, hotel agent (the airline has no agent).
 
 **Dhwanil**
 - [ ] The simulated clock and the stub scenario runner that can target either arm (`naive` or `proxy`).

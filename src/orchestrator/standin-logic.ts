@@ -26,11 +26,8 @@ const ROUTE_BY_CATEGORY: Record<Action["category"], RouteKind> = {
   message: "correction",
 };
 
-/**
- * `lookup` resolves action ids for plan_undo, whose contract signature receives only the chain.
- * `minHours` is MIN_HOURS for rank.
- */
-export function createStandInLogic(lookup: (id: ActionId) => Action | undefined, minHours: number): Logic {
+/** `minHours` is MIN_HOURS for rank. */
+export function createStandInLogic(minHours: number): Logic {
   const reversibility = (action: Action, _now: Timestamp): Reversibility => {
     const got = Date.parse(action.received_at);
     switch (action.category) {
@@ -93,7 +90,8 @@ export function createStandInLogic(lookup: (id: ActionId) => Action | undefined,
       const members = actions
         .filter((a) => ids.has(a.action_id))
         .sort((a, b) => a.received_at.localeCompare(b.received_at));
-      const root = members[0];
+      // Root: the earliest booked action with a mismatch; a message only if nothing was booked.
+      const root = members.find((a) => a.category !== "message") ?? members[0];
       if (!root) return [];
       const chain: Chain = {
         chain_id: `chain_${intent.task_id}`,
@@ -112,10 +110,11 @@ export function createStandInLogic(lookup: (id: ActionId) => Action | undefined,
 
     reversibility,
 
-    plan_undo(chain, _preferences, now) {
+    plan_undo(chain, actions, _preferences, now) {
       const steps: PlanStep[] = [];
+      const byId = new Map(actions.map((a) => [a.action_id, a]));
       for (const id of chain.action_ids) {
-        const a = lookup(id);
+        const a = byId.get(id);
         if (!a) continue;
         const r = reversibility(a, now);
         steps.push({ action_id: id, route: ROUTE_BY_CATEGORY[a.category], option: "cancel", cost: r.cost_to_reverse, deadline: r.window_ends_at });

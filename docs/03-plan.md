@@ -49,7 +49,7 @@
 
 - [ ] **All three:** lock the seven contracts in `04-architecture.md` and the parameters listed under them. Agree the demo scenario's exact amounts and times (flight $412, hotel $640, transfer $188, host email, $1,240 at risk, 3h 40m left).
 - [ ] **Karan:** commit `src/types.ts`. Server runs locally with stub tools in the mcp-use Inspector.
-- [ ] **Sarah:** create the Supabase tables (`intents`, `actions`, `chains`, `steps`, `lessons`, `events`). Set up Inkbox identities: Proxy, a merchant-support inbox, and two merchant-agent identities (airline, hotel).
+- [ ] **Sarah:** create the Supabase tables (`intents`, `actions`, `chains`, `steps`, `lessons`, `events`). Set up Inkbox identities: Proxy, a merchant-support inbox, and one merchant-agent identity (hotel; the airline has no agent).
 - [ ] **Dhwanil:** the simulated clock and the stub scenario runner that can target either arm.
 
 ### Phase 2: Capture works (Sat, 12:30 PM to 2 PM)
