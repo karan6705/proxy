@@ -111,7 +111,7 @@ describe("texting the human and matching replies to chains", () => {
     const chain = await store.getChain(chain_id);
     expect(chain?.state).toBe("alerted");
     expect(chain?.alerts).toHaveLength(1);
-    expect(inkbox.outbox).toEqual([{ kind: "text", channel: "sms", to: HUMAN, body: "Your agent used the wrong date." }]);
+    expect(inkbox.outbox).toEqual([{ kind: "text", channel: "imessage", to: HUMAN, body: "Your agent used the wrong date." }]);
   });
 
   it("a reply goes to the most recently alerted open chain", async () => {
@@ -147,10 +147,11 @@ describe("texting the human and matching replies to chains", () => {
     expect((await store.getChain(a))?.alerts.map((x) => x.kind)).toEqual(["chain_opened", "reminder"]);
   });
 
-  it("refuses to text when no human number is registered", async () => {
+  it("records the alert but sends nothing when no human number is registered", async () => {
     rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, { env: {}, store, inkbox });
     const a = await openChain("task_a");
-    await expect(rt.proxy.textHuman(a, "chain_opened", "x")).rejects.toThrow("HUMAN_PHONE");
+    await rt.proxy.textHuman(a, "chain_opened", "x");
     expect(inkbox.outbox).toHaveLength(0);
+    expect((await store.getChain(a))?.alerts).toHaveLength(1);
   });
 });
