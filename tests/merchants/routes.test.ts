@@ -39,7 +39,7 @@ describe("merchant routes: shape", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("gives agents only to merchants that have one, and support desks only to the transfer company and the host", () => {
+  it("gives agents only to merchants that have one, and support desks only to the merchants that take email (transfer, host, saas, store)", () => {
     const { routes } = setup();
     const paths = routes.map((r) => r.path);
     expect(paths).toContain("/merchants/hotel/agent");
@@ -48,15 +48,19 @@ describe("merchant routes: shape", () => {
     expect(paths).toContain("/merchants/transfer/support");
     expect(paths).toContain("/merchants/host/support");
     expect(paths).not.toContain("/merchants/host/agent");
+    expect(paths).toContain("/merchants/saas/support");
+    expect(paths).toContain("/merchants/store/support");
+    expect(paths).not.toContain("/merchants/saas/agent");
+    expect(paths).not.toContain("/merchants/store/agent");
     expect(paths).not.toContain("/merchants/airline/support");
     expect(paths).not.toContain("/merchants/hotel/support");
   });
 
-  it("lists the four merchants", async () => {
+  it("lists the six merchants", async () => {
     const { routes } = setup();
     const response = await call(routes, "GET", "/merchants");
     expect(response.status).toBe(200);
-    expect((response.body as { merchants: { merchant_id: string }[] }).merchants.map((m) => m.merchant_id)).toEqual(["airline", "hotel", "transfer", "host"]);
+    expect((response.body as { merchants: { merchant_id: string }[] }).merchants.map((m) => m.merchant_id)).toEqual(["airline", "hotel", "transfer", "host", "saas", "store"]);
   });
 });
 
