@@ -4,7 +4,7 @@ import { MCPServer } from "mcp-use";
 import { z } from "zod";
 import { createSimulatedClock } from "./orchestrator/clock.js";
 import { DEFAULT_PARAMS } from "./orchestrator/params.js";
-import { createRuntime, type Runtime } from "./orchestrator/runtime.js";
+import { createRuntime, startProtocolInbox, type Runtime } from "./orchestrator/runtime.js";
 import type { Action, HttpMethod, Preferences, RouteHandler, RouteRequest } from "./types.js";
 import { MISTAKES_RESOURCE_URI } from "./types.js";
 import { createToolHandlers } from "./tools/handlers.js";
@@ -306,5 +306,8 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
     },
   ]);
 }
+
+// Merchant agents answer Proxy over Inkbox A2A or email; this polls for them (real Inkbox only).
+startProtocolInbox(() => runtime, clock).catch((e) => console.error("[protocol-inbox] not started:", e instanceof Error ? e.message : e));
 
 export default server;

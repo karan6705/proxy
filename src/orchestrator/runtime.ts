@@ -3,7 +3,7 @@
 // real Stripe test mode when a sk_test_ key is set. Logic and Merchants stay stand-ins until Dhwanil's merge.
 import { createAnthropicExtractor, createCapture, createInboundEmailRoute, deliverToCapture, type Capture } from "../capture/index.js";
 import { createStoreFromEnv } from "../db/index.js";
-import { createClient, createHumanChannel, createHumanRoutes, createInkbox, type HumanChannel } from "../inkbox/index.js";
+import { createA2AAccess, createClient, createHumanChannel, createHumanRoutes, createInkbox, createProtocolInbox, type HumanChannel, type ProtocolInbox } from "../inkbox/index.js";
 import { logic } from "../logic/index.js";
 import {
   addressMode,
@@ -210,4 +210,34 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   ];
 
   return { proxy, store, human, capture, routes, fakePayments, merchants };
+}
+
+/**
+ * Starts Sarah's protocol inbox once, for the server's lifetime. It polls Proxy's A2A tasks and email for the
+ * merchant agents' answers and hands each to the current runtime (which /demo/reset replaces). It runs only with
+ * a real Inkbox key and no loopback; otherwise the in-process mock agent answers and there is nothing to poll.
+ * Restart point: the latest processed merchant message in the Store, minus 2 minutes. The orchestrator drops
+ * replays by negotiation, message type, round and amount, so the overlap is safe.
+ */
+export async function startProtocolInbox(getRuntime: () => Runtime, clock: Clock, env: NodeJS.ProcessEnv = process.env): Promise<ProtocolInbox | null> {
+  const real = Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
+  const loopback = env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !real;
+  if (!real || loopback) return null;
+  const rt = getRuntime();
+  const handle = env.INKBOX_PROXY_HANDLE?.trim() || "proxy-agent";
+  const identities = rt.merchants.list().flatMap((m) => (m.agent_identity ? [m.agent_identity] : []));
+  const last = await rt.proxy.undo.lastProcessedAt();
+  const since = new Date((last ? Date.parse(last) : Date.now()) - 2 * 60_000).toISOString();
+  const inbox = createProtocolInbox({
+    access: createA2AAccess({ admin: createClient, handle, apiKey: env.INKBOX_PROXY_API_KEY?.trim() || undefined }),
+    hooks: { onProtocolMessage: (m) => getRuntime().proxy.onProtocolMessage(m) },
+    clock,
+    store: rt.store,
+    trustedHandles: identities,
+    trustedEmails: identities.map((i) => `${i}@inkboxmail.com`),
+    since,
+    log: (line) => console.error(`[protocol-inbox] ${line}`),
+  });
+  inbox.start();
+  return inbox;
 }
