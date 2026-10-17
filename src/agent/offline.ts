@@ -1,4 +1,4 @@
-import { DEMO_TASK_EMAIL, DEMO_TASK_ID, demoMismatches } from "../tools/stubs.js";
+import { demoMismatches } from "../tools/stubs.js";
 import type { Action, LogIntentOutput, ReviewOutput, ToolResult, UndoOutput } from "../types.js";
 import type { ToolClient } from "./mcp-client.js";
 import type { DemoControl } from "./scripted.js";
@@ -10,6 +10,9 @@ export interface OfflineDemoState {
   ended_tasks: string[];
 }
 
+export const OFFLINE_DEMO_TASK_ID = "task_demo";
+export const OFFLINE_DEMO_TASK_EMAIL = "task-demo@inkboxmail.com";
+
 export function createOfflineToolClient(): ToolClient & { readonly calls: string[] } {
   const calls: string[] = [];
   return {
@@ -17,7 +20,11 @@ export function createOfflineToolClient(): ToolClient & { readonly calls: string
     async callTool<T>(name: string): Promise<T> {
       calls.push(name);
       if (name === "log_intent") {
-        return { ok: true, task_id: DEMO_TASK_ID, task_email: DEMO_TASK_EMAIL } satisfies ToolResult<LogIntentOutput> as T;
+        return {
+          ok: true,
+          task_id: OFFLINE_DEMO_TASK_ID,
+          task_email: OFFLINE_DEMO_TASK_EMAIL,
+        } satisfies ToolResult<LogIntentOutput> as T;
       }
       if (name === "review") {
         return {

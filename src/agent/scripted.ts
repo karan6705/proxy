@@ -295,15 +295,25 @@ async function main(): Promise<void> {
   if (command !== "run") throw new Error(`Unknown command ${command}; use run or reset`);
 
   const client = offline ? createOfflineToolClient() : await connectToolClient(mcpUrl);
+  const runStarted = performance.now();
+  let passed = false;
   try {
     await runScriptedDemo({
       client,
       payments: offline ? createMockAgentPayments() : createDemoPayments(),
       clock: createDemoClock(),
       control,
+      onStep: offline
+        ? ({ step, status, duration_ms, error }) => {
+            const detail = error ? ` — ${error}` : "";
+            console.log(`${status} ${step} ${Math.round(duration_ms)}ms${detail}`);
+          }
+        : undefined,
     });
+    passed = true;
   } finally {
     await client.close();
+    if (offline) console.log(`${passed ? "PASS" : "FAIL"} total ${Math.round(performance.now() - runStarted)}ms`);
   }
 }
 
