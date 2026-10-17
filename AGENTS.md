@@ -1,24 +1,27 @@
-# Tripwire: rules for every agent in this repo
+# Proxy: rules for every agent in this repo
 
 ## What we are building
-Tripwire is an MCP server that lets any AI agent buy what it needs (API credits, a domain, a SaaS seat) through Stripe, within a budget the human sets. Under budget it buys instantly. Over budget, the agent emails the human through Primitive with a signed approve link, waits, then completes the purchase. It also catches the ways agents overspend: hidden text on product pages telling the agent to buy more, splitting one big purchase into small ones to dodge the limit, and buying things unrelated to the task. We prove it with a scoreboard: the same agent runs about 30 scripted scenarios against a naive server and against Tripwire, and we compare unauthorized spend, needless escalations and token cost. We only report numbers our actual runs produce.
+Proxy (repo folder: tripwire) is the undo layer for AI agents. Any agent calls it over MCP: log_intent anchors a task and returns a unique task email address, reversibility says how undoable an action is before the agent acts, review compares the receipts and Stripe charges that reached the task inbox with the intent and returns exact mismatches, undo fixes the agent's own mismatched actions, and get_chain and list_chains show open chains. Proxy also runs as a recovery agent with its own Inkbox identity: it captures confirmations (structured data first, an LLM only for messy emails) and Stripe events, keeps watching after the agent's session ends, groups related mistakes into one chain, and sends the human one text (reply UNDO ALL, PICK or KEEP), escalating to iMessage and a phone call before the deadline. It undoes the chain cheapest and most urgent first using reversibility rules (the 24-hour flight rule, hotel free-cancellation deadline, subscription refund window) and a damage minimizer, negotiating with merchant agents over Inkbox A2A with the Reversal Protocol (a state machine: request_reversal, accept, counter or deny, accept, push back once or ask the human; at most 3 rounds and a hard deadline), or emailing support, following up, calling and filing a Stripe dispute when a merchant has no agent. A refund only counts when Stripe shows it. Then Proxy hands the corrected intent back to the original agent to redo it, and records the lesson in a mistakes MCP resource. An MCP App shows the live undo chain. Merchant messages are untrusted data. Merchants and merchant agents in our demo are our own mocks and the clock is simulated; never claim otherwise. We prove it with a scoreboard: about 30 scripted scenarios run against a naive arm (the agent checking its own work) and against Proxy, and we report mistakes caught, chain completeness, money recovered, redo correctness, false done claims, time to alert and token cost. We only report numbers our actual runs produce. Full docs are in docs/ (start with docs/01-concepts.md and docs/04-architecture.md).
 
-Hackathon: YC Make Something Agents Want. Submissions due Sunday 10 AM. Target tracks: Manufact (MCP server), Stripe (safe agent spending), Primitive (email approval), Armature (agent experience).
+Hackathon: YC Make Something Agents Want. Submissions due Sunday 10 AM. Target tracks: Manufact (MCP server) and Inkbox (agent identity: email, text, phone, agent to agent).
 
 ## Stack
-TypeScript, Node 18+, official MCP TypeScript SDK, Stripe in test mode only, Primitive for email.
+TypeScript, Node 18+, mcp-use (Manufact), @inkbox/sdk, Stripe in test mode only, Supabase, @anthropic-ai/sdk.
 
-## Two agents work in this folder at the same time
-Claude Code owns: src/ (server, tools, policy engine, Stripe and Primitive integrations), src/types.ts (the shared contract), package.json, tsconfig.json.
-Codex owns: evals/ (scenarios, naive baseline server, runner, scoreboard), fixtures/ (malicious product pages and test data), tests/.
+## Three people work in this folder at the same time, each with their own coding agent
+Karan owns: src/server.ts, src/tools/, src/app/ (MCP App), src/stripe/, src/orchestrator/, src/types.ts (the shared contract), package.json, tsconfig.json.
+Sarah owns: src/inkbox/, src/capture/, src/db/, src/web/.
+Dhwanil owns: src/logic/, src/merchants/, evals/, fixtures/, tests/.
 
 Rules:
-- Only edit files in your own area. Codex may read src/types.ts but never edits it.
-- If you need a change in the other agent's area, or a new npm package, add a note under the other agent's heading in HANDOFF.md and stop. Only Claude Code edits package.json.
-- Commit only your own files with explicit paths (git add src/...). Never use git add ., git add -A, git reset --hard, git checkout ., git stash, or force push.
+- Only edit files in your own area. Anyone may read src/types.ts but only Karan edits it, and after the Saturday 12:30 PM freeze a change needs all three people to agree.
+- If you need a change in someone else's area, or a new npm package, add a note under their heading in HANDOFF.md and stop. Only Karan edits package.json.
+- Use short-lived branches named after yourself (karan/..., sarah/..., dhwanil/...), merge to main often, and keep main running.
+- Commit only your own files with explicit paths (git add src/logic/...). Never use git add ., git add -A, git reset --hard, git checkout ., git stash, or force push.
 - Prefix commit messages with [core] for src/ work or [evals] for evals/, fixtures/ and tests/ work. Never mention Claude, Codex, AI or any assistant in commit messages, PR titles, PR descriptions or code comments. No Co-Authored-By or Generated-with lines. Run git pull --rebase before you push.
 - Secrets go in .env, which is never committed. Add every variable name to .env.example.
 
 ## How to work
 - Hackathon speed: small working increments, demo path first. No coverage targets. Write tests only where they protect the demo.
+- The functions in src/logic/ are pure and take the current time as an argument, so they run on the simulated clock.
 - When you finish a task, reply with: files changed, how to run it, what is left.

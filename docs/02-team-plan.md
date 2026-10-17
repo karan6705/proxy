@@ -1,53 +1,57 @@
-# Tripwire — Team Plan (one page)
+# Proxy — Team Plan (one page)
 
 Details live in `03-plan.md`. This is the short version.
 
 ## What we're building
 
-An MCP server that lets an AI agent buy things with Stripe inside a budget a human sets. Under budget, it buys right away. Over budget, a human gets an email and approves. A rules engine blocks the tricks that make agents overspend, and a scoreboard from real runs proves it.
+The undo layer for AI agents. Every agent will make mistakes in the real world. Proxy gives each task its own email address, captures every receipt and Stripe charge, compares them with the intent, traces the whole chain one mistake broke, texts the human once, and undoes the chain before the window closes. It negotiates agent to agent with merchant agents over Inkbox, confirms the money in Stripe, then hands the corrected intent back to the original agent to redo it right.
 
-Hacking starts **Sat Oct 17, 10:30 AM**. Submissions are due **Sun Oct 18, 10 AM**.
+Tracks: **Manufact** (MCP server) and **Inkbox** (agent identity). Hacking starts **Sat Oct 17, 10:30 AM**. Submissions are due **Sun Oct 18, 10 AM**. We are three people, each working with a coding agent. This is the final plan.
 
 ## Who owns what
 
 | Owner | Owns |
 |---|---|
-| **Karan (lead)** | MCP server, `request_purchase`, purchase state machine, Stripe test mode, demo agent client, Manufact Cloud deploy, backup video, submission |
-| **Sarah** | Supabase tables and event logging, live events page, Primitive approval email, signed one-time links, approve/reject, approval-loop hardening |
-| **Nimran** | Mock catalog, `decide()` rules (with split detection), attack scenarios, compromised-agent mode, scoreboard page |
-| **Dhwanil** | Normal and over-budget scenarios, grader, eval runs (both layers), scoreboard numbers |
+| **Karan (lead)** | Scaffold, `src/types.ts`, MCP server (six tools, `mistakes` resource), MCP App, Stripe, undo orchestrator and redo, demo agent client, scripted agent mode, Manufact deploy, backup video, submission |
+| **Sarah** | Everything Inkbox: task inboxes, capture and extraction, alerts and escalation (SMS, iMessage, phone), UNDO ALL / PICK / KEEP, A2A transport and email fallback, support emails, Supabase, log, live demo page |
+| **Dhwanil** | The brain in `src/logic/` (`compare`, `trace`, `reversibility`, `plan_undo`, `rank`, `negotiate_step`), mock merchants and merchant agents, simulated clock, fixtures, naive arm, ~30 scenarios, grader, evals, scoreboard page |
 
 ## Checkpoints
 
 | When | Gate | What must be true |
 |---|---|---|
 | **Sat 10 AM** | Kickoff | Karan asks the organizers: multiple tracks? pre-existing code? demo length? |
-| **Sat 12:30 PM** | Contracts frozen | Tool schemas, decision object, `events` row and `decide()` are locked. |
-| **Sat 2 PM** | Purchase works | One Stripe test-mode purchase works start to finish. |
-| **Sat 6 PM** | Email works | Email approval works, all scenarios are written, and a smoke eval (about 10 scenarios, both arms, both layers) has run. |
-| **Sat midnight** | First scoreboard | First full scoreboard run is done. |
-| **Sun 2 AM** | Feature freeze | No new features. Bug fixes only. |
-| **Sun 8 AM** | Rehearsal | All four run the full demo (see `05-demo-flow.md`) twice, with a timer. |
+| **Sat 12:30 PM** | Contracts frozen | Seven contracts and the parameters locked. Demo scenario agreed. |
+| **Sat 2 PM** | Capture works | `log_intent` returns a task address, a wrong-date booking arrives as an Action, Stripe charge seen, `review` returns the mismatch. |
+| **Sat 6 PM** | First undo | One chain of four actions, one text, UNDO ALL, the flight refunded and verified in Stripe. Smoke eval run. |
+| **Sat midnight** | Full chain | Hotel by negotiation, transfer by email, host corrected, all verified, redone correctly, MCP App live. First scoreboard run. |
+| **Sun 2 AM** | Feature freeze | Bug fixes only. |
+| **Sun 8 AM** | Rehearsal | All three run the full demo twice, with a timer. |
 | **Sun 10 AM** | Submit | Karan submits. Live demos follow. |
 
 ## Fallback rules
 
-- **No working email by 6 PM:** approval moves into the UI. The approve and reject buttons go on the demo page, and email is dropped from the live demo. The backup video shows the email step. Stop debugging email at 6 PM.
-- **No working Stripe by 2 PM:** use a mock charge (mark the purchase completed without calling Stripe) so everyone keeps moving. Keep trying until 6 PM. If it still fails, say so in the demo.
-- **Python won't deploy on Manufact Cloud:** Karan tests this tonight. If it fails, the server alone moves to TypeScript.
+- **No unique task addresses:** plus-addressing or the task id in the subject.
+- **No A2A:** the Reversal Protocol runs over email with the same JSON and state machine.
+- **No inbound text by 6 PM:** demo page buttons stand in for UNDO ALL / PICK / KEEP.
+- **Email replies unreliable:** the merchant reply is posted from a demo page button, and the backup video shows the real moment.
+- **No iMessage or calls:** use SMS reminders only.
 
 ## If we run behind, cut in this order
 
-1. Two-way email replies (stretch goal)
+1. Phone call, then iMessage
 2. Layer 2, the live-agent eval
-3. Polish on split detection
+3. LLM extraction for messy emails
+4. SaaS and store merchants
+5. Damage minimizer and `mistakes` resource polish
 
-Never cut the attack catch, the Stripe purchase, or the scoreboard.
+Never cut `log_intent` with the task inbox, `review`, chain tracing, the one-text alert, at least one negotiation, Stripe-verified refunds, redo, or the scoreboard.
 
 ## Working rules
 
 - Tick your boxes in `03-plan.md` as you finish tasks.
-- After the 12:30 PM freeze, nobody changes the contracts without all four agreeing.
-- `main` must always run. Merge small and often.
+- After the 12:30 PM freeze, nobody changes the contracts without all three agreeing.
+- Short-lived branches, merge to `main` often, and `main` must always run.
 - Report only real runs on the scoreboard. Save the raw event logs.
-- Be honest about the limits: Tripwire limits the damage a hijacked agent can do. It doesn't make injection impossible.
+- The merchants and merchant agents are our mocks, and the clock is simulated. Say so on stage.
+- Be honest about the limits: some mistakes can't be undone, reversal needs the merchant's cooperation, and Proxy only sees what reaches the task address and Stripe.
