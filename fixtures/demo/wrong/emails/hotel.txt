@@ -1,0 +1,19 @@
+From: Harborview Hotel <reservations@harborviewhotel.example>
+To: task_nyc@tasks.proxy.example
+Subject: Your reservation at Harborview Hotel is confirmed (HTL-F1KEY5)
+
+Your reservation is confirmed
+
+Thank you for choosing Harborview Hotel. We look forward to welcoming you.
+
+Confirmation number: HTL-F1KEY5
+Hotel: Harborview Hotel, 12 Pier Street, New York, NY 10004
+Check-in: Nov 3, 2026, from 3:00 PM
+Check-out: Nov 6, 2026, by 11:00 AM
+Stay: 3 nights, Standard King Room
+Rate: Advance purchase, non-refundable
+Total paid: $640.00
+
+This rate is non-refundable. Our reservations team can consider goodwill requests until 24 hours before check-in.
+
+Harborview Hotel
