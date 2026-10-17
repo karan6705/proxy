@@ -94,7 +94,7 @@ export function createFakePayments(opts: { settleRefunds?: boolean; honorIdempot
     async verifyRefund(charge_id, amount) {
       const c = charges.get(charge_id);
       const refunded_amount = c?.refunded ?? 0;
-      return { verified: refunded_amount >= amount, refunded_amount };
+      return { verified: amount > 0 && refunded_amount === amount, refunded_amount };
     },
     async createDispute(charge_id) {
       if (!charges.has(charge_id)) throw new Error(`No charge ${charge_id}`);

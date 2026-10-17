@@ -60,7 +60,7 @@ export const logIntent = server.tool(
     outputSchema: logIntentOutput,
     annotations: writeHints,
   },
-  handler(logIntentInput, tools.log_intent),
+  handler(logIntentInput, tools.log_intent, { toolName: "log_intent" }),
 );
 
 export const reversibility = server.tool(
@@ -75,7 +75,7 @@ export const reversibility = server.tool(
     outputSchema: reversibilityOutput,
     annotations: readHints,
   },
-  handler(reversibilityInput, tools.reversibility),
+  handler(reversibilityInput, tools.reversibility, { toolName: "reversibility" }),
 );
 
 export const review = server.tool(
@@ -90,7 +90,7 @@ export const review = server.tool(
     outputSchema: reviewOutput,
     annotations: readHints,
   },
-  handler(reviewInput, tools.review),
+  handler(reviewInput, tools.review, { toolName: "review" }),
 );
 
 export const undo = server.tool(
@@ -105,7 +105,7 @@ export const undo = server.tool(
     outputSchema: undoOutput,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   },
-  handler(undoInput, tools.undo),
+  handler(undoInput, tools.undo, { toolName: "undo" }),
 );
 
 export const getChain = server.tool(
@@ -126,7 +126,7 @@ export const getChain = server.tool(
     },
     annotations: readHints,
   },
-  handler(getChainInput, tools.get_chain),
+  handler(getChainInput, tools.get_chain, { toolName: "get_chain" }),
 );
 
 export const listChains = server.tool(
@@ -141,7 +141,7 @@ export const listChains = server.tool(
     outputSchema: listChainsOutput,
     annotations: readHints,
   },
-  handler(listChainsInput, tools.list_chains),
+  handler(listChainsInput, tools.list_chains, { toolName: "list_chains" }),
 );
 
 server.resource(

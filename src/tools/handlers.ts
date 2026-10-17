@@ -243,19 +243,6 @@ export function createToolHandlers(getProxy: () => Proxy) {
       }
       const plan = intent ? logic.plan_undo(chain, members, intent.preferences, clock.now()) : [];
       const routeOf = new Map(plan.map((s) => [s.action_id, s.route]));
-      const actions: ChainActionView[] = [];
-      for (const a of members) {
-        actions.push({
-          action_id: a.action_id,
-          merchant: a.merchant,
-          category: a.category,
-          summary: a.summary,
-          amount: a.amount,
-          state: a.state,
-          route: routeOf.get(a.action_id) ?? null,
-          stripe_verified: a.state === "verified",
-        });
-      }
       const next_action: NextAction =
         chain.state === "reversed" || chain.state === "redo_requested"
           ? "redo"
@@ -268,27 +255,46 @@ export function createToolHandlers(getProxy: () => Proxy) {
               task_id: intent.task_id,
               task_email: intent.task_email,
               corrected_intent: { goal: intent.goal, constraints: intent.constraints },
-              instruction: `Rebook ${actions.map((a) => a.category).join(", ")} to match the intent, using ${intent.task_email}.`,
-              redo_categories: [...new Set(actions.map((a) => a.category))],
+              instruction: `Rebook ${members.map((a) => a.category).join(", ")} to match the intent, using ${intent.task_email}.`,
+              redo_categories: [...new Set(members.map((a) => a.category))],
             }
           : undefined;
       const now = clock.now();
       const windows: LiveChainMeta["windows"] = {};
       const recovered: LiveChainMeta["recovered"] = {};
+      const verifiedByStripe = new Set<ActionId>();
       for (const a of members) {
         windows[a.action_id] = logic.reversibility(a, now).window_ends_at;
-        if (a.state !== "verified") continue;
+        if (a.state !== "verified" || a.amount <= 0) continue;
         if (!recoveredCache.has(a.action_id)) {
           try {
             const charge = await p.deps.payments.findChargeForAction(a);
-            if (charge) recoveredCache.set(a.action_id, (await p.deps.payments.verifyRefund(charge, 0)).refunded_amount);
+            if (charge) {
+              const verification = await p.deps.payments.verifyRefund(charge, a.amount);
+              if (verification.verified && verification.refunded_amount === a.amount) {
+                recoveredCache.set(a.action_id, verification.refunded_amount);
+              }
+            }
           } catch {
             // Stripe unreachable: show nothing rather than a guess; the next poll retries.
           }
         }
         const amount = recoveredCache.get(a.action_id);
-        if (amount !== undefined) recovered[a.action_id] = amount;
+        if (amount === a.amount) {
+          recovered[a.action_id] = amount;
+          verifiedByStripe.add(a.action_id);
+        }
       }
+      const actions: ChainActionView[] = members.map((a) => ({
+        action_id: a.action_id,
+        merchant: a.merchant,
+        category: a.category,
+        summary: a.summary,
+        amount: a.amount,
+        state: a.state,
+        route: routeOf.get(a.action_id) ?? null,
+        stripe_verified: verifiedByStripe.has(a.action_id),
+      }));
       const meta: LiveChainMeta = { server_now: now, windows, recovered };
       return withMeta(ok({
         chain_id: chain.chain_id,
