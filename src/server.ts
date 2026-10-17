@@ -262,7 +262,9 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
         }
         const preferences: Preferences = { ...DEFAULT_PARAMS.DEFAULT_PREFERENCES, ...body.preferences };
         runtime = createRuntime(clock, DEFAULT_PARAMS, preferences);
-        return { status: 200, body: { ok: true, clock: clock.now(), preferences } };
+        // A fresh task id per run: the events table is append-only, so earlier runs stay as history.
+        const task_id = await runtime.proxy.startDemoTask();
+        return { status: 200, body: { ok: true, clock: clock.now(), preferences, task_id } };
       },
     },
     {

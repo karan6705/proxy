@@ -55,6 +55,10 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 
 ## Sarah
 
+### From Karan: demo runs and a Vite warning
+- **Demo runs:** each `/demo/reset` starts a new demo task id (`task_demo_1`, `task_demo_2`, ...), and every run reuses the `task-demo` Inkbox identity. Mail to `task-demo@...` is re-pointed to the current run before it reaches the Store, so nothing is deleted and earlier runs stay as history. Your capture code is unchanged.
+- **Vite warning:** `npm run dev` warns about the variable `import(SDK)` in `src/inkbox/sdk.ts`. Add `/* @vite-ignore */` inside that `import(...)` to silence it and make sure Vite leaves the import alone.
+
 ### Inkbox reality check (run live on 2026-10-17 with the team's admin key; script: `src/inkbox/check.mjs`)
 Needs `@inkbox/sdk` (Karan: see requests below). Every snippet assumes `const inkbox = await new Inkbox({ apiKey: process.env.INKBOX_API_KEY }).ready()`.
 
