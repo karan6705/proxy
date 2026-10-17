@@ -593,8 +593,8 @@ export interface Logic {
   compare(intent: Intent, actions: Action[]): Mismatch[];
   /**
    * Groups a root mistake with the actions that depend on it. The root is the earliest booked
-   * action with a mismatch (category other than "message"); a message is the root only when the
-   * chain has no booked action.
+   * action with a mismatch: among actions whose category is not "message", the earliest received_at.
+   * A message is the root only when the chain has no booked action.
    */
   trace(intent: Intent, actions: Action[], mismatches: Mismatch[]): Chain[];
   reversibility(action: Action, now: Timestamp): Reversibility;
