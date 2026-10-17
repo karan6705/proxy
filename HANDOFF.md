@@ -29,7 +29,86 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 - Open question: which tool shows the widget. Plan: `get_chain` gets the view, since it returns the per-action state.
 - mcp-use 2.10.1, its CLI and inspector require Node >=22.22.2, not Node 18 as AGENTS.md says.
 
+### Requests from Sarah
+- **Packages** (only you edit package.json): `@inkbox/sdk` (0.7.19 worked; it needs Node 22+). Nothing else: Supabase and Anthropic are called with plain `fetch`, so `@supabase/supabase-js` and `@anthropic-ai/sdk` are not needed by `src/db` and `src/capture`.
+- **Mount my routes in `server.ts`**: `createInboundEmailRoute(...)` from `src/capture`, and `createHumanRoutes(channel)` from `src/inkbox` (three paths: `/inkbox/inbound`, `/inkbox/text`, `/inkbox/imessage`). Webhook signatures are checked with `INKBOX_WEBHOOK_SECRET`; unsigned requests are accepted only when `INKBOX_DRY_RUN=1`.
+- **Which chain does a reply belong to?** `HumanReply` needs a `chain_id` and the text has none. I pick the most recently alerted open chain from the Store. For a counter question, call `channel.expectCounterDecision(chain_id, negotiation_id)` when you text the human, otherwise YES/NO is treated as an unknown reply.
+- **Type gaps** (no change needed unless you want them): `EventKind` has no `imessage_in`, so inbound iMessage logs as `sms_in` with `imessage:` in `outcome`. `Action` has no confidence field; LLM-extracted Actions under 0.5 confidence are logged (`outcome: "low_confidence"`) and dropped, not raised.
+- **Task addresses** come from `Inkbox.createTaskAddress`, so `log_intent` should store the returned address as `task_email`. Capture finds the task from the recipient's local part (`task-demo` matches `task_demo`), so keep task ids as `[a-z0-9_]`.
+- **Handles**: Proxy's identity is `proxy-agent` (`proxy` is reserved by Inkbox). Karan's phone number is needed to register the human number.
+
 ## Sarah
+
+### Inkbox reality check (run live on 2026-10-17 with the team's admin key; script: `src/inkbox/check.mjs`)
+Needs `@inkbox/sdk` (Karan: see requests below). Every snippet assumes `const inkbox = await new Inkbox({ apiKey: process.env.INKBOX_API_KEY }).ready()`.
+
+| Feature | Works? | Notes |
+|---|---|---|
+| Unique address per task | **Yes, as one identity per task** | `task_demo` becomes `task-demo@inkboxmail.com`. Handles are lowercase letters, digits and hyphens only; `proxy` is reserved. |
+| Plus-addressing (`name+task@`) | **No** | Mail sent to `local+tag@inkboxmail.com` never arrived in 60s. Fallbacks: one identity per task (used), or a `[task:ID]` code in the subject (capture supports it). |
+| Email out and in | **Yes** | Arrives in about 5 seconds. |
+| Inbound HTML (JSON-LD) | **Yes** | Webhook payload has plain text only; `identity.getMessage(id)` returns `bodyHtml`. Capture fetches it. |
+| Inbound by webhook | Built, **not tested against live Inkbox** | `POST /inkbox/inbound`, signature check with `INKBOX_WEBHOOK_SECRET`. Needs a public URL and a subscription (below). Polling `iterEmails()` works today. |
+| SMS out and in | **Not tested** | Number provisioned, `smsStatus: "ready"`. Needs the human's number, and the human must text `START` first. |
+| iMessage | **Router exists, not tested** | Shared router number `+15555550100`; the human texts `connect @proxy-agent` first. |
+| Outbound phone call | **Not tested** | Needs the human's number. `placeCall` is called in `hosted_agent` mode. |
+| A2A | **Yes** | Needs each sender's **own agent-scoped key**; the admin key is rejected. Verified: Proxy client to `hotel-agent`, task arrives as `submitted`. |
+
+Snippets:
+```ts
+// Unique task address
+const id = await inkbox.createIdentity("task-demo");          // id.emailAddress -> task-demo@inkboxmail.com
+// Send, then read with HTML
+await (await inkbox.getIdentity("airline")).sendEmail({ to: [id.emailAddress], subject: "Confirmed", bodyText: "...", bodyHtml: htmlWithJsonLd });
+for await (const m of id.iterEmails()) { const full = await id.getMessage(m.id); full.bodyHtml; }
+// Webhook for every inbound email (first subscription on a keyless identity returns the signing secret once)
+await inkbox.webhooks.subscriptions.create({ scope: "identity", identityHandle: "task-demo", url: "https://<public>/inkbox/inbound", eventTypes: ["message.received"] });
+// SMS / iMessage / call
+const proxy = await inkbox.getIdentity("proxy-agent");
+await proxy.sendText({ to: HUMAN_PHONE, text });
+await proxy.sendIMessage({ to: HUMAN_PHONE, text });
+await proxy.placeCall({ toNumber: HUMAN_PHONE, mode: "hosted_agent", reason: script });
+// A2A: mint a scoped key for the sender, then send to the peer's Agent Card
+const { apiKey } = await inkbox.apiKeys.create({ label: "proxy-a2a", scopedIdentityId: proxy.id });
+const asProxy = await new Inkbox({ apiKey }).ready();
+const dir = await asProxy.a2a.organizationDirectory({ q: "hotel-agent" });
+const client = await (await asProxy.getIdentity("proxy-agent")).a2aClient();
+await client.send(await client.fetchCard(dir.items[0].cardUrl), { text: JSON.stringify(message) });
+```
+
+### Identities (created 2026-10-17; keys are never written here)
+| Handle | Email | Phone | Role |
+|---|---|---|---|
+| `proxy-agent` | proxy-agent@inkboxmail.com | +15555550101 | Proxy itself: texts, iMessage, calls, support email, A2A |
+| `hotel-agent` | hotel-agent@inkboxmail.com | none | Hotel merchant agent (A2A enabled) |
+| `airline` | airline@inkboxmail.com | none | Airline merchant agent (A2A enabled) |
+| `transfer-support` | transfer-support@inkboxmail.com | none | Transfer support desk (email) |
+
+The human number is **not registered yet**: it needs Karan's phone number. Then run `HUMAN_PHONE=+1... node --env-file=.env src/inkbox/setup.mjs`; it sets Proxy's inbound phone filter to whitelist and allows only that number. Replies from any other number are also dropped in code.
+
+### Review of Dhwanil's logic and expected results (Sarah, read-only; no scenarios or scoreboard exist yet, `evals/` is empty)
+Read `src/logic/compare.ts` and `tests/logic/compare.test.ts` on `origin/dhwanil`. The tests use hand-written expected values, which is the right pattern. The risks below are about the scenarios and grader still to come, so the grader does not share `compare`'s blind spots.
+
+**Rules for the ~30 scenarios and the grader**
+1. Write each scenario's `expected` (mismatches, chain members, money recovered, redo) by hand from the human's request, never by running `compare`, `trace` or `plan_undo` and copying the output. Commit the expected files before the first run so they cannot drift to match results.
+2. Keep the human's real request separate from the intent the agent logs. If the agent logs the wrong dates in `log_intent`, `compare` calls it clean because the intent is its only oracle. Give each scenario a `ground_truth` and score "mistake caught" against that, so a mistake made in the logged intent counts as a miss.
+3. Compute money recovered from Stripe test-mode objects (refund status and amount), not from `steps` rows or an Action's `state`. Compute false "done" claims by comparing the agent's final message with ground truth.
+4. Say how the naive arm decides what it notices. If it is scripted to never notice, the headline is rigged. Either run a real agent with the self-check prompt, or label the naive arm "scripted self-review" on the scoreboard.
+
+**Blind spots in `compare` that scenarios will hit**
+- **Late price change:** nothing compares a receipt amount with a quoted price, and `Intent` has no quote. Amount is flagged only when the running total crosses `budget_total`. A late price change under budget is invisible. Either mark those 2 scenarios "expected: not caught" (honest) or add a quoted price to the contract.
+- **Annual vs monthly depends on words in the summary** (`annual`, `monthly`, `per year`...). Capture builds the summary from the receipt (`Pro plan (annual)`); if a SaaS receipt has no term, `compare` silently passes. Include a SaaS receipt with no term wording and one with `P1Y`/`12-month`/`yearly` in the scenarios.
+- **Duplicate rule is too narrow and too broad:** it needs the same merchant, category, amount and dates with different refs. A duplicate with a different price or a shifted day is missed. Two legitimate identical purchases (two transfers, a return leg on the same day) are flagged, which would be a false alarm. Add one of each.
+- **Budget sums every live Action, including `source: "stripe"` ones.** Nothing creates Stripe-sourced Actions today; if that changes, the same charge counts twice.
+- **No-alarm scenarios** (3 of them) look like the shapes already in the unit tests. Add adversarial clean tasks: a refund line, a total exactly at budget with a duplicate-looking pair, a SaaS plan with no term and no must-have, a message with `$0`.
+- **Same-ref resend** never reaches `compare` (capture dedupes by ref). Test it at the capture boundary, not as a `compare` scenario.
+
+### How the pieces plug in (for wiring at 5 PM)
+- `src/db`: `createStoreFromEnv()` (Supabase when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set, otherwise in memory). Run `src/db/schema.sql` once in the Supabase SQL editor; the `events` table rejects updates and deletes with a trigger.
+- `src/capture`: `createCapture({ store, hooks, clock, llm? })`; routes: `createInboundEmailRoute({ capture, fetchFullMessage })` at `POST /inkbox/inbound`. Mock merchants can use `deliverToCapture(capture)` as their `deliver`.
+- `src/inkbox`: `createInkbox()` implements `Inkbox` (`INKBOX_DRY_RUN=1` logs instead of sending). `createHumanChannel(...)` plus `createHumanRoutes(channel)` give `POST /inkbox/text` and `POST /inkbox/imessage`. `composeChainAlert(...)` builds the one text per chain.
+- `src/web`: `createWebRoutes({ store, clock, channel, humanNumber, controls: process.env.PROXY_DEMO_ROUTES === "1" })` gives `GET /web` (the page), `GET /web/state` and `POST /web/reply` (UNDO ALL / PICK / KEEP buttons; they go through the same human channel as a text, so they are idempotent and respect the window). `store` must be `createStoreFromEnv()` or `createMemoryStore()` because the feed needs `recentEvents`. The scoreboard panel shows whatever JSON `scoreboard()` returns; Dhwanil, give me the results file path and format when it exists.
+- Tests: `npm test`.
 
 ## Dhwanil
 
