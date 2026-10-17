@@ -9,7 +9,6 @@ import type {
   EventRow,
   Inkbox,
   Logic,
-  Merchants,
   Mismatch,
   OrchestratorHooks,
   Params,
@@ -19,14 +18,25 @@ import type {
   Store,
   TaskId,
 } from "../types.js";
+import { composeChainAlert } from "../inkbox/alert.js";
+import { createUndoExecutor, type ProtocolTransport, type UndoExecutor, type UndoMerchants } from "./undo.js";
 
 export interface ProxyDeps {
   store: Store;
   logic: Logic;
   inkbox: Inkbox;
   payments: Payments;
-  /** Null until Dhwanil's merchants are mounted; self-serve routes then stay planned. */
-  merchants: Pick<Merchants, "selfServeCancel"> | null;
+  merchants: UndoMerchants;
+  /** How Proxy's protocol messages reach a merchant agent. */
+  transport: ProtocolTransport;
+  /** Address Proxy's support emails come from. */
+  proxyEmail: string;
+  /** Where the human is texted. Defaults to iMessage; the human can reply on either. */
+  humanChannel?: "sms" | "imessage";
+  /** False when HUMAN_PHONE isn't set: alerts are recorded on the chain but nothing is sent. */
+  canTextHuman?: boolean;
+  /** Real ms to wait after the last captured action before texting about a new chain, so one text covers late arrivals. */
+  alertSettleMs?: number;
   sessions: Sessions;
   clock: Clock;
   params: Params;
@@ -62,6 +72,10 @@ export interface Proxy extends OrchestratorHooks {
   askHumanAboutCounter(chain_id: ChainId, negotiation_id: string, body: string): Promise<void>;
   /** The open chain with the most recent alert, which an unaddressed reply belongs to. */
   mostRecentlyAlertedOpenChain(): Promise<Chain | null>;
+  /** Texts the human about every chain of this task that has no alert yet (once the agent's session is over). */
+  alertChains(task_id: TaskId): Promise<void>;
+  /** Merchant protocol messages and human decisions are applied by this. */
+  undo: UndoExecutor;
   /** Demo only: starts a new demo run with the next unused task id (task_demo_1, task_demo_2, ...). */
   startDemoTask(): Promise<TaskId>;
 }
@@ -85,6 +99,21 @@ export function createProxy(deps: ProxyDeps): Proxy {
   const { store, logic, clock } = deps;
   let frozen = false;
   let humanChannel: HumanChannelLink | null = null;
+  const undo = createUndoExecutor({
+    store,
+    logic,
+    inkbox: deps.inkbox,
+    payments: deps.payments,
+    merchants: deps.merchants,
+    clock,
+    params: deps.params,
+    transport: deps.transport,
+    proxyEmail: deps.proxyEmail,
+    isFrozen: () => frozen,
+    textHuman: (chain_id, kind, body) => textHuman(chain_id, kind, body),
+    askHumanAboutCounter: (chain_id, negotiation_id, body) => askHumanAboutCounter(chain_id, negotiation_id, body),
+    logEvent: (row) => logEvent(row),
+  });
   const pendingCorrections = new Map<string, { corrected_text: string; received_at: string }>();
 
   async function logEvent(row: Partial<EventRow> & Pick<EventRow, "kind">) {
@@ -137,6 +166,9 @@ export function createProxy(deps: ProxyDeps): Proxy {
         // trace derives ids from the root. A late booked action can replace a message root, but callers
         // and alerts must keep referring to the chain id that was already published.
         chain_id: existing?.chain_id ?? t.chain_id,
+        // Actions that were already in the chain stay in it once settled (trace leaves refunded ones out),
+        // so the live view keeps their green rows.
+        action_ids: [...new Set([...(existing?.action_ids ?? []), ...t.action_ids])],
         window_ends_at: windows[0] ?? null,
         // Keep what the orchestrator already did with this chain.
         state: existing?.state ?? t.state,
@@ -158,14 +190,60 @@ export function createProxy(deps: ProxyDeps): Proxy {
   async function textHuman(chain_id: ChainId, kind: Alert["kind"], body: string) {
     const chain = await store.getChain(chain_id);
     if (!chain) throw new Error(`No chain ${chain_id}`);
-    if (!deps.humanNumber) throw new Error("HUMAN_PHONE is not set; the human can't be texted");
-    await deps.inkbox.sendText("sms", deps.humanNumber, body);
-    const alert: Alert = { channel: "sms", kind, body, sent_at: clock.now() };
+    const channel = deps.humanChannel ?? "imessage";
+    // Without HUMAN_PHONE the alert is still recorded on the chain (the demo page shows it and its buttons reply).
+    if (deps.canTextHuman !== false && deps.humanNumber) {
+      await deps.inkbox.sendText(channel, deps.humanNumber, body);
+      await logEvent({ kind: channel === "imessage" ? "imessage_out" : "sms_out", chain_id, task_id: chain.task_id, outcome: kind });
+    } else {
+      await logEvent({ kind: channel === "imessage" ? "imessage_out" : "sms_out", chain_id, task_id: chain.task_id, outcome: `${kind}:not_sent_no_human_number` });
+    }
+    const alert: Alert = { channel, kind, body, sent_at: clock.now() };
+    const latest = (await store.getChain(chain_id)) ?? chain;
     await store.upsertChain({
-      ...chain,
-      alerts: [...chain.alerts, alert],
-      state: chain.state === "detected" && kind === "chain_opened" ? "alerted" : chain.state,
+      ...latest,
+      alerts: [...latest.alerts, alert],
+      state: latest.state === "detected" && kind === "chain_opened" ? "alerted" : latest.state,
     });
+  }
+
+  const alertTimers = new Map<TaskId, ReturnType<typeof setTimeout>>();
+
+  async function alertChains(task_id: TaskId) {
+    if (deps.sessions.isActive(task_id)) return;
+    const { mismatches, chains } = await refreshChains(task_id);
+    for (const chain of chains) {
+      if (chain.state !== "detected" || chain.alerts.length > 0) continue;
+      const mine = mismatches.filter((m) => chain.action_ids.includes(m.action_id));
+      const first = mine[0];
+      const what = first
+        ? `used the wrong ${first.field} (${String(first.actual)}, not ${String(first.expected)})`
+        : "made a mistake";
+      const left = chain.window_ends_at ? Date.parse(chain.window_ends_at) - clock.nowMs() : null;
+      await textHuman(chain.chain_id, "chain_opened", composeChainAlert({
+        what_went_wrong: what,
+        affected: chain.action_ids.length,
+        money_at_risk: chain.money_at_risk,
+        time_left_ms: left,
+      }));
+    }
+  }
+
+  function scheduleAlert(task_id: TaskId) {
+    const ms = deps.alertSettleMs ?? 1500;
+    clearTimeout(alertTimers.get(task_id));
+    const t = setTimeout(() => {
+      alertTimers.delete(task_id);
+      alertChains(task_id).catch((e) => console.error("[alert] failed:", e));
+    }, ms);
+    t.unref?.();
+    alertTimers.set(task_id, t);
+  }
+
+  async function askHumanAboutCounter(chain_id: ChainId, negotiation_id: string, body: string) {
+    // Tell the channel first, so a fast reply can't arrive before it knows what YES/NO means.
+    humanChannel?.expectCounterDecision(chain_id, negotiation_id);
+    await textHuman(chain_id, "reminder", body);
   }
 
   async function startDemoTask(): Promise<TaskId> {
@@ -184,14 +262,12 @@ export function createProxy(deps: ProxyDeps): Proxy {
     mostRecentlyAlertedOpenChain,
     startDemoTask,
     textHuman,
+    alertChains,
+    undo,
     setHumanChannel(channel) {
       humanChannel = channel;
     },
-    async askHumanAboutCounter(chain_id, negotiation_id, body) {
-      // Tell the channel first, so a fast reply can't arrive before it knows what YES/NO means.
-      humanChannel?.expectCounterDecision(chain_id, negotiation_id);
-      await textHuman(chain_id, "reminder", body);
-    },
+    askHumanAboutCounter,
     logEvent,
     isFrozen: () => frozen,
     pendingCorrections,
@@ -202,6 +278,7 @@ export function createProxy(deps: ProxyDeps): Proxy {
       const saved = await store.upsertAction(same ? { ...action, action_id: same.action_id, state: same.state } : action);
       await logEvent({ kind: action.source === "agent" ? "email_out" : "email_in", task_id: saved.task_id, action_id: saved.action_id });
       await refreshChains(saved.task_id);
+      scheduleAlert(saved.task_id);
     },
 
     async onStripeEvent(event) {
@@ -230,12 +307,16 @@ export function createProxy(deps: ProxyDeps): Proxy {
         // Confirmed once with the human before acting; sending that confirmation lands with the alerts flow.
         pendingCorrections.set(reply.chain_id, { corrected_text: reply.corrected_text, received_at: reply.received_at });
       }
-      // UNDO ALL / PICK / KEEP / counter decisions land with the alerts flow (build step 3).
+      if (reply.kind === "undo_all") await undo.start(reply.chain_id);
+      else if (reply.kind === "pick") await undo.start(reply.chain_id, reply.picks);
+      else if (reply.kind === "keep") await undo.keep(reply.chain_id);
+      else if (reply.kind === "counter_decision") await undo.decideCounter(reply.chain_id, reply.negotiation_id, reply.accept);
     },
 
     async onProtocolMessage(message) {
       // Only typed fields are logged; free text (e.g. DenyMsg.reason) is never acted on.
       await logEvent({ kind: "a2a", chain_id: message.chain_id, action_id: message.action_id, outcome: message.type });
+      await undo.onProtocolMessage(message);
     },
   };
 }
