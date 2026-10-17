@@ -142,7 +142,7 @@ Needs `@inkbox/sdk` (Karan: see requests below). Every snippet assumes `const in
 | Inbound HTML (JSON-LD) | **Yes** | Webhook payload has plain text only; `identity.getMessage(id)` returns `bodyHtml`. Capture fetches it. |
 | Inbound by webhook | Built, **not tested against live Inkbox** | `POST /inkbox/inbound`, signature check with `INKBOX_WEBHOOK_SECRET`. Needs a public URL and a subscription (below). Polling `iterEmails()` works today. |
 | SMS out and in | **In works, out blocked by the carrier** | Inbound `START` arrived. Outbound is accepted by the API but fails with `40002` (carrier spam filter, "temporary"), twice, with and without a prefix. The human must text `START` first, from the same number that is registered. Retry later; iMessage is the working alert channel today. |
-| iMessage | **Yes, out and in** | Shared router `+15555550100`; the human texts `connect @proxy-agent` first. Outbound was delivered; an inbound `UNDO ALL` from the registered number parsed as `undo_all`. |
+| iMessage | **Yes, out and in** | The shared router number comes from `inkbox.imessages.getTriageNumber()` (ends 1193); the human texts `connect @proxy-agent` first. Outbound was delivered; an inbound `UNDO ALL` from the registered number parsed as `undo_all`. |
 | Outbound phone call | **Not tested** | Needs the human's number. `placeCall` is called in `hosted_agent` mode. |
 | A2A | **Yes** | Needs each sender's **own agent-scoped key**; the admin key is rejected. Verified: Proxy client to `hotel-agent`, task arrives as `submitted`. |
 
@@ -171,7 +171,7 @@ await client.send(await client.fetchCard(dir.items[0].cardUrl), { text: JSON.str
 ### Identities (created 2026-10-17; keys are never written here)
 | Handle | Email | Phone | Role |
 |---|---|---|---|
-| `proxy-agent` | proxy-agent@inkboxmail.com | +15555550101 | Proxy itself: texts, iMessage, calls, support email, A2A |
+| `proxy-agent` | proxy-agent@inkboxmail.com | local number ends 1428 | Proxy itself: texts, iMessage, calls, support email, A2A |
 | `hotel-agent` | hotel-agent@inkboxmail.com | none | Hotel merchant agent (A2A enabled) |
 | `airline` | airline@inkboxmail.com | none | Airline merchant agent (A2A enabled) |
 | `transfer-support` | transfer-support@inkboxmail.com | none | Transfer support desk (email) |

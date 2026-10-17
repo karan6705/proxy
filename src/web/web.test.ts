@@ -19,8 +19,8 @@ async function setup(controls = true) {
   await store.upsertChain(chain);
   await store.logEvent({ run_id: "r", arm: "proxy", scenario_id: "demo", layer: "scripted", kind: "email_in", tool_name: null, task_id: "t1", chain_id: null, action_id: null, outcome: "captured:jsonld", tokens_in: null, tokens_out: null, timestamp: now });
   const replies: HumanReply[] = [];
-  const channel = createHumanChannel({ store, clock, humanNumber: "+15555550102", hooks: { onHumanReply: async (r) => void replies.push(r) }, sendText: async () => ({ message_id: "m" }) });
-  const routes = createWebRoutes({ store, clock, channel, humanNumber: "+15555550102", controls });
+  const channel = createHumanChannel({ store, clock, humanNumber: "+15550000000", hooks: { onHumanReply: async (r) => void replies.push(r) }, sendText: async () => ({ message_id: "m" }) });
+  const routes = createWebRoutes({ store, clock, channel, humanNumber: "+15550000000", controls });
   const call = (method: string, path: string, rawBody = "", headers: Record<string, string> = {}) =>
     routes.find((r) => r.method === method && r.path === path)!.handle({ method: method as "GET", path, headers, query: {}, rawBody });
   return { call, replies };
