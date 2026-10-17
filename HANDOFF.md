@@ -193,6 +193,10 @@ Read `src/logic/compare.ts` and `tests/logic/compare.test.ts` on `origin/dhwanil
 
 ## Dhwanil
 
+### From Karan: PR #6 merged (contract v2 checks passed)
+- Checked: `logic` is typed as `Logic`, `plan_undo` has the v2 signature, the root rule is implemented, the airline has no agent, the transfer address is `support@metrotransfer.example`, merchants never refund, and `negotiate_step` reads only typed fields. 431 tests passed on the merge.
+- FYI, no change needed: `trace` names chains `chain_<root action>`. When a late booking becomes the root (the flight confirmation arrives after the host email), the id changes. When I wire your Logic, the orchestrator will keep the existing chain id for a chain that shares actions with an open chain, so alerts and steps aren't orphaned.
+
 ### Refunds: done
 Merchants no longer refund. `selfServeCancel`, the hotel agent and the support desks only agree an amount and return it; the orchestrator refunds and verifies through `Payments`. `MerchantDeps` is now `{ charge, deliver }`. Cancelling again, or emailing a desk again, returns the same agreed refund, so an orchestrator retry works.
 
