@@ -184,6 +184,7 @@ describe("tools wired to the orchestrator", () => {
     const u = (await tools.undo({ action_ids: ["act_flight", "act_unknown"], reason: "wrong date" })).structuredContent;
     expect(u).toMatchObject({ ok: true, accepted: ["act_flight"], requires_human: ["act_unknown"] });
     expect((await rt.store.getAction("act_flight"))?.state).toBe("verified");
+    expect((await rt.store.getChain(await chainIdFor(task_id)))?.state).toBe("reversed");
 
     const again = (await tools.undo({ action_ids: ["act_flight"], reason: "retry" })).structuredContent;
     expect(again).toMatchObject({ accepted: ["act_flight"] });
@@ -194,6 +195,37 @@ describe("tools wired to the orchestrator", () => {
     expect(chain.structuredContent).toMatchObject({ ok: true, actions: [{ action_id: "act_flight", stripe_verified: true }] });
     expect("_meta" in chain && chain._meta).toMatchObject({ server_now: clock.now(), recovered: { act_flight: 41_200 } });
     expect("_meta" in chain && chain._meta.windows.act_flight).toBe("2026-10-26T10:00:00.000Z");
+  });
+
+  it("a hotel refunded at the accepted 85% counter turns green and counts the partial amount", async () => {
+    const { task_id } = await logTask();
+    await rt.proxy.onAction(action(task_id, { action_id: "act_hotel", merchant: "hotel", category: "hotel", summary: "Hotel, 3 nights", amount: 64_000, ref: "HTL-1", dates: { start: "2026-11-03", end: "2026-11-06" } }));
+    const chain = (await rt.store.listChains(task_id))[0]!;
+    const fake = rt.fakePayments!;
+    fake.addCharge("ch_hotel", "act_hotel", 64_000);
+    const agreed = 54_400; // 85% of 64,000
+    await rt.store.upsertChain({ ...chain, plan: [{ action_id: "act_hotel", route: "reversal_protocol", option: "cancel", cost: 9_600, deadline: null, refund_amount: agreed }] });
+    await fake.payments.refund("ch_hotel", agreed, "refund:act_hotel");
+    const hotel = (await rt.store.getAction("act_hotel"))!;
+    await rt.store.upsertAction({ ...hotel, state: "verified" });
+
+    const view = await tools.get_chain({ chain_id: chain.chain_id });
+    expect(view.structuredContent).toMatchObject({ ok: true, actions: [{ action_id: "act_hotel", stripe_verified: true }] });
+    expect("_meta" in view && view._meta.recovered).toEqual({ act_hotel: agreed });
+  });
+
+  it("a verified hotel with no matching Stripe refund stays red", async () => {
+    const { task_id } = await logTask();
+    await rt.proxy.onAction(action(task_id, { action_id: "act_hotel", merchant: "hotel", category: "hotel", summary: "Hotel, 3 nights", amount: 64_000, ref: "HTL-1", dates: { start: "2026-11-03", end: "2026-11-06" } }));
+    const chain = (await rt.store.listChains(task_id))[0]!;
+    rt.fakePayments!.addCharge("ch_hotel", "act_hotel", 64_000);
+    await rt.store.upsertChain({ ...chain, plan: [{ action_id: "act_hotel", route: "reversal_protocol", option: "cancel", cost: 9_600, deadline: null, refund_amount: 54_400 }] });
+    await rt.fakePayments!.payments.refund("ch_hotel", 30_000, "refund:act_hotel");
+    const hotel = (await rt.store.getAction("act_hotel"))!;
+    await rt.store.upsertAction({ ...hotel, state: "verified" });
+    const view = await tools.get_chain({ chain_id: chain.chain_id });
+    expect(view.structuredContent).toMatchObject({ actions: [{ stripe_verified: false }] });
+    expect("_meta" in view && view._meta.recovered).toEqual({});
   });
 
   it("after the session ends, late confirmations extend the chain and everything goes to the human", async () => {
@@ -236,7 +268,7 @@ describe("tools wired to the orchestrator", () => {
     expect(frozen).toMatchObject({ accepted: [], requires_human: ["act_flight"] });
     expect(rt.fakePayments?.refunds.size).toBe(0);
 
-    await rt.proxy.onHumanReply({ kind: "keep", chain_id: await chainIdFor(task_id), received_at: clock.now() });
+    await rt.proxy.onHumanReply({ kind: "correction", chain_id: await chainIdFor(task_id), corrected_text: "never mind", received_at: clock.now() });
     const after = (await tools.undo({ action_ids: ["act_flight"], reason: "wrong date" })).structuredContent;
     expect(after).toMatchObject({ accepted: ["act_flight"] });
   });
