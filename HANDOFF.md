@@ -27,6 +27,7 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 
 ### Demo agent integration requests
 - Live mode is stopped as requested: add `@anthropic-ai/sdk` to `package.json`, add `ANTHROPIC_API_KEY=` to `.env.example`, and provide the key locally. Also add `MCP_URL=http://localhost:3000/mcp` to `.env.example`.
+- Alongside `demo:reset`, add package-owned launch scripts for `src/agent/rehearse.ts` and `src/agent/scripted.ts --offline` using the same TypeScript runner chosen for reset.
 - Remove the temporary `src/stripe/stripe.test.ts` exclusion from `vitest.config.ts`; the Stripe suite is now converted to Vitest and `src/stripe/tsconfig.test.json` is deleted.
 - Scripted mode needs the `PROXY_DEMO_ROUTES=1` server to implement `POST /demo/reset`, `POST /demo/confirmation`, and `POST /demo/host-email`. Reset receives `{clock, preferences}`. Confirmation receives `{action, confirmation, stripe_charge_id, task_email}`. Host email receives `{action, from, to, subject, body}`.
 - The stub server currently returns a generated task from `log_intent` but only exposes demo mismatches for hard-coded `task_demo`. Please make the logged scripted-demo task use the demo state so `review` returns the captured host mismatch before session end and the late merchant confirmations extend that chain afterward.
