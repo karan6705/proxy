@@ -12,7 +12,8 @@
     "build": "mcp-use build --entry src/server.ts --views-dir src/app",
     "start": "mcp-use start",
     "deploy": "mcp-use deploy",
-    "typecheck": "mcp-use typecheck --entry src/server.ts"
+    "typecheck": "mcp-use typecheck --entry src/server.ts",
+    "test": "vitest run src/orchestrator"
   },
   "dependencies": {
     "mcp-use": "2.10.1",
@@ -24,6 +25,7 @@
     "@types/node": "^22.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
   }
 }
