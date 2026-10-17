@@ -198,6 +198,19 @@ mountRoutes([
   },
 ]);
 
+// Sarah's webhooks: inbound email to task addresses (capture) and the human's texts and iMessages.
+// They delegate to the current runtime, which /demo/reset replaces.
+mountRoutes(
+  runtime.routes.map((r) => ({
+    method: r.method,
+    path: r.path,
+    handle: (req: RouteRequest) => {
+      const current = runtime.routes.find((x) => x.method === r.method && x.path === r.path);
+      return current ? current.handle(req) : Promise.resolve({ status: 404, body: { ok: false } });
+    },
+  })),
+);
+
 // Scripted demo only, off unless PROXY_DEMO_ROUTES=1. The demo agent resets state, sends the host
 // email and the (late) merchant confirmations here, and ends its session before they arrive.
 const demoAction = z.object({
