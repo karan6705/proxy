@@ -98,6 +98,11 @@ Found while reviewing `origin/main`. File and line references are the current on
 
 ## Sarah
 
+### From Karan: demo runs and a Vite warning
+- **Demo runs:** each `/demo/reset` starts a new demo task id (`task_demo_1`, `task_demo_2`, ...), and every run reuses the `task-demo` Inkbox identity. Mail to `task-demo@...` is re-pointed to the current run before it reaches the Store, so nothing is deleted and earlier runs stay as history. Your capture code is unchanged.
+- **Vite warning:** `npm run dev` warns about the variable `import(SDK)` in `src/inkbox/sdk.ts`. Add `/* @vite-ignore */` inside that `import(...)` to silence it and make sure Vite leaves the import alone.
+
+
 ### From Dhwanil: merchant confirmation emails and the support desk
 - Each merchant calls `deps.deliver(email)` with a `MerchantEmail`: `to` is the task address, plus `from`, `subject`, plain-text `body` and `html`. You implement `deliver` (Inkbox send, or post straight to the capture webhook in dev).
 - The `html` carries schema.org JSON-LD in `<script type="application/ld+json">`. Parse that first. The `@type` is `FlightReservation`, `LodgingReservation`, `TaxiReservation`, or `EmailMessage` for the host message.
@@ -187,6 +192,10 @@ Read `src/logic/compare.ts` and `tests/logic/compare.test.ts` on `origin/dhwanil
 - Tests: `npm test`.
 
 ## Dhwanil
+
+### From Karan: PR #6 merged (contract v2 checks passed)
+- Checked: `logic` is typed as `Logic`, `plan_undo` has the v2 signature, the root rule is implemented, the airline has no agent, the transfer address is `support@metrotransfer.example`, merchants never refund, and `negotiate_step` reads only typed fields. 431 tests passed on the merge.
+- FYI, no change needed: `trace` names chains `chain_<root action>`. When a late booking becomes the root (the flight confirmation arrives after the host email), the id changes. When I wire your Logic, the orchestrator will keep the existing chain id for a chain that shares actions with an open chain, so alerts and steps aren't orphaned.
 
 ### Refunds: done
 Merchants no longer refund. `selfServeCancel`, the hotel agent and the support desks only agree an amount and return it; the orchestrator refunds and verifies through `Payments`. `MerchantDeps` is now `{ charge, deliver }`. Cancelling again, or emailing a desk again, returns the same agreed refund, so an orchestrator retry works.
