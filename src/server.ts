@@ -288,8 +288,21 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
       handle: async (req) => {
         const body = parseBody(demoHostEmail, req);
         if (typeof body === "string") return bad(body);
-        const action = { ...body.action, source: "agent", state: "found", received_at: clock.now() } as Action;
-        if (!(await runtime.store.getIntent(action.task_id))) return bad(`Unknown task ${action.task_id}`);
+        const sent = { ...body.action, source: "agent", state: "found", received_at: clock.now() } as Action;
+        const intent = await runtime.store.getIntent(sent.task_id);
+        if (!intent) return bad(`Unknown task ${sent.task_id}`);
+        // The mock host keeps a record of the message (ref MSG-...), so a later correction can name it.
+        const message = await runtime.merchants.book({
+          merchant_id: "host",
+          task_id: sent.task_id,
+          task_email: intent.task_email,
+          item: sent.summary || body.subject,
+          ...(sent.dates ? { dates: sent.dates } : {}),
+          amount: 0,
+          booked_at: clock.now(),
+          defer_confirmation: true,
+        });
+        const action: Action = { ...sent, merchant: "host", ref: message.ref };
         await runtime.proxy.onAction(action);
         return { status: 200, body: { ok: true, action_id: action.action_id } };
       },
