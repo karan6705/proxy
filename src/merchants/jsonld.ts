@@ -8,6 +8,30 @@ import type { MerchantOrder } from "./orders.js";
 
 const CONFIRMED = "https://schema.org/ReservationConfirmed";
 
+/**
+ * schema.org EmailMessage, for a message the agent sent (types.ts has no EmailMessage in JsonLdConfirmation).
+ * The booking reference is `identifier`, since a message has no reservation number.
+ */
+export interface JsonLdMessage {
+  "@context": "https://schema.org";
+  "@type": "EmailMessage";
+  identifier: string;
+  [key: string]: unknown;
+}
+
+export function emailMessage(order: MerchantOrder, recipient: { name: string; email: string }): JsonLdMessage {
+  return {
+    "@context": "https://schema.org",
+    "@type": "EmailMessage",
+    identifier: order.ref,
+    subject: order.item,
+    dateSent: order.booked_at,
+    sender: { "@type": "Person", email: order.task_email },
+    toRecipient: { "@type": "Person", name: recipient.name, email: recipient.email },
+    about: { "@type": "Event", name: "Arrival", startDate: order.dates.start },
+  };
+}
+
 export type UsZone = "ET" | "PT";
 
 function nthSunday(year: number, monthIndex: number, n: number): number {

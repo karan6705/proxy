@@ -4,6 +4,7 @@
 import { MS_PER_DAY, dateToMs } from "../logic/dates.js";
 import type { CalendarDate, Cents, JsonLdConfirmation } from "../types.js";
 import type { MerchantEmail } from "./deps.js";
+import type { JsonLdMessage } from "./jsonld.js";
 
 export function plainAmount(cents: Cents): string {
   return (cents / 100).toFixed(2);
@@ -38,7 +39,8 @@ export interface EmailSpec {
   intro: string;
   details: Array<[label: string, value: string]>;
   footer: string;
-  jsonld?: JsonLdConfirmation;
+  /** schema.org markup: a reservation or order confirmation, or an EmailMessage for a message the agent sent. */
+  jsonld?: JsonLdConfirmation | JsonLdMessage;
 }
 
 export function renderEmail(spec: EmailSpec): MerchantEmail {

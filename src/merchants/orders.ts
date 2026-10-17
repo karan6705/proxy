@@ -5,6 +5,9 @@ import { dateToMs } from "../logic/dates.js";
 import type { BookingResult, Cents, DateRange, MerchantId, MerchantInfo, TaskId, Timestamp } from "../types.js";
 import type { BookInput, MerchantDeps, MerchantEmail } from "./deps.js";
 
+/** The charge id of an order that cost nothing, such as a message. There is no Stripe charge to refund. */
+export const NO_CHARGE = "no_charge";
+
 export type MerchantErrorKind = "invalid_input" | "not_found" | "conflict" | "upstream_unavailable";
 
 export class MerchantError extends Error {
@@ -165,18 +168,23 @@ export async function placeOrder(ctx: ModuleContext, spec: BookingSpec, request:
   const ref = ctx.orders.nextRef(spec.ref_prefix, `${request.task_id}|${request.item}|${request.booked_at}|${request.amount}`);
 
   let chargeId: string;
-  try {
-    const charge = await ctx.deps.charge({
-      amount: request.amount,
-      merchant: spec.info.merchant_id,
-      task_id: request.task_id,
-      ref,
-      description: `${spec.info.name}: ${request.item}`,
-      idempotency_key: `book-${ref}`,
-    });
-    chargeId = charge.charge_id;
-  } catch (cause) {
-    throw new MerchantError("upstream_unavailable", `Payment failed for ${ref}: ${errorMessage(cause)}`);
+  if (request.amount === 0) {
+    // Nothing to pay (a message), and Stripe rejects a zero charge.
+    chargeId = NO_CHARGE;
+  } else {
+    try {
+      const charge = await ctx.deps.charge({
+        amount: request.amount,
+        merchant: spec.info.merchant_id,
+        task_id: request.task_id,
+        ref,
+        description: `${spec.info.name}: ${request.item}`,
+        idempotency_key: `book-${ref}`,
+      });
+      chargeId = charge.charge_id;
+    } catch (cause) {
+      throw new MerchantError("upstream_unavailable", `Payment failed for ${ref}: ${errorMessage(cause)}`);
+    }
   }
 
   ctx.orders.add({

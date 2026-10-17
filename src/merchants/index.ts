@@ -1,4 +1,4 @@
-// The mock merchants (airline, hotel, transfer so far) and the HTTP routes Karan mounts in server.ts.
+// The mock merchants (airline, hotel, transfer and the host who gets corrections) and the HTTP routes Karan mounts in server.ts.
 // createMerchants() implements the Merchants interface from types.ts; merchantRoutes() exposes it as RouteHandlers.
 
 import type {
@@ -17,6 +17,7 @@ import type {
 } from "../types.js";
 import { createAirline } from "./airline.js";
 import type { BookInput, MerchantDeps, MerchantModule, SupportEmail, SupportReply } from "./deps.js";
+import { createHost } from "./host.js";
 import { type HotelAgentOptions, createHotel } from "./hotel.js";
 import { MerchantError, type MerchantErrorKind, type MerchantOrder, OrderBook } from "./orders.js";
 import { createTransfer } from "./transfer.js";
@@ -40,7 +41,7 @@ export interface MerchantsImpl extends Merchants {
 
 export function createMerchants(deps: MerchantDeps, options: { hotel?: HotelAgentOptions } = {}): MerchantsImpl {
   const ctx = { deps, orders: new OrderBook() };
-  const modules: MerchantModule[] = [createAirline(ctx), createHotel(ctx, options.hotel), createTransfer(ctx)];
+  const modules: MerchantModule[] = [createAirline(ctx), createHotel(ctx, options.hotel), createTransfer(ctx), createHost(ctx)];
   const byId = new Map(modules.map((module) => [module.info.merchant_id, module]));
 
   const need = (merchant_id: MerchantId): MerchantModule => {
