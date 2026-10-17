@@ -47,6 +47,17 @@ Everything below is on branch `dhwanil` with tests (329 passing) and a clean `ts
 1. The review items 1 to 3 below (refund once and verify the right amount, error handling). Merchants no longer refund, which covers the double-refund half of item 1.
 2. Whether `plan_undo` keeps `route: "stripe_dispute"` for `option: "keep"` steps. If you would rather have a different marker for "accept the loss", tell me and I will change it.
 
+### From Dhwanil: merchants on real Inkbox identities (new)
+Each sending identity needs its own key, and the admin key is rejected for A2A. The merchants read three separate variables from the environment and nothing else.
+
+- **Please add to `.env.example`:** `INKBOX_AIRLINE_API_KEY`, `INKBOX_HOTEL_AGENT_API_KEY`, `INKBOX_TRANSFER_SUPPORT_API_KEY` (Sarah sends the values privately; they are never written to a file here), and `MERCHANT_ADDRESS_MODE` (unset or `test` is the default; `real` is for end-to-end runs only).
+- **Addresses:** tests and every default run use the `.example` addresses, including `support@metrotransfer.example` for the transfer desk. `real` switches to `airline@inkboxmail.com`, `hotel-agent@inkboxmail.com` and `transfer-support@inkboxmail.com`, for the senders, the desks' `support_email`, and the footer text in the emails.
+- **Wiring:** `createMerchants({ charge, deliver: createInkboxDeliver() }, { addresses: addressMode() })`, all exported from `src/merchants/index.ts`. `deliver` sends each email as the merchant it belongs to, with that identity's key, falling back to `INKBOX_API_KEY` when an identity's key is not set (email out works with it). An email with no merchant identity, such as the copy of the agent's message to the host, goes out as Proxy (`INKBOX_PROXY_HANDLE`, `INKBOX_PROXY_API_KEY`).
+- `INKBOX_DRY_RUN=1` logs the sender, recipient and subject and sends nothing. Keys are never logged, and are removed from any error message.
+- **Not tested against live Inkbox:** that needs the keys. The SDK calls are exactly the ones in Sarah's reality check.
+- **`agent_identity` for the hotel is now `hotel-agent`** (the real handle), in both modes.
+- **Open for Sarah or Karan: who answers the hotel's A2A tasks?** `merchants.agent("hotel").respond(message, now)` answers one Proxy message, but something has to receive A2A tasks addressed to `hotel-agent` (using the hotel-agent key) and send the reply back. I do not know the SDK calls for receiving and answering a task, only for sending, so I have not built that. Until it exists, the email fallback works through `POST /merchants/hotel/agent`.
+
 ### From Dhwanil: review of main, items 1 to 3 (refunds, "verified" and error handling)
 Found while reviewing `origin/main`. File and line references are the current ones. These three are the ones I'd cover before wiring the real logic. I checked that the files are unchanged since my review.
 
