@@ -93,11 +93,21 @@ export type MismatchField = "dates" | "amount" | "term" | "item" | "duplicate";
 
 export type MismatchValue = string | number | boolean | null;
 
+/** Where a mismatch came from, so review and the dispute packet can cite the receipt. */
+export interface MismatchEvidence {
+  /** The action whose receipt (email or Stripe event) shows the wrong value. */
+  source_action_id: ActionId;
+  /** Field values as read from that receipt, e.g. { departure_date: "2026-11-03", reservationNumber: "AB12CD" }. */
+  receipt_fields: Record<string, MismatchValue>;
+}
+
 export interface Mismatch {
   action_id: ActionId;
   field: MismatchField;
   expected: MismatchValue;
   actual: MismatchValue;
+  /** Optional: compare() fills it when it can. */
+  evidence?: MismatchEvidence;
 }
 
 export type ReversibilityKind = "cancel_refund" | "change" | "return" | "correct_message" | "none";

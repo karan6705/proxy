@@ -68,6 +68,7 @@ export const demoMismatches: Mismatch[] = demoActions.map((a) => ({
   field: "dates",
   expected: "2026-11-13",
   actual: "2026-11-03",
+  evidence: { source_action_id: a.action_id, receipt_fields: { summary: a.summary, start_date: "2026-11-03" } },
 }));
 
 const moneyAtRisk = demoActions.reduce((sum, a) => sum + a.amount, 0);
