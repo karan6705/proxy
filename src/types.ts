@@ -20,6 +20,7 @@ export interface DateRange {
   end?: CalendarDate;
 }
 
+/** Lowercase letters, digits and underscores only (TASK_ID_PATTERN): a task id becomes an Inkbox handle. */
 export type TaskId = string;
 export type ActionId = string;
 export type ChainId = string;
@@ -366,6 +367,9 @@ export interface ToolIO {
 }
 
 export const MISTAKES_RESOURCE_URI = "proxy://mistakes";
+
+/** Task ids map to Inkbox handles (task_demo -> task-demo@...), so only [a-z0-9_] is allowed. */
+export const TASK_ID_PATTERN = /^[a-z0-9_]+$/;
 export interface MistakesResource {
   lessons: Lesson[];
 }
@@ -515,6 +519,7 @@ export type EventKind =
   | "sms_out"
   | "sms_in"
   | "imessage_out"
+  | "imessage_in"
   | "a2a"
   | "call"
   | "call_out";
