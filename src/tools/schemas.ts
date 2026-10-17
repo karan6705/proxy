@@ -23,6 +23,7 @@ import type {
   UndoOutput,
 } from "../types.js";
 
+const taskId = z.string().regex(/^[a-z0-9_]+$/, "lowercase letters, digits and underscores only");
 const calendarDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
 const timestamp = z.string().describe("ISO 8601 timestamp");
 const cents = z.number().int().nonnegative().describe("Amount in USD cents, e.g. 41200 for $412");
@@ -126,7 +127,7 @@ export const reversibilityOutput = z.object({
 
 // --- review ---
 export const reviewInput = z.object({
-  task_id: z.string(),
+  task_id: taskId,
 }) satisfies z.ZodType<ReviewInput>;
 export const reviewOutput = z.object({
   ok,
@@ -190,7 +191,7 @@ export const getChainOutput = z.object({
 
 // --- list_chains ---
 export const listChainsInput = z.object({
-  task_id: z.string().optional().describe("Omit to list open chains across all tasks"),
+  task_id: taskId.optional().describe("Omit to list open chains across all tasks"),
 }) satisfies z.ZodType<ListChainsInput>;
 export const listChainsOutput = z.object({
   ok,
