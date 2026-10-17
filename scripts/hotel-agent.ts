@@ -11,8 +11,9 @@ const base = new URL(env.MCP_URL ?? "http://localhost:3000/mcp");
 const agentUrl = new URL("/merchants/hotel/agent", base);
 const proxyHandle = env.INKBOX_PROXY_HANDLE?.trim() || "proxy-agent";
 
-if (!env.INKBOX_API_KEY?.trim()) {
-  console.error("INKBOX_API_KEY is not set");
+const missing = ["INKBOX_API_KEY", "INKBOX_HOTEL_AGENT_API_KEY"].filter((name) => !env[name]?.trim());
+if (missing.length) {
+  console.error(`demo:hotel needs ${missing.join(" and ")} in .env (A2A rejects the admin key, so the hotel needs its own).`);
   process.exit(1);
 }
 
@@ -23,14 +24,34 @@ const bridge = createMerchantBridge({
     merchant_id: "hotel",
     async respond(message) {
       const res = await fetch(agentUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(message) });
-      if (!res.ok) throw new Error(`hotel agent route answered ${res.status}`);
-      return (await res.json()) as MerchantProtocolMessage;
+      if (!res.ok) {
+        console.error(`[hotel-agent] ${message.type} round ${message.round} (${message.negotiation_id}): server answered ${res.status}`);
+        throw new Error(`hotel agent route answered ${res.status}`);
+      }
+      const answer = (await res.json()) as MerchantProtocolMessage;
+      const amount = answer.type === "counter" ? ` ${answer.kind} ${answer.amount}` : answer.type === "accept" ? ` ${answer.refund_amount}` : "";
+      console.log(`[hotel-agent] ${new Date().toISOString()} ${message.type} round ${message.round} (${message.negotiation_id}) -> ${answer.type}${amount}`);
+      return answer;
     },
   },
   clock,
+  // Pick up requests Proxy sent before the bridge started (default: the last 30 minutes). Open A2A tasks are
+  // answered once; closed ones never again.
+  since: env.HOTEL_AGENT_SINCE?.trim() || new Date(Date.now() - 30 * 60_000).toISOString(),
   proxyHandle,
   proxyEmail: `${proxyHandle}@inkboxmail.com`,
   log: (line) => console.log(`[hotel-agent] ${line}`),
 });
 bridge.start();
-console.log(`hotel-agent bridge polling; answers via ${agentUrl.origin}`);
+console.log(`hotel-agent bridge polling; answers via ${agentUrl.origin}. Ctrl+C to stop.`);
+
+// The bridge's poll timer doesn't hold the process open on its own, so keep it alive until Ctrl+C.
+const keepAlive = setInterval(() => {}, 60_000);
+const stop = () => {
+  bridge.stop();
+  clearInterval(keepAlive);
+  console.log("hotel-agent bridge stopped");
+  process.exit(0);
+};
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);
