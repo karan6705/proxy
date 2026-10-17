@@ -44,6 +44,9 @@ const server = new MCPServer({
     "Call log_intent at the start of any task that books, buys, signs up or emails, and use the returned task_email for every booking. " +
     "Call reversibility before an action you are unsure about. Call review before you tell the human you are done. " +
     "Every error has retryable and next_action; follow next_action.",
+  // Browser-based MCP clients (web inspectors, web chat clients) need CORS. Reflects the caller's Origin.
+  // No cookies or credentials are used, so reflecting is safe; add allowedOrigins to restrict callers.
+  cors: {},
 });
 
 // --- stub state, replaced by Store ---
