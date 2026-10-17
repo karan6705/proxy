@@ -200,20 +200,20 @@ describe("the scenario set", () => {
       "wrong item": 3,
       duplicate: 2,
       "late price change": 2,
-      "late confirmation": 2,
+      "late confirmation": 1,
       "hotel negotiation": 3,
       "no agent": 2,
       "window closed": 3,
       "correct task": 5,
       injection: 1,
-      "known limit": 2,
+      "known limit": 3,
     });
     expect(SCENARIOS).toHaveLength(34);
   });
 
   it("documents its limits instead of hiding them", () => {
-    const withLimits = SCENARIOS.filter((s) => (s.expect.known_misses?.length ?? 0) + (s.expect.known_false_alarms?.length ?? 0) > 0).map((s) => s.id);
-    expect(withLimits).toEqual(["S15", "S33", "S34"]);
+    const withLimits = SCENARIOS.filter((s) => (s.expect.known_misses?.length ?? 0) + (s.expect.known_false_alarms?.length ?? 0) > 0 || s.expect.known_limit !== undefined).map((s) => s.id);
+    expect(withLimits).toEqual(["S15", "S18", "S33", "S34"]);
   });
 });
 
@@ -235,17 +235,14 @@ describe("the newer scenarios", () => {
     expect((await runScenario(scenario("S11"), "proxy")).agreed_refund_total).toBe(17000);
   });
 
-  it("S18: with auto-undo on and no reply, Proxy acts before the window closes", async () => {
-    const result = await runScenario(scenario("S18"), "proxy");
-    expect(result.outcomes).toEqual({ flight: "refund_agreed" });
-    expect(result.transcript.join("\n")).toContain("no reply: auto-undo acts before the window closes");
-  });
-
-  it("S18: without auto-undo the same silence does nothing", async () => {
-    const quiet: Scenario = { ...scenario("S18"), intent: { ...scenario("S18").intent, preferences: { ...scenario("S18").intent.preferences, auto_undo: false } } };
-    const result = await runScenario(quiet, "proxy");
+  it("S18: auto-undo is not built, so silence leaves the flight booked even with the preference on", async () => {
+    const scenarioS18 = scenario("S18");
+    expect(scenarioS18.intent.preferences.auto_undo).toBe(true);
+    const result = await runScenario(scenarioS18, "proxy");
     expect(result.outcomes).toEqual({ flight: "none" });
     expect(result.agreed_refund_total).toBe(0);
+    expect(result.alert_sent).toBe(true);
+    expect(gradeRun(scenarioS18, result).passed).toBe(true);
   });
 
   it("S20: a 70% offer is below the human's 80% minimum, so the human decides", async () => {

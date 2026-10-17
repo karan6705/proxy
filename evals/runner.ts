@@ -250,8 +250,8 @@ async function runProxy(scenario: Scenario): Promise<RunResult> {
     result.transcript.push(`alert: one text for ${chain.chain_id}, $${(chain.money_at_risk / 100).toFixed(2)} at risk`);
 
     const reply = scenario.human_reply;
-    // No reply: if the human opted in to auto-undo, Proxy acts before the window closes. Otherwise nothing happens.
-    const auto = reply === null && scenario.intent.preferences.auto_undo;
+    // No reply: nothing happens. Auto-undo (acting before the window closes) is not built, so even with the
+    // preference set, silence does nothing. S18 documents this as a known limit.
     const picked = typeof reply === "object" && reply !== null ? new Set(reply.pick) : null;
 
     if (reply === "KEEP") {
@@ -259,9 +259,9 @@ async function runProxy(scenario: Scenario): Promise<RunResult> {
         result.outcomes[bookingId(actionId)] = "kept";
       }
       result.transcript.push("human replied KEEP");
-    } else if (reply === "UNDO ALL" || auto || picked) {
+    } else if (reply === "UNDO ALL" || picked) {
       result.transcript.push(
-        picked ? `human replied PICK ${[...picked].join(", ")}` : auto ? "no reply: auto-undo acts before the window closes" : "human replied UNDO ALL",
+        picked ? `human replied PICK ${[...picked].join(", ")}` : "human replied UNDO ALL",
       );
       const plan = planUndo(chain, world.actions, scenario.intent.preferences, scenario.now);
       for (const step of plan) {

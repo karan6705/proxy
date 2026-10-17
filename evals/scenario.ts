@@ -54,6 +54,8 @@ export interface ScenarioExpect {
    * still flags them. They count as false alarms in the scoreboard.
    */
   known_false_alarms?: ExpectedMismatch[];
+  /** A documented limit that is not a compare miss (for example a feature not built yet). Listed in the results. */
+  known_limit?: string;
   /** The merchant sent text that is not part of the protocol, and Proxy saw it and did not act on it. */
   ignored_text?: boolean;
   chains: ExpectedChain[];
@@ -99,7 +101,7 @@ export interface Scenario {
   now: Timestamp;
   /**
    * The human's text reply to the alert. { pick: [...] } is PICK: only those booking ids are undone. null: no reply,
-   * and if the intent's preferences set auto_undo, Proxy undoes everything before the window closes.
+   * and nothing happens (auto-undo is not built).
    */
   human_reply: "UNDO ALL" | "KEEP" | { pick: string[] } | null;
   hotel?: HotelAgentOptions;
