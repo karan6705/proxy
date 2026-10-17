@@ -4,6 +4,7 @@ import { makeEvent, DEMO_EVENT_CONTEXT, type EventContext } from "../db/events.j
 import type { Clock, EventKind, Inkbox, OutboundEmail, ProxyProtocolMessage, Store, TaskId } from "../types.js";
 import { createA2AAccess, type A2AAccess } from "./a2a.js";
 import { protocolSubject } from "./protocol.js";
+import { subscribeTaskInbox } from "./subscriptions.js";
 import { createClient, type InkboxSdk } from "./sdk.js";
 
 export interface InkboxClientOptions {
@@ -72,6 +73,8 @@ export function createInkbox(opts: InkboxClientOptions = {}): Inkbox {
         return { task_email: existing.emailAddress as string };
       } catch {
         const created = await client.createIdentity(local, { displayName: `Proxy task ${task_id}` });
+        // Inbound email only reaches capture if this new inbox delivers to the server (needs INKBOX_PUBLIC_URL and the token).
+        await subscribeTaskInbox(client, local, process.env, log);
         return { task_email: created.emailAddress as string };
       }
     },

@@ -1,5 +1,5 @@
 // An identity's own A2A access. A2A rejects the admin key, so each side uses a key scoped to its identity:
-// an explicit one if given (INKBOX_PROXY_API_KEY, INKBOX_KEY_HOTEL_AGENT), otherwise one minted once and kept in memory.
+// an explicit one if given (INKBOX_PROXY_API_KEY, INKBOX_HOTEL_AGENT_API_KEY), otherwise one minted once and kept in memory.
 import { loadSdk, type InkboxSdk } from "./sdk.js";
 
 export interface A2AAccess {
