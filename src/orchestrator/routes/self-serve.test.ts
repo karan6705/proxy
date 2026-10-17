@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Action } from "../../types.js";
 import { createSimulatedClock } from "../clock.js";
-import { createFakePayments, createMemoryStore, createStubMerchants, emptyChain } from "../fakes.js";
+import { createFakePayments, createRecordingStore, createStubMerchants, emptyChain } from "../fakes.js";
 import { runSelfServeRoute } from "./self-serve.js";
 
 // The demo mistake: a Nov 3 flight instead of Nov 13. The 24-hour rule needs departure at least
@@ -12,7 +12,7 @@ async function setup(opts: { settleRefunds?: boolean } = {}) {
   const clock = createSimulatedClock(BOOKED_AT);
   const merchants = createStubMerchants();
   const fake = createFakePayments(opts);
-  const mem = createMemoryStore();
+  const mem = createRecordingStore();
 
   const booking = await merchants.book({
     merchant_id: "airline",
