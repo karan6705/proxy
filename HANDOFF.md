@@ -11,6 +11,10 @@
 5. **The airline has no agent.** It is self-serve only (`has_agent: false`). docs/01, 03, 04, 05 and 06 are updated. (Dhwanil, Codex)
 6. **The transfer support address is `support@metrotransfer.example`** everywhere. (Dhwanil, Sarah, Codex)
 7. **Domains are out of scope.** No new category.
+8. **`EventKind` gains `imessage_in`.** Log inbound iMessages with it, not `sms_in` with an `imessage:` outcome. (Sarah)
+9. **`Action.confidence`** (item 2) is how capture marks LLM extractions. Actions under 0.5 are dropped and logged, never passed to `onAction`. (Sarah)
+10. **Task ids are restricted to `[a-z0-9_]`** (`TASK_ID_PATTERN` in `types.ts`), because a task id becomes an Inkbox handle (`task_demo` becomes `task-demo@...`). `log_intent` returns `invalid_input` otherwise, and so do `review` and `list_chains` for a malformed `task_id`. (Everyone)
+- **Sarah, still to adapt from item 3:** the human channel should forward STOP as `{ kind: "stop" }` (it currently ignores it as `opt_out`), and loose replies as `{ kind: "correction", chain_id, corrected_text }` (it currently asks the human to clarify).
 
 
 ## Karan

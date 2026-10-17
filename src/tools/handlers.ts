@@ -22,6 +22,7 @@ import type {
   ReviewInput,
   UndoInput,
 } from "../types.js";
+import { TASK_ID_PATTERN } from "../types.js";
 import { fail, ok } from "./result.js";
 
 const CLOSED_CHAIN_STATES = new Set<Chain["state"]>(["closed", "kept", "redone", "expired"]);
@@ -74,6 +75,9 @@ export function createToolHandlers(getProxy: () => Proxy) {
         return ok({ task_id: existing.task_id, task_email: existing.task_email });
       }
       const task_id = taskIdFor(input.idempotency_key);
+      if (!TASK_ID_PATTERN.test(task_id)) {
+        return fail("invalid_input", `Task id ${task_id} must use only lowercase letters, digits and underscores.`, false, "fix_now");
+      }
       let task_email: string;
       try {
         ({ task_email } = await inkbox.createTaskAddress(task_id));
