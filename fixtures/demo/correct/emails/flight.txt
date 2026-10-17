@@ -1,0 +1,20 @@
+From: Skyline Demo Air <reservations@skylinedemoair.example>
+To: task_nyc@tasks.proxy.example
+Subject: Your flight is confirmed: SFO to JFK on Nov 13, 2026 (AIR-V3LU09)
+
+Your flight is confirmed
+
+Thanks for booking with Skyline Demo Air. Your reservation is confirmed and your ticket has been issued.
+
+Confirmation number: AIR-V3LU09
+Flight: ZZ 768
+From: San Francisco International Airport (SFO)
+To: John F. Kennedy International Airport (JFK)
+Departs: Nov 13, 2026, 8:30 AM
+Arrives: Nov 13, 2026, 5:05 PM
+Fare: Basic Economy
+Total paid: $412.00
+
+You can cancel within 24 hours of booking for a full refund if your flight is at least 7 days away. After that, changes cost $75.00 until 24 hours before departure.
+
+Skyline Demo Air
