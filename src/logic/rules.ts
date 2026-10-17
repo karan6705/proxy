@@ -33,6 +33,9 @@ export const TRANSFER_FREE_CANCEL_HOURS = 24;
 
 export const SAAS_REFUND_DAYS = 14;
 
+/** Domain "Add Grace Period": delete a new registration for a refund. Usually 5 days; verify the TLD's rule before quoting it. */
+export const DOMAIN_ADD_GRACE_DAYS = 5;
+
 export const STORE_RETURN_DAYS = 30;
 export const STORE_LATE_RETURN_DAYS = 60;
 /** Restocking fee for late returns, as a fraction of the price. */
