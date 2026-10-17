@@ -14,11 +14,17 @@ import {
   type MerchantsImpl,
 } from "../merchants/index.js";
 import { createPayments, createTestCharge } from "../stripe/index.js";
+import { createWebRoutes } from "../web/index.js";
+import type { EventReader } from "../db/index.js";
 import type { Action, Clock, Inkbox, OrchestratorHooks, Params, Payments, Preferences, RouteHandler, Store, TaskId } from "../types.js";
 import { createFakePayments } from "./fakes.js";
 import { createProxy, type DemoTask, type Proxy } from "./proxy.js";
 import { createSessions } from "./sessions.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
+import type { ProtocolTransport } from "./undo.js";
+
+/** Stands in for the human's number in the demo when HUMAN_PHONE isn't set. Nothing is ever sent to it. */
+const DEMO_HUMAN_NUMBER = "+10000000000";
 
 export interface Runtime {
   proxy: Proxy;
@@ -130,6 +136,34 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   };
   const merchants = createMerchants(merchantDeps, { addresses: mode });
 
+  // Real Inkbox carries the protocol; without it (no key, or INKBOX_DRY_RUN=1) the in-process mock merchant
+  // agent answers instead, so the whole negotiation still runs. PROXY_PROTOCOL_LOOPBACK=1 or 0 forces either.
+  const realInkbox = Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
+  const loopback = env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !realInkbox;
+  let proxyRef: Proxy | null = null;
+  const transport: ProtocolTransport = {
+    async send(merchant, to_identity, message) {
+      if (!loopback) {
+        await inkbox.sendProtocolMessage(to_identity, message);
+        return;
+      }
+      const agent = merchants.agent(merchant);
+      if (!agent) throw new Error(`No merchant agent for ${merchant}`);
+      // The mock agent answers in the background, like a message arriving later.
+      setImmediate(() => {
+        agent
+          .respond(message, clock.now())
+          .then((answer) => proxyRef?.onProtocolMessage(answer))
+          .catch((e) => console.error("[protocol] loopback answer failed:", e));
+      });
+    },
+  };
+  const humanPhone = env.HUMAN_PHONE?.trim() ?? "";
+  const demoOn = env.PROXY_DEMO_ROUTES === "1";
+  // The demo page's buttons act as the registered human. With no real number they use a placeholder that is never texted.
+  const humanNumber = humanPhone || (demoOn ? DEMO_HUMAN_NUMBER : "");
+  const alertChannel = env.HUMAN_ALERT_CHANNEL === "sms" ? "sms" : "imessage";
+
   const proxy = createProxy({
     store,
     logic,
@@ -141,8 +175,14 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     params,
     defaultPreferences,
     demo: env.PROXY_DEMO_ROUTES === "1" ? { identityTaskId: env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo", current: null } : null,
-    humanNumber: env.HUMAN_PHONE?.trim() ?? "",
+    humanNumber,
+    canTextHuman: Boolean(humanPhone),
+    humanChannel: alertChannel,
+    transport,
+    proxyEmail: `${env.INKBOX_PROXY_HANDLE?.trim() || "proxy-agent"}@inkboxmail.com`,
+    alertSettleMs: env.PROXY_ALERT_SETTLE_MS ? Number(env.PROXY_ALERT_SETTLE_MS) : undefined,
   });
+  proxyRef = proxy;
 
   const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
   const captureSide = proxy.deps.demo ? repointDemo(store, proxy, proxy.deps.demo) : { store, hooks: proxy };
@@ -156,14 +196,17 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     store,
     hooks: proxy,
     clock,
-    sendText: (channel, to, body) => inkbox.sendText(channel, to, body),
-    humanNumber: env.HUMAN_PHONE?.trim() ?? "",
+    sendText: async (channel, to, body) => (humanPhone ? inkbox.sendText(channel, to, body) : { message_id: "not_sent" }),
+    humanNumber,
   });
   proxy.setHumanChannel(human);
   const routes = [
     createInboundEmailRoute({ capture, fetchFullMessage }),
     ...createHumanRoutes(human),
     ...merchantRoutes(merchants, merchantDeps, clock),
+    ...("recentEvents" in store
+      ? createWebRoutes({ store: store as Store & EventReader, clock, channel: human, humanNumber, controls: demoOn })
+      : []),
   ];
 
   return { proxy, store, human, capture, routes, fakePayments, merchants };
