@@ -35,10 +35,11 @@ export interface ProxyDeps {
   /** The one human number (HUMAN_PHONE); empty until it is registered. */
   humanNumber: string;
   /**
-   * With PROXY_DEMO_ROUTES=1, every task reuses this pre-created Inkbox identity instead of getting its
-   * own, so the demo needs no new identities. Null outside the demo.
+   * With PROXY_DEMO_ROUTES=1: the pre-created Inkbox identity every demo run reuses (identityTaskId,
+   * e.g. task_demo -> task-demo@...), and the current run's task id (task_demo_1, task_demo_2, ...).
+   * Each reset starts a new task id, so old rows stay as history. Null outside the demo.
    */
-  demoTaskId: TaskId | null;
+  demo: DemoTask | null;
 }
 
 export interface Proxy extends OrchestratorHooks {
@@ -61,6 +62,13 @@ export interface Proxy extends OrchestratorHooks {
   askHumanAboutCounter(chain_id: ChainId, negotiation_id: string, body: string): Promise<void>;
   /** The open chain with the most recent alert, which an unaddressed reply belongs to. */
   mostRecentlyAlertedOpenChain(): Promise<Chain | null>;
+  /** Demo only: starts a new demo run with the next unused task id (task_demo_1, task_demo_2, ...). */
+  startDemoTask(): Promise<TaskId>;
+}
+
+export interface DemoTask {
+  identityTaskId: TaskId;
+  current: TaskId | null;
 }
 
 /** The part of Sarah's HumanChannel the orchestrator calls. */
@@ -101,11 +109,22 @@ export function createProxy(deps: ProxyDeps): Proxy {
     const byId = new Map(actions.map((a) => [a.action_id, a]));
     const mismatches = logic.compare(intent, actions);
     const traced = logic.trace(intent, actions, mismatches);
+    const existingChains = await store.listChains(task_id);
+    const claimedExisting = new Set<ChainId>();
     const now = clock.now();
 
     const saved: Chain[] = [];
     for (const t of traced) {
-      const existing = await store.getChain(t.chain_id);
+      const exact = await store.getChain(t.chain_id);
+      const existing = exact ?? existingChains
+        .filter((candidate) => !claimedExisting.has(candidate.chain_id))
+        .map((candidate) => ({
+          candidate,
+          overlap: candidate.action_ids.filter((id) => t.action_ids.includes(id)).length,
+        }))
+        .filter(({ overlap }) => overlap > 0)
+        .sort((a, b) => b.overlap - a.overlap)[0]?.candidate;
+      if (existing) claimedExisting.add(existing.chain_id);
       // The tightest window across the chain's actions.
       const windows = t.action_ids
         .map((id) => byId.get(id))
@@ -115,6 +134,9 @@ export function createProxy(deps: ProxyDeps): Proxy {
         .sort();
       const chain: Chain = {
         ...t,
+        // trace derives ids from the root. A late booked action can replace a message root, but callers
+        // and alerts must keep referring to the chain id that was already published.
+        chain_id: existing?.chain_id ?? t.chain_id,
         window_ends_at: windows[0] ?? null,
         // Keep what the orchestrator already did with this chain.
         state: existing?.state ?? t.state,
@@ -146,10 +168,21 @@ export function createProxy(deps: ProxyDeps): Proxy {
     });
   }
 
+  async function startDemoTask(): Promise<TaskId> {
+    const demo = deps.demo;
+    if (!demo) throw new Error("Not in demo mode");
+    // The next id with no stored intent, so runs never collide with rows from earlier server runs.
+    let n = 1;
+    while (await store.getIntent(`${demo.identityTaskId}_${n}`)) n += 1;
+    demo.current = `${demo.identityTaskId}_${n}`;
+    return demo.current;
+  }
+
   return {
     deps,
     refreshChains,
     mostRecentlyAlertedOpenChain,
+    startDemoTask,
     textHuman,
     setHumanChannel(channel) {
       humanChannel = channel;
