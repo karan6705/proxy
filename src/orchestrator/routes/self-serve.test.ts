@@ -120,6 +120,49 @@ describe("self-serve route (airline 24-hour rule)", () => {
     expect(result.step.outcome).toBe("pending");
   });
 
+  it.each([
+    ["zero", 0],
+    ["missing", undefined],
+  ])("never verifies a %s merchant refund amount", async (_label, refundAmount) => {
+    const { deps, chain, action, fake } = await setup();
+    const result = await runSelfServeRoute(
+      {
+        ...deps,
+        merchants: {
+          async selfServeCancel() {
+            return { ok: true as const, refund_amount: refundAmount as number, stripe_refund_id: null };
+          },
+        },
+      },
+      chain,
+      action,
+    );
+
+    expect(result.action.state).toBe("refund_pending");
+    expect(result.step.outcome).toBe("pending");
+    expect(fake.refunds.size).toBe(0);
+  });
+
+  it("never verifies a partial refund when the action expects a full refund", async () => {
+    const { deps, chain, action, fake } = await setup();
+    const result = await runSelfServeRoute(
+      {
+        ...deps,
+        merchants: {
+          async selfServeCancel() {
+            return { ok: true as const, refund_amount: 34_000, stripe_refund_id: null };
+          },
+        },
+      },
+      chain,
+      action,
+    );
+
+    expect(result.action.state).toBe("refund_pending");
+    expect(result.step.message).toContain("expected the full 41200 refund");
+    expect(fake.refunds.size).toBe(0);
+  });
+
   it("never refunds twice when retried", async () => {
     const { deps, chain, action, fake } = await setup();
 

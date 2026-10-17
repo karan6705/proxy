@@ -45,6 +45,26 @@ describe("a refund happens at most once per action", () => {
     expect(await refundOnce(fake.payments, flight, 41_200)).toEqual({ status: "no_charge" });
     expect(fake.refunds.size).toBe(0);
   });
+
+  it("does not trust a verified flag when Stripe's amount differs from the expected amount", async () => {
+    let checks = 0;
+    const result = await refundOnce(
+      {
+        async findChargeForAction() { return "ch_1"; },
+        async refund() { return { refund_id: "re_1" }; },
+        async verifyRefund() {
+          checks += 1;
+          return checks === 1
+            ? { verified: false, refunded_amount: 0 }
+            : { verified: true, refunded_amount: 34_000 };
+        },
+      },
+      flight,
+      41_200,
+    );
+
+    expect(result).toMatchObject({ status: "refunded", verified: false, refunded_amount: 34_000 });
+  });
 });
 
 describe("an action is verified only after verifyRefund returns true", () => {
