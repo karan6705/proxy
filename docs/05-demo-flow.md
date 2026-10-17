@@ -12,7 +12,7 @@ The intent: "NYC trip for the Nov 13 conference, under $1,500." The buying agent
 
 | Action | Merchant | Amount | Route |
 |---|---|---|---|
-| Flight SFO to JFK, Nov 3 | Airline (has an agent) | $412 | 24-hour rule, cancel for a full refund |
+| Flight SFO to JFK, Nov 3 | Airline (no agent, self-serve) | $412 | 24-hour rule, self-serve cancel for a full refund |
 | Hotel, 3 nights from Nov 3 | Hotel (has an agent) | $640 | Reversal Protocol: negotiate |
 | Airport transfer, Nov 3 | Transfer service (no agent) | $188 | Email support |
 | Arrival email to the host | A person | $0 | Correction message |
@@ -80,7 +80,7 @@ Sarah holds it up and replies UNDO ALL.
 ### 4. The chain turns green (70 seconds) — the key moment
 **What happens:** the MCP App shows the four actions. Each turns green only when Stripe verifies the refund.
 1. **Flight:** the 24-hour rule applies, so Proxy cancels for a full refund. Stripe shows it. Green.
-2. **Transfer:** the service has no agent, so Proxy emails support from its own address. The teammate replies. Green once Stripe shows it.
+2. **Transfer:** the service has no agent, so Proxy emails `support@metrotransfer.example` from its own address. The teammate replies. Green once Stripe shows it.
 3. **Host email:** Proxy sends a correction. Green.
 4. **Hotel:** the hotel has its own agent. The screen shows the Reversal Protocol:
    - Proxy sends `request_reversal` with the evidence.

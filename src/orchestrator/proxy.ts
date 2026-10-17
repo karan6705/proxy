@@ -37,6 +37,10 @@ export interface Proxy extends OrchestratorHooks {
   /** Re-runs compare and trace for a task and saves the resulting chains. */
   refreshChains(task_id: TaskId): Promise<{ mismatches: Mismatch[]; chains: Chain[] }>;
   logEvent(row: Partial<EventRow> & Pick<EventRow, "kind">): Promise<void>;
+  /** True after the human replied STOP, until their next reply. No undo starts while frozen. */
+  isFrozen(): boolean;
+  /** Corrections waiting for the human's confirmation, by chain. */
+  pendingCorrections: ReadonlyMap<string, { corrected_text: string; received_at: string }>;
 }
 
 /** Run identifiers for the events log; evals set these, the demo uses the fixed "demo" values. */
@@ -44,6 +48,8 @@ const RUN = { run_id: "demo", arm: "proxy", scenario_id: "demo", layer: "live" }
 
 export function createProxy(deps: ProxyDeps): Proxy {
   const { store, logic, clock } = deps;
+  let frozen = false;
+  const pendingCorrections = new Map<string, { corrected_text: string; received_at: string }>();
 
   async function logEvent(row: Partial<EventRow> & Pick<EventRow, "kind">) {
     await store.logEvent({
@@ -97,6 +103,8 @@ export function createProxy(deps: ProxyDeps): Proxy {
     deps,
     refreshChains,
     logEvent,
+    isFrozen: () => frozen,
+    pendingCorrections,
 
     async onAction(action) {
       // Deduplicate by ref within the task: a repeated confirmation updates the same action.
@@ -111,8 +119,19 @@ export function createProxy(deps: ProxyDeps): Proxy {
     },
 
     async onHumanReply(reply) {
-      // Alerts and the UNDO ALL / PICK / KEEP flow land in build step 3; for now the reply is recorded.
-      await logEvent({ kind: "sms_in", chain_id: reply.chain_id, outcome: reply.kind });
+      const chain_id = reply.kind === "stop" ? null : reply.chain_id;
+      await logEvent({ kind: "sms_in", chain_id, outcome: reply.kind });
+      if (reply.kind === "stop") {
+        frozen = true;
+        return;
+      }
+      // Any later reply from the human lifts a STOP.
+      frozen = false;
+      if (reply.kind === "correction") {
+        // Confirmed once with the human before acting; sending that confirmation lands with the alerts flow.
+        pendingCorrections.set(reply.chain_id, { corrected_text: reply.corrected_text, received_at: reply.received_at });
+      }
+      // UNDO ALL / PICK / KEEP / counter decisions land with the alerts flow (build step 3).
     },
 
     async onProtocolMessage(message) {
