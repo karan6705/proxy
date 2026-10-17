@@ -49,14 +49,20 @@ async function logTask() {
 }
 
 async function captureFlight(task_id: string) {
-  const flight = action(task_id, { action_id: "act_flight", summary: "Flight SFO to JFK, Nov 3", amount: 41_200, ref: "AIR-1" });
-  rt.fakePayments?.addCharge("ch_1", "act_flight", 41_200);
-  rt.merchants.bookings.set("AIR-1", {
-    request: { merchant_id: "airline", task_id, task_email: "", item: "Flight", dates: { start: "2026-11-03" }, amount: 41_200, booked_at: clock.now() },
-    charge_id: "ch_1",
-    cancelled: false,
+  const booking = await rt.merchants.book({
+    merchant_id: "airline",
+    task_id,
+    task_email: `${task_id}@tasks.proxy.example`,
+    item: "Flight SFO to JFK, Nov 3",
+    dates: { start: "2026-11-03" },
+    amount: 41_200,
+    booked_at: clock.now(),
+    defer_confirmation: true,
   });
+  const flight = action(task_id, { action_id: "act_flight", summary: "Flight SFO to JFK, Nov 3", amount: 41_200, ref: booking.ref });
+  rt.fakePayments?.addCharge(booking.stripe_charge_id, "act_flight", 41_200);
   await rt.proxy.onAction(flight);
+  return flight;
 }
 
 describe("tools wired to the orchestrator", () => {
@@ -239,8 +245,8 @@ describe("tools wired to the orchestrator", () => {
 
   it("a repeated confirmation with the same ref does not create a second action", async () => {
     const { task_id } = await logTask();
-    await captureFlight(task_id);
-    await rt.proxy.onAction(action(task_id, { action_id: "act_flight_dup", summary: "Flight SFO to JFK, Nov 3", amount: 41_200, ref: "AIR-1" }));
+    const flight = await captureFlight(task_id);
+    await rt.proxy.onAction(action(task_id, { action_id: "act_flight_dup", summary: "Flight SFO to JFK, Nov 3", amount: 41_200, ref: flight.ref }));
     expect(await rt.store.listActions(task_id)).toHaveLength(1);
   });
 

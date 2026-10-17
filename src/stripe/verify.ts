@@ -1,4 +1,5 @@
 import type { ActionId, Cents } from "../types.js";
+import { linkedChargeForAction } from "./charge-links.js";
 import { getStripeClient, type StripeRequester } from "./client.js";
 
 interface StripePaymentIntent {
@@ -74,6 +75,8 @@ export async function findChargeForActionId(
   actionId: ActionId,
   client: StripeRequester = getStripeClient(),
 ): Promise<string | null> {
+  const linked = linkedChargeForAction(actionId);
+  if (linked) return linked;
   const intents = await findPaymentIntentsForAction(actionId, client);
   for (const intent of intents) {
     const chargeId = typeof intent.latest_charge === "string" ? intent.latest_charge : intent.latest_charge?.id;
