@@ -13,6 +13,12 @@ Karan owns: src/server.ts, src/tools/, src/app/ (MCP App), src/stripe/, src/orch
 Sarah owns: src/inkbox/, src/capture/, src/db/, src/web/.
 Dhwanil owns: src/logic/, src/merchants/, evals/, fixtures/, tests/.
 
+## Karan's two agents
+Karan's area is split between two coding agents. Each edits only its own part.
+- Agent 1 owns: src/types.ts, src/server.ts, src/tools/, src/orchestrator/ (including the simulated clock), src/app/, package.json, tsconfig.json.
+- Agent 2 owns: src/stripe/, src/agent/.
+Agent 2 asks for package.json or src/types.ts changes under "Karan" in HANDOFF.md. Agent 1 asks for src/stripe/ or src/agent/ changes under "Karan's Codex".
+
 Rules:
 - Only edit files in your own area. Anyone may read src/types.ts but only Karan edits it, and after the Saturday 12:30 PM freeze a change needs all three people to agree.
 - If you need a change in someone else's area, or a new npm package, add a note under their heading in HANDOFF.md and stop. Only Karan edits package.json.

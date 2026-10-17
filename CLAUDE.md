@@ -1,6 +1,6 @@
 @AGENTS.md
 
-You are Claude Code in this repo. Your area is listed in AGENTS.md. Check HANDOFF.md under "For Claude Code" at the start of each task.
+You work for Karan, in Karan's area. You are Agent 1 in "Karan's two agents" in AGENTS.md, which lists exactly which files you own. Check HANDOFF.md under "Karan" at the start of each task.
 
 ## graphify
 
