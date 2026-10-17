@@ -348,3 +348,31 @@ describe("compare: a charge seen by both email and Stripe is counted once", () =
     ]);
   });
 });
+
+describe("compare: item and size match whole words", () => {
+  const sizeM = demoIntent({ constraints: { must_haves: ["item:rain jacket", "size:M"] } });
+  const jacket = (summary: string): Action =>
+    saas(summary, { action_id: "act_jacket", merchant: "store", category: "store", ref: "STO-2", amount: 8900 });
+
+  it("does not let size:M match the letter inside another word", () => {
+    expect(compare(sizeM, [jacket("Rain jacket, size Medium")])).toMatchObject([{ field: "item", expected: "M" }]);
+    expect(compare(sizeM, [jacket("Rain jacket, women's")])).toMatchObject([{ field: "item", expected: "M" }]);
+  });
+
+  it("matches the size as its own word, in any case", () => {
+    expect(compare(sizeM, [jacket("Rain jacket, size M")])).toEqual([]);
+    expect(compare(sizeM, [jacket("RAIN JACKET (m)")])).toEqual([]);
+  });
+
+  it("matches a multi-word item and names with punctuation", () => {
+    const hub = demoIntent({ constraints: { must_haves: ["item:USB-C hub"] } });
+    expect(compare(hub, [jacket("USB-C hub x1")])).toEqual([]);
+    expect(compare(hub, [jacket("USB-A hub x1")])).toMatchObject([{ field: "item" }]);
+  });
+
+  it("treats regex characters in a must-have as plain text", () => {
+    const odd = demoIntent({ constraints: { must_haves: ["item:(2) cables"] } });
+    expect(compare(odd, [jacket("Cables (2) cables")])).toEqual([]);
+    expect(compare(odd, [jacket("Cables")])).toMatchObject([{ field: "item" }]);
+  });
+});
