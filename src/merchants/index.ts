@@ -27,6 +27,7 @@ export type { HotelAgentOptions, HotelBehavior } from "./hotel.js";
 export { MerchantError } from "./orders.js";
 export type { MerchantOrder } from "./orders.js";
 export { createFakeDeps } from "./fakes.js";
+export type { FakeCharge, FakeDeps } from "./fakes.js";
 
 export interface MerchantsImpl extends Merchants {
   /** Same as Merchants.book, plus `defer_confirmation` to send the confirmation email later. */
