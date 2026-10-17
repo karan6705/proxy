@@ -18,7 +18,10 @@
     "check-env": "node --no-warnings --env-file-if-exists=.env scripts/check-env.ts",
     "demo:reset": "tsx --env-file-if-exists=.env src/agent/reset.ts",
     "demo:rehearse": "tsx --env-file-if-exists=.env src/agent/rehearse.ts",
-    "demo:offline": "tsx --env-file-if-exists=.env src/agent/scripted.ts run --offline"
+    "demo:offline": "tsx --env-file-if-exists=.env src/agent/scripted.ts run --offline",
+    "demo:hotel": "tsx --env-file-if-exists=.env scripts/hotel-agent.ts",
+    "fixtures:demo": "tsx evals/demo-fixtures.ts",
+    "evals:layer1": "tsx --env-file-if-exists=.env evals/run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

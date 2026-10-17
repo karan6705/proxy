@@ -3,7 +3,7 @@
 // real Stripe test mode when a sk_test_ key is set. Logic and Merchants stay stand-ins until Dhwanil's merge.
 import { createAnthropicExtractor, createCapture, createInboundEmailRoute, deliverToCapture, type Capture } from "../capture/index.js";
 import { createStoreFromEnv } from "../db/index.js";
-import { createClient, createHumanChannel, createHumanRoutes, createInkbox, type HumanChannel } from "../inkbox/index.js";
+import { createA2AAccess, createClient, createHumanChannel, createHumanRoutes, createInkbox, createProtocolInbox, type HumanChannel, type ProtocolInbox } from "../inkbox/index.js";
 import { logic } from "../logic/index.js";
 import {
   addressMode,
@@ -14,11 +14,17 @@ import {
   type MerchantsImpl,
 } from "../merchants/index.js";
 import { createPayments, createTestCharge } from "../stripe/index.js";
-import type { Action, Clock, Inkbox, OrchestratorHooks, Params, Preferences, RouteHandler, Store, TaskId } from "../types.js";
+import { createWebRoutes } from "../web/index.js";
+import type { EventReader } from "../db/index.js";
+import type { Action, Clock, Inkbox, OrchestratorHooks, Params, Payments, Preferences, RouteHandler, Store, TaskId } from "../types.js";
 import { createFakePayments } from "./fakes.js";
 import { createProxy, type DemoTask, type Proxy } from "./proxy.js";
 import { createSessions } from "./sessions.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
+import type { ProtocolTransport } from "./undo.js";
+
+/** Stands in for the human's number in the demo when HUMAN_PHONE isn't set. Nothing is ever sent to it. */
+const DEMO_HUMAN_NUMBER = "+10000000000";
 
 export interface Runtime {
   proxy: Proxy;
@@ -73,6 +79,10 @@ function repointDemo(store: Store, hooks: OrchestratorHooks, demo: DemoTask): { 
   };
 }
 
+function withKnownCharges(payments: Payments, known: ReadonlyMap<string, string>): Payments {
+  return { ...payments, async findChargeForAction(action) { return known.get(action.action_id) ?? payments.findChargeForAction(action); } };
+}
+
 export function createRuntime(clock: Clock, params: Params, defaultPreferences: Preferences, overrides: RuntimeOverrides = {}): Runtime {
   const env = overrides.env ?? process.env;
   const store = overrides.store ?? createStoreFromEnv(env);
@@ -85,6 +95,9 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   let capture: Capture | null = null;
   const mode = addressMode(env);
   const liveDeliver = mode === "real" ? createInkboxDeliver({ env }) : null;
+  // Charge ids by action, remembered when the merchant charges. Stripe's search is eventually consistent,
+  // so a refund right after a booking can't rely on it alone; the search stays as the fallback.
+  const chargeByAction = new Map<string, string>();
   const merchantDeps: MerchantDeps = {
     async charge(args) {
       const action_id = `act_${args.task_id}_${args.ref.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
@@ -94,6 +107,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
         const charge_id = `ch_demo_${++fakeChargeSequence}`;
         fakeChargesByKey.set(args.idempotency_key, charge_id);
         fakePayments.addCharge(charge_id, action_id, args.amount);
+        chargeByAction.set(action_id, charge_id);
         return { charge_id };
       }
       const result = await createTestCharge(
@@ -111,6 +125,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
         },
         args.idempotency_key,
       );
+      chargeByAction.set(action_id, result.charge_id);
       return { charge_id: result.charge_id };
     },
     async deliver(email) {
@@ -121,19 +136,53 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   };
   const merchants = createMerchants(merchantDeps, { addresses: mode });
 
+  // Real Inkbox carries the protocol; without it (no key, or INKBOX_DRY_RUN=1) the in-process mock merchant
+  // agent answers instead, so the whole negotiation still runs. PROXY_PROTOCOL_LOOPBACK=1 or 0 forces either.
+  const realInkbox = Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
+  const loopback = env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !realInkbox;
+  let proxyRef: Proxy | null = null;
+  const transport: ProtocolTransport = {
+    async send(merchant, to_identity, message) {
+      if (!loopback) {
+        await inkbox.sendProtocolMessage(to_identity, message);
+        return;
+      }
+      const agent = merchants.agent(merchant);
+      if (!agent) throw new Error(`No merchant agent for ${merchant}`);
+      // The mock agent answers in the background, like a message arriving later.
+      setImmediate(() => {
+        agent
+          .respond(message, clock.now())
+          .then((answer) => proxyRef?.onProtocolMessage(answer))
+          .catch((e) => console.error("[protocol] loopback answer failed:", e));
+      });
+    },
+  };
+  const humanPhone = env.HUMAN_PHONE?.trim() ?? "";
+  const demoOn = env.PROXY_DEMO_ROUTES === "1";
+  // The demo page's buttons act as the registered human. With no real number they use a placeholder that is never texted.
+  const humanNumber = humanPhone || (demoOn ? DEMO_HUMAN_NUMBER : "");
+  const alertChannel = env.HUMAN_ALERT_CHANNEL === "sms" ? "sms" : "imessage";
+
   const proxy = createProxy({
     store,
     logic,
     inkbox,
-    payments: fakePayments ? fakePayments.payments : createPayments(),
+    payments: withKnownCharges(fakePayments ? fakePayments.payments : createPayments(), chargeByAction),
     merchants,
     sessions: createSessions(clock, params.SESSION_IDLE_MS),
     clock,
     params,
     defaultPreferences,
     demo: env.PROXY_DEMO_ROUTES === "1" ? { identityTaskId: env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo", current: null } : null,
-    humanNumber: env.HUMAN_PHONE?.trim() ?? "",
+    humanNumber,
+    canTextHuman: Boolean(humanPhone),
+    humanChannel: alertChannel,
+    transport,
+    proxyEmail: `${env.INKBOX_PROXY_HANDLE?.trim() || "proxy-agent"}@inkboxmail.com`,
+    alertSettleMs: env.PROXY_ALERT_SETTLE_MS ? Number(env.PROXY_ALERT_SETTLE_MS) : undefined,
   });
+  proxyRef = proxy;
 
   const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
   const captureSide = proxy.deps.demo ? repointDemo(store, proxy, proxy.deps.demo) : { store, hooks: proxy };
@@ -147,15 +196,48 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     store,
     hooks: proxy,
     clock,
-    sendText: (channel, to, body) => inkbox.sendText(channel, to, body),
-    humanNumber: env.HUMAN_PHONE?.trim() ?? "",
+    sendText: async (channel, to, body) => (humanPhone ? inkbox.sendText(channel, to, body) : { message_id: "not_sent" }),
+    humanNumber,
   });
   proxy.setHumanChannel(human);
   const routes = [
     createInboundEmailRoute({ capture, fetchFullMessage }),
     ...createHumanRoutes(human),
     ...merchantRoutes(merchants, merchantDeps, clock),
+    ...("recentEvents" in store
+      ? createWebRoutes({ store: store as Store & EventReader, clock, channel: human, humanNumber, controls: demoOn })
+      : []),
   ];
 
   return { proxy, store, human, capture, routes, fakePayments, merchants };
+}
+
+/**
+ * Starts Sarah's protocol inbox once, for the server's lifetime. It polls Proxy's A2A tasks and email for the
+ * merchant agents' answers and hands each to the current runtime (which /demo/reset replaces). It runs only with
+ * a real Inkbox key and no loopback; otherwise the in-process mock agent answers and there is nothing to poll.
+ * Restart point: the latest processed merchant message in the Store, minus 2 minutes. The orchestrator drops
+ * replays by negotiation, message type, round and amount, so the overlap is safe.
+ */
+export async function startProtocolInbox(getRuntime: () => Runtime, clock: Clock, env: NodeJS.ProcessEnv = process.env): Promise<ProtocolInbox | null> {
+  const real = Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
+  const loopback = env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !real;
+  if (!real || loopback) return null;
+  const rt = getRuntime();
+  const handle = env.INKBOX_PROXY_HANDLE?.trim() || "proxy-agent";
+  const identities = rt.merchants.list().flatMap((m) => (m.agent_identity ? [m.agent_identity] : []));
+  const last = await rt.proxy.undo.lastProcessedAt();
+  const since = new Date((last ? Date.parse(last) : Date.now()) - 2 * 60_000).toISOString();
+  const inbox = createProtocolInbox({
+    access: createA2AAccess({ admin: createClient, handle, apiKey: env.INKBOX_PROXY_API_KEY?.trim() || undefined }),
+    hooks: { onProtocolMessage: (m) => getRuntime().proxy.onProtocolMessage(m) },
+    clock,
+    store: rt.store,
+    trustedHandles: identities,
+    trustedEmails: identities.map((i) => `${i}@inkboxmail.com`),
+    since,
+    log: (line) => console.error(`[protocol-inbox] ${line}`),
+  });
+  inbox.start();
+  return inbox;
 }

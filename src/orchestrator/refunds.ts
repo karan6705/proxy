@@ -3,7 +3,7 @@
 // - one idempotency key per action, whatever the route, so concurrent or retried calls collapse in Stripe;
 // - before refunding, Stripe is asked whether a succeeded refund already exists for the charge,
 //   because Stripe forgets idempotency keys after 24 hours.
-import type { Action, ActionId, Cents, Payments } from "../types.js";
+import type { Action, ActionId, Cents, Chain, Payments } from "../types.js";
 
 export function refundKey(action_id: ActionId): string {
   return `refund:${action_id}`;
@@ -52,4 +52,9 @@ export async function refundOnce(
     verified: after.verified && after.refunded_amount === amount,
     refunded_amount: after.refunded_amount,
   };
+}
+
+/** The refund an action is owed: the amount agreed in its plan step (an accepted counter), else the full amount. */
+export function expectedRefund(chain: Pick<Chain, "plan">, action: Pick<Action, "action_id" | "amount">): Cents {
+  return chain.plan.find((s) => s.action_id === action.action_id)?.refund_amount ?? action.amount;
 }
