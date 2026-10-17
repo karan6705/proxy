@@ -275,7 +275,11 @@ export interface EvidenceSeen {
 export interface ReviewOutput {
   status: "clean" | "chain_open";
   mismatches: Mismatch[];
-  /** Actions the agent may undo itself with `undo`. */
+  /**
+   * Actions the agent may undo itself with `undo`: its own flagged actions that are free to undo
+   * with a full refund (self-serve route, no cost, no negotiation), and only while its session is active.
+   * Everything else waits for the human's reply.
+   */
   fixable_now: ActionId[];
   chain_ids: ChainId[];
   evidence_seen: EvidenceSeen;
@@ -287,7 +291,7 @@ export interface UndoInput {
 }
 export interface UndoOutput {
   accepted: ActionId[];
-  /** Not mismatched actions of this task; these go to the human. */
+  /** Actions that fail the self-undo rule (see ReviewOutput.fixable_now); these go to the human. */
   requires_human: ActionId[];
   chain_id: ChainId | null;
 }
@@ -481,7 +485,17 @@ export interface StripeEventRecord {
 
 export type Arm = "naive" | "proxy";
 export type EvalLayer = "scripted" | "live";
-export type EventKind = "tool" | "email_in" | "stripe_event" | "sms_out" | "sms_in" | "a2a" | "call";
+export type EventKind =
+  | "tool"
+  | "email_in"
+  | "email_out"
+  | "stripe_event"
+  | "sms_out"
+  | "sms_in"
+  | "imessage_out"
+  | "a2a"
+  | "call"
+  | "call_out";
 
 /** One row of the append-only `events` table. No updates or deletes. */
 export interface EventRow {
@@ -520,6 +534,8 @@ export interface Params {
   PROTOCOL_DEADLINE: number;
   /** Simulated ms per real ms. */
   CLOCK_SCALE: number;
+  /** The agent's session ends after this many ms without a tool call for the task, in ms. */
+  SESSION_IDLE_MS: number;
   DEFAULT_PREFERENCES: Preferences;
 }
 
@@ -538,6 +554,16 @@ export interface SimulatedClock extends Clock {
   readonly mode: "simulated";
   set(t: Timestamp): void;
   advance(ms: number): void;
+}
+
+/** src/orchestrator/ (Karan). Tracks whether the buying agent is still working on a task. */
+export interface Sessions {
+  /** Called on every tool call that names the task. */
+  touch(task_id: TaskId): void;
+  /** Ends the session now, e.g. when the scripted demo agent leaves. */
+  end(task_id: TaskId): void;
+  /** Active until end() or SESSION_IDLE_MS without a touch. */
+  isActive(task_id: TaskId): boolean;
 }
 
 /** src/logic/ (Dhwanil). Pure functions; anything time-dependent takes `now`. */

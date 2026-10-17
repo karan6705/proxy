@@ -2,6 +2,10 @@
 // Tools are stubs returning typed demo data until Store, Logic and the orchestrator are wired in.
 import { createHash } from "node:crypto";
 import { MCPServer } from "mcp-use";
+import { createSimulatedClock } from "./orchestrator/clock.js";
+import { DEFAULT_PARAMS } from "./orchestrator/params.js";
+import { checkSelfUndo } from "./orchestrator/self-undo.js";
+import { createSessions } from "./orchestrator/sessions.js";
 import type { HttpMethod, LogIntentInput, RouteHandler, RouteRequest } from "./types.js";
 import { MISTAKES_RESOURCE_URI } from "./types.js";
 import { advertise, fail, handler, ok } from "./tools/result.js";
@@ -21,7 +25,9 @@ import {
 } from "./tools/schemas.js";
 import {
   DEMO_CHAIN_ID,
+  DEMO_NOW,
   DEMO_TASK_ID,
+  demoActions,
   demoChain,
   demoChainSummary,
   demoLessons,
@@ -41,6 +47,26 @@ const server = new MCPServer({
 });
 
 // --- stub state, replaced by Store ---
+// Demo time starts at the seeded DEMO_NOW and runs at real speed, so idle sessions end on their own.
+const clock = createSimulatedClock(DEMO_NOW, 1);
+const sessions = createSessions(clock, DEFAULT_PARAMS.SESSION_IDLE_MS);
+
+/** The demo actions the agent may undo itself right now (see src/orchestrator/self-undo.ts). */
+function demoFixableNow(): string[] {
+  const flagged = new Set(demoMismatches.map((m) => m.action_id));
+  return demoActions
+    .filter(
+      (a) =>
+        checkSelfUndo({
+          flagged: flagged.has(a.action_id),
+          route: a.route,
+          reversibility: demoReversibility[a.category],
+          session_active: sessions.isActive(DEMO_TASK_ID),
+          now: clock.now(),
+        }).allowed,
+    )
+    .map((a) => a.action_id);
+}
 const tasksByKey = new Map<string, { task_id: string; fingerprint: string }>();
 const knownTasks = new Set<string>([DEMO_TASK_ID]);
 
@@ -78,6 +104,7 @@ export const logIntent = server.tool(
     const task_id = existing?.task_id ?? taskIdFor(input.idempotency_key);
     tasksByKey.set(input.idempotency_key, { task_id, fingerprint });
     knownTasks.add(task_id);
+    sessions.touch(task_id);
     return ok({ task_id, task_email: `${task_id}@tasks.proxy.example` });
   }),
 );
@@ -113,6 +140,7 @@ export const review = server.tool(
     if (!knownTasks.has(task_id)) {
       return fail("not_found", `No task ${task_id}. Call log_intent first and use its task_id.`, false, "fix_now");
     }
+    sessions.touch(task_id);
     if (task_id !== DEMO_TASK_ID) {
       return ok({
         status: "clean" as const,
@@ -125,7 +153,7 @@ export const review = server.tool(
     return ok({
       status: "chain_open" as const,
       mismatches: demoMismatches,
-      fixable_now: demoMismatches.map((m) => m.action_id),
+      fixable_now: demoFixableNow(),
       chain_ids: [DEMO_CHAIN_ID],
       evidence_seen: { emails: 4, stripe_events: 3, actions: 4 },
     });
@@ -137,15 +165,17 @@ export const undo = server.tool(
     name: "undo",
     title: "Undo actions",
     description:
-      "Starts undoing your own actions in this task that review showed do not match the intent. " +
-      "Call it only with ids from review.fixable_now. Anything else is returned in requires_human, and only the human can decide it, by text. " +
+      "Starts undoing your own actions in this task that review flagged and that are free to undo with a full refund. " +
+      "Call it only with ids from review.fixable_now, during your session. Anything with a cost, a partial refund or a negotiation, or anything after your session ends, is returned in requires_human: the human decides it by text. " +
       "Next: call get_chain(chain_id) to follow progress; when it returns redo, book what it says using the task email.",
     inputSchema: advertise(undoInput),
     outputSchema: undoOutput,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   },
   handler(undoInput, async ({ action_ids }) => {
-    const fixable = new Set(demoMismatches.map((m) => m.action_id));
+    // Enforce the self-undo rule here too: only ids that would be in review.fixable_now right now.
+    if (action_ids.some((id) => demoActions.some((a) => a.action_id === id))) sessions.touch(DEMO_TASK_ID);
+    const fixable = new Set(demoFixableNow());
     const accepted = action_ids.filter((id) => fixable.has(id));
     const requires_human = action_ids.filter((id) => !fixable.has(id));
     return ok({ accepted, requires_human, chain_id: accepted.length > 0 ? DEMO_CHAIN_ID : null });
@@ -240,5 +270,22 @@ mountRoutes([
     handle: async () => ({ status: 200, body: { ok: true } }),
   },
 ]);
+
+// Scripted demo only: the demo agent ends its session before the late confirmations arrive,
+// so the whole chain goes to the human. Off unless PROXY_DEMO_ROUTES=1.
+if (process.env.PROXY_DEMO_ROUTES === "1") {
+  mountRoutes([
+    {
+      method: "POST",
+      path: "/demo/end-session",
+      handle: async (req) => {
+        const task_id = req.query.task_id;
+        if (!task_id) return { status: 400, body: { ok: false, message: "task_id query parameter is required" } };
+        sessions.end(task_id);
+        return { status: 200, body: { ok: true, task_id, session_active: false } };
+      },
+    },
+  ]);
+}
 
 export default server;

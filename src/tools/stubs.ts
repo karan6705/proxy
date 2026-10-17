@@ -1,4 +1,6 @@
 // Fake data for the stub tools: the demo scenario from docs/05-demo-flow.md.
+// Only the flight passes the self-undo rule (self-serve, free, full refund); the hotel needs a
+// negotiation, the transfer needs support email and the host email needs a correction.
 // Replaced by Store, Logic and the orchestrator once those land.
 import type {
   ActionCategory,
@@ -15,7 +17,7 @@ export const DEMO_TASK_EMAIL = "task_demo@tasks.proxy.example";
 export const DEMO_CHAIN_ID = "chain_demo";
 
 /** Seeded demo time on the simulated clock; the tightest window closes 3h 40m later. */
-const DEMO_NOW = "2026-11-01T14:00:00.000Z";
+export const DEMO_NOW = "2026-11-01T14:00:00.000Z";
 const DEMO_WINDOW_ENDS = "2026-11-01T17:40:00.000Z";
 
 export const demoActions: ChainActionView[] = [

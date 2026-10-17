@@ -18,3 +18,8 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 ## Dhwanil
 
 ## Karan's Codex
+
+### Scripted demo: end the agent's session before the late confirmations
+- Team rule: the agent may only self-undo free, full-refund, self-serve actions during its session. In the scripted demo the whole chain must go to the human.
+- In `src/agent/` scripted mode: after the agent calls `review` and says it is done, call `POST /demo/end-session?task_id=<task_id>` (server started with `PROXY_DEMO_ROUTES=1`), then send the late confirmations.
+- Sessions also end on their own after `SESSION_IDLE_MS` without a tool call for the task.
