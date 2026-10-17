@@ -14,7 +14,7 @@ import {
   type MerchantsImpl,
 } from "../merchants/index.js";
 import { createPayments, createTestCharge } from "../stripe/index.js";
-import type { Action, Clock, Inkbox, OrchestratorHooks, Params, Preferences, RouteHandler, Store, TaskId } from "../types.js";
+import type { Action, Clock, Inkbox, OrchestratorHooks, Params, Payments, Preferences, RouteHandler, Store, TaskId } from "../types.js";
 import { createFakePayments } from "./fakes.js";
 import { createProxy, type DemoTask, type Proxy } from "./proxy.js";
 import { createSessions } from "./sessions.js";
@@ -73,6 +73,10 @@ function repointDemo(store: Store, hooks: OrchestratorHooks, demo: DemoTask): { 
   };
 }
 
+function withKnownCharges(payments: Payments, known: ReadonlyMap<string, string>): Payments {
+  return { ...payments, async findChargeForAction(action) { return known.get(action.action_id) ?? payments.findChargeForAction(action); } };
+}
+
 export function createRuntime(clock: Clock, params: Params, defaultPreferences: Preferences, overrides: RuntimeOverrides = {}): Runtime {
   const env = overrides.env ?? process.env;
   const store = overrides.store ?? createStoreFromEnv(env);
@@ -85,6 +89,9 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   let capture: Capture | null = null;
   const mode = addressMode(env);
   const liveDeliver = mode === "real" ? createInkboxDeliver({ env }) : null;
+  // Charge ids by action, remembered when the merchant charges. Stripe's search is eventually consistent,
+  // so a refund right after a booking can't rely on it alone; the search stays as the fallback.
+  const chargeByAction = new Map<string, string>();
   const merchantDeps: MerchantDeps = {
     async charge(args) {
       const action_id = `act_${args.task_id}_${args.ref.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
@@ -94,6 +101,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
         const charge_id = `ch_demo_${++fakeChargeSequence}`;
         fakeChargesByKey.set(args.idempotency_key, charge_id);
         fakePayments.addCharge(charge_id, action_id, args.amount);
+        chargeByAction.set(action_id, charge_id);
         return { charge_id };
       }
       const result = await createTestCharge(
@@ -111,6 +119,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
         },
         args.idempotency_key,
       );
+      chargeByAction.set(action_id, result.charge_id);
       return { charge_id: result.charge_id };
     },
     async deliver(email) {
@@ -125,7 +134,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     store,
     logic,
     inkbox,
-    payments: fakePayments ? fakePayments.payments : createPayments(),
+    payments: withKnownCharges(fakePayments ? fakePayments.payments : createPayments(), chargeByAction),
     merchants,
     sessions: createSessions(clock, params.SESSION_IDLE_MS),
     clock,
