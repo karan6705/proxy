@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Action, Intent, Mismatch } from "../types.js";
 import { createTestCharge } from "./charge.js";
-import { StripeClient, type StripeRequester } from "./client.js";
+import { StripeApiError, StripeClient, type StripeErrorLog, type StripeRequester } from "./client.js";
 import { buildDisputeEvidence, buildDisputePacket } from "./dispute.js";
+import { partialRefund } from "./refund.js";
 import { verifyRefund, verifyRefundAmount } from "./verify.js";
 
 const action: Action = {
@@ -42,44 +43,118 @@ describe("Stripe test-mode safety and idempotency", () => {
     await createTestCharge(action, "charge:act_123", client);
     expect(seen).toEqual(["charge:act_123", "charge:act_123"]);
   });
-});
 
-describe("refund verification", () => {
-  it("trusts only succeeded Stripe refunds", async () => {
+  it("returns an existing succeeded refund with the same durable idempotency key", async () => {
+    const calls: string[] = [];
     const client: StripeRequester = {
-      async request<T>(_method: string, path: string): Promise<T> {
-        if (path === "/v1/payment_intents/search") {
-          return { data: [{ id: "pi_123", metadata: { action_id: "act_123" } }], has_more: false } as T;
-        }
+      async request<T>(method: string, path: string): Promise<T> {
+        calls.push(`${method} ${path}`);
         return {
           data: [
-            { id: "re_pending", amount: 41200, status: "pending" },
-            { id: "re_failed", amount: 41200, status: "failed" },
+            {
+              id: "re_existing",
+              amount: 35_020,
+              status: "succeeded",
+              metadata: { proxy_idempotency_key: "refund:act_123" },
+            },
           ],
-          has_more: false,
         } as T;
       },
     };
-    expect(await verifyRefund("act_123", client)).toBe(false);
+
+    await expect(partialRefund("ch_123", 35_020, "refund:act_123", client)).resolves.toEqual({
+      refund_id: "re_existing",
+      amount: 35_020,
+      status: "succeeded",
+    });
+    expect(calls).toEqual(["GET /v1/refunds"]);
   });
 
-  it("accepts succeeded refunds and checks the recovered amount", async () => {
+  it("maps raw Stripe errors to safe caller errors and logs details only through the server logger", async () => {
+    const logs: StripeErrorLog[] = [];
+    const client = new StripeClient({
+      secretKey: "sk_test_unit",
+      logError: (details) => logs.push(details),
+      fetch: async () => new Response(
+        JSON.stringify({ error: { message: "raw decline details for internal logs", code: "card_declined" } }),
+        { status: 402, headers: { "content-type": "application/json", "request-id": "req_123" } },
+      ),
+    });
+
+    const error = await client.request("POST", "/v1/refunds").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(StripeApiError);
+    expect(error).toMatchObject({ code: "stripe_invalid_request", message: "Stripe rejected the request" });
+    expect(String(error)).not.toContain("raw decline details");
+    expect(logs).toEqual([
+      {
+        code: "stripe_invalid_request",
+        status: 402,
+        stripe_code: "card_declined",
+        request_id: "req_123",
+        detail: "raw decline details for internal logs",
+      },
+    ]);
+  });
+});
+
+describe("refund verification", () => {
+  it("rejects zero, missing, pending, and mismatched refunds with reason codes", async () => {
+    let refunds: Array<{ id: string; amount: number; status: string }> = [];
     const client: StripeRequester = {
       async request<T>(_method: string, path: string): Promise<T> {
         if (path === "/v1/payment_intents/search") {
           return { data: [{ id: "pi_123", metadata: { action_id: "act_123" } }], has_more: false } as T;
         }
-        return { data: [{ id: "re_ok", amount: 30000, status: "succeeded" }], has_more: false } as T;
+        return { data: refunds, has_more: false } as T;
       },
     };
-    expect(await verifyRefund("act_123", client)).toBe(true);
-    expect(await verifyRefundAmount("pi_123", 30000, client)).toEqual({
-      verified: true,
-      refunded_amount: 30000,
-    });
-    expect(await verifyRefundAmount("pi_123", 41200, client)).toEqual({
+
+    await expect(verifyRefund("act_123", 0, client)).resolves.toMatchObject({
       verified: false,
-      refunded_amount: 30000,
+      reason: "invalid_expected_amount",
+    });
+    await expect(verifyRefund("act_123", 41_200, client)).resolves.toEqual({
+      verified: false,
+      refunded_amount: 0,
+      reason: "refund_missing",
+    });
+    refunds = [{ id: "re_pending", amount: 41_200, status: "pending" }];
+    await expect(verifyRefund("act_123", 41_200, client)).resolves.toMatchObject({
+      verified: false,
+      reason: "refund_pending",
+    });
+    refunds = [{ id: "re_zero", amount: 0, status: "succeeded" }];
+    await expect(verifyRefund("act_123", 41_200, client)).resolves.toEqual({
+      verified: false,
+      refunded_amount: 0,
+      reason: "refund_zero",
+    });
+    refunds = [{ id: "re_succeeded", amount: 35_020, status: "succeeded" }];
+    await expect(verifyRefund("act_123", 41_200, client)).resolves.toEqual({
+      verified: false,
+      refunded_amount: 35_020,
+      reason: "amount_mismatch",
+    });
+  });
+
+  it("accepts only the exact succeeded refund amount", async () => {
+    const client: StripeRequester = {
+      async request<T>(_method: string, path: string): Promise<T> {
+        if (path === "/v1/payment_intents/search") {
+          return { data: [{ id: "pi_123", metadata: { action_id: "act_123" } }], has_more: false } as T;
+        }
+        return { data: [{ id: "re_ok", amount: 30_000, status: "succeeded" }], has_more: false } as T;
+      },
+    };
+    expect(await verifyRefund("act_123", 30_000, client)).toEqual({
+      verified: true,
+      refunded_amount: 30_000,
+      reason: "verified",
+    });
+    expect(await verifyRefundAmount("pi_123", 41_200, client)).toEqual({
+      verified: false,
+      refunded_amount: 30_000,
+      reason: "amount_mismatch",
     });
   });
 });
