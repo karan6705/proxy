@@ -1,3 +1,8 @@
 .env
 node_modules/
 graphify-out/
+.mcp-use/
+dist/
+.vite/
+*.tsbuildinfo
+.DS_Store
