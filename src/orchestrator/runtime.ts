@@ -1,13 +1,13 @@
 // Builds the server's orchestrator from what is available: Sarah's Store (Supabase from env, else in
 // memory), capture and human channel; her Inkbox client when INKBOX_API_KEY or INKBOX_DRY_RUN is set;
 // real Stripe test mode when a sk_test_ key is set. Logic and Merchants stay stand-ins until Dhwanil's merge.
-import { createAnthropicExtractor, createCapture, createInboundEmailRoute } from "../capture/index.js";
+import { createAnthropicExtractor, createCapture, createInboundEmailRoute, type Capture } from "../capture/index.js";
 import { createStoreFromEnv } from "../db/index.js";
 import { createClient, createHumanChannel, createHumanRoutes, createInkbox, type HumanChannel } from "../inkbox/index.js";
 import { createPayments } from "../stripe/index.js";
-import type { Clock, Inkbox, Params, Preferences, RouteHandler, Store } from "../types.js";
+import type { Action, Clock, Inkbox, OrchestratorHooks, Params, Preferences, RouteHandler, Store, TaskId } from "../types.js";
 import { createFakePayments, createStubMerchants } from "./fakes.js";
-import { createProxy, type Proxy } from "./proxy.js";
+import { createProxy, type DemoTask, type Proxy } from "./proxy.js";
 import { createSessions } from "./sessions.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
 import { createStandInLogic } from "./standin-logic.js";
@@ -16,6 +16,7 @@ export interface Runtime {
   proxy: Proxy;
   store: Store;
   human: HumanChannel;
+  capture: Capture;
   /** Sarah's webhooks: /inkbox/inbound, /inkbox/text, /inkbox/imessage. */
   routes: RouteHandler[];
   /** Present when payments are faked (no sk_test_ key); demo routes register charges here. */
@@ -38,6 +39,32 @@ async function fetchFullMessage(m: { id: string; email_address: string | null })
   return { html: full.bodyHtml ?? undefined, text: full.bodyText ?? undefined };
 }
 
+/**
+ * Demo only: mail to the demo identity (task-demo@...) is captured as task "task_demo". These wrappers
+ * re-point it to the current run (task_demo_N) before it reaches the Store or the orchestrator, so every
+ * run reuses one Inkbox identity and keeps its own rows.
+ */
+function repointDemo(store: Store, hooks: OrchestratorHooks, demo: DemoTask): { store: Store; hooks: Pick<OrchestratorHooks, "onAction"> } {
+  const task = (id: TaskId | null) => (id === demo.identityTaskId && demo.current ? demo.current : id);
+  const action = (a: Action): Action => {
+    const t = task(a.task_id) as TaskId;
+    if (t === a.task_id) return a;
+    // Capture names actions act_<task>_<ref>; keep run ids distinct so earlier runs aren't overwritten.
+    const action_id = a.action_id.replace(`act_${demo.identityTaskId}_`, `act_${t}_`);
+    return { ...a, task_id: t, action_id };
+  };
+  return {
+    store: {
+      ...store,
+      getIntent: (id) => store.getIntent(task(id) as TaskId),
+      listActions: (id) => store.listActions(task(id) as TaskId),
+      upsertAction: (a) => store.upsertAction(action(a)),
+      logEvent: (row) => store.logEvent({ ...row, task_id: task(row.task_id) }),
+    },
+    hooks: { onAction: (a) => hooks.onAction(action(a)) },
+  };
+}
+
 export function createRuntime(clock: Clock, params: Params, defaultPreferences: Preferences, overrides: RuntimeOverrides = {}): Runtime {
   const env = overrides.env ?? process.env;
   const store = overrides.store ?? createStoreFromEnv(env);
@@ -57,14 +84,15 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     clock,
     params,
     defaultPreferences,
-    demoTaskId: env.PROXY_DEMO_ROUTES === "1" ? (env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo") : null,
+    demo: env.PROXY_DEMO_ROUTES === "1" ? { identityTaskId: env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo", current: null } : null,
     humanNumber: env.HUMAN_PHONE?.trim() ?? "",
   });
 
   const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
+  const captureSide = proxy.deps.demo ? repointDemo(store, proxy, proxy.deps.demo) : { store, hooks: proxy };
   const capture = createCapture({
-    store,
-    hooks: proxy,
+    store: captureSide.store,
+    hooks: captureSide.hooks,
     clock,
     ...(anthropicKey ? { llm: createAnthropicExtractor({ apiKey: anthropicKey }) } : {}),
   });
@@ -78,5 +106,5 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   proxy.setHumanChannel(human);
   const routes = [createInboundEmailRoute({ capture, fetchFullMessage }), ...createHumanRoutes(human)];
 
-  return { proxy, store, human, routes, fakePayments, merchants };
+  return { proxy, store, human, capture, routes, fakePayments, merchants };
 }

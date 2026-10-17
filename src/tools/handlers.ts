@@ -66,7 +66,11 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const p = getProxy();
       const { store, inkbox, clock, sessions, defaultPreferences } = p.deps;
       const preferences = { ...defaultPreferences, ...input.preferences };
-      const existing = await store.getIntentByIdempotencyKey(input.idempotency_key);
+      // A demo run scopes keys to the run, so the scripted agent can reuse its key every run.
+      const demo = p.deps.demo;
+      const runId = demo ? (demo.current ?? (await p.startDemoTask())) : null;
+      const key = runId ? `${runId}:${input.idempotency_key}` : input.idempotency_key;
+      const existing = await store.getIntentByIdempotencyKey(key);
       if (existing) {
         if (!sameIntent(existing, { goal: input.goal, constraints: input.constraints, preferences })) {
           return fail("idempotency_conflict", "This idempotency_key was already used with a different intent. Use a new key for a new task.", false, "fix_now");
@@ -74,23 +78,26 @@ export function createToolHandlers(getProxy: () => Proxy) {
         sessions.touch(existing.task_id);
         return ok({ task_id: existing.task_id, task_email: existing.task_email });
       }
-      // Each task gets its own Inkbox identity; the demo reuses one pre-created identity.
-      const task_id = p.deps.demoTaskId ?? taskIdFor(input.idempotency_key);
-      if (!TASK_ID_PATTERN.test(task_id)) {
-        return fail("invalid_input", `Task id ${task_id} must use only lowercase letters, digits and underscores.`, false, "fix_now");
+      // Each task gets its own Inkbox identity. A demo run gets a fresh task id but reuses the demo identity.
+      const task_id = runId ?? taskIdFor(input.idempotency_key);
+      const identityTask = demo ? demo.identityTaskId : task_id;
+      for (const id of new Set([task_id, identityTask])) {
+        if (!TASK_ID_PATTERN.test(id)) {
+          return fail("invalid_input", `Task id ${id} must use only lowercase letters, digits and underscores.`, false, "fix_now");
+        }
       }
-      if (p.deps.demoTaskId && (await store.getIntent(task_id))) {
-        return fail("upstream_unavailable", `The demo identity ${task_id} is already used by another task. Reset the demo (POST /demo/reset) first.`, false, "stop");
+      if (demo && (await store.getIntent(task_id))) {
+        return fail("upstream_unavailable", `Demo run ${task_id} already has a task. Reset the demo (POST /demo/reset) first.`, false, "stop");
       }
       let task_email: string;
       try {
         // Sarah's Inkbox client gets or creates the identity task_<id> -> task-<id>@...
-        ({ task_email } = await inkbox.createTaskAddress(task_id));
+        ({ task_email } = await inkbox.createTaskAddress(identityTask));
       } catch {
         return fail("upstream_unavailable", "Could not create the task email address. Retry shortly.", true, "retry");
       }
       const intent: Intent = { task_id, task_email, goal: input.goal, constraints: input.constraints, preferences, created_at: clock.now() };
-      await store.putIntent(intent, input.idempotency_key);
+      await store.putIntent(intent, key);
       sessions.touch(task_id);
       await p.logEvent({ kind: "tool", tool_name: "log_intent", task_id, outcome: "ok" });
       return ok({ task_id, task_email });
@@ -251,8 +258,11 @@ export function createToolHandlers(getProxy: () => Proxy) {
     },
 
     async list_chains({ task_id }: ListChainsInput) {
-      const { store, logic, clock } = getProxy().deps;
-      const open = (await store.listChains(task_id)).filter((c) => !CLOSED_CHAIN_STATES.has(c.state));
+      const { store, logic, clock, demo } = getProxy().deps;
+      // In the demo, only the current run's chains; earlier runs stay in the Store as history.
+      const scope = task_id ?? demo?.current ?? undefined;
+      if (demo && task_id === undefined && !demo.current) return ok({ chains: [] });
+      const open = (await store.listChains(scope)).filter((c) => !CLOSED_CHAIN_STATES.has(c.state));
       const chains: ChainSummary[] = [];
       for (const c of logic.rank(open, clock.now())) {
         const root = await store.getAction(c.root_action_id);

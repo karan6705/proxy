@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSimulatedClock } from "../orchestrator/clock.js";
 import { DEFAULT_PARAMS } from "../orchestrator/params.js";
 import { createRuntime, type Runtime } from "../orchestrator/runtime.js";
+import { createMemoryStore } from "../db/index.js";
 import { createStandInInkbox } from "../orchestrator/standin-inkbox.js";
 import type { Action, SimulatedClock } from "../types.js";
 import { createToolHandlers } from "./handlers.js";
@@ -83,13 +84,60 @@ describe("tools wired to the orchestrator", () => {
     expect(asked.every((id) => /^[a-z0-9_]+$/.test(id))).toBe(true);
   });
 
-  it("in demo mode every task reuses the demo identity, one task at a time", async () => {
-    rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, { env: { PROXY_DEMO_ROUTES: "1" }, inkbox: createStandInInkbox() });
+  it("each demo run gets a fresh task id but reuses the demo identity's address", async () => {
+    const store = createMemoryStore();
+    const demoRuntime = () =>
+      createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, { env: { PROXY_DEMO_ROUTES: "1" }, store, inkbox: createStandInInkbox() });
+
+    rt = demoRuntime();
     const a = await logTask();
-    expect(a).toMatchObject({ task_id: "task_demo", task_email: "task_demo@tasks.proxy.example" });
-    expect((await logTask()).task_id).toBe("task_demo");
+    expect(a).toMatchObject({ task_id: "task_demo_1", task_email: "task_demo@tasks.proxy.example" });
+    expect((await logTask()).task_id).toBe("task_demo_1");
     const other = (await tools.log_intent({ ...INTENT, idempotency_key: "second" })).structuredContent;
     expect(other).toMatchObject({ ok: false, code: "upstream_unavailable", next_action: "stop" });
+
+    // /demo/reset: same Store (as with Supabase), new runtime, next run id. Run 1 stays as history.
+    rt = demoRuntime();
+    expect(await rt.proxy.startDemoTask()).toBe("task_demo_2");
+    const b = (await tools.log_intent({ ...INTENT, idempotency_key: "run2" })).structuredContent;
+    expect(b).toMatchObject({ ok: true, task_id: "task_demo_2", task_email: "task_demo@tasks.proxy.example" });
+    expect(await store.getIntent("task_demo_1")).not.toBeNull();
+  });
+
+  it("mail to the demo identity is captured into the current run, and list_chains shows only that run", async () => {
+    const store = createMemoryStore();
+    const demoRuntime = () =>
+      createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, { env: { PROXY_DEMO_ROUTES: "1" }, store, inkbox: createStandInInkbox() });
+    const flightMail = {
+      message_id: "m1",
+      from: "Skyline Demo Air <bookings@skylinedemoair.example>",
+      to: ["task-demo@inkboxmail.com"],
+      subject: "Your flight is confirmed",
+      text: "Confirmed",
+      html: `<script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "FlightReservation",
+        reservationNumber: "AIR-1",
+        reservationFor: { "@type": "Flight", departureTime: "2026-11-03T08:00:00-08:00" },
+        totalPrice: "412.00",
+        priceCurrency: "USD",
+      })}</script>`,
+    };
+
+    for (const run of [1, 2]) {
+      rt = demoRuntime();
+      await rt.proxy.startDemoTask();
+      await tools.log_intent({ ...INTENT, idempotency_key: `run${run}` });
+      const r = await rt.capture.handleEmail({ ...flightMail, message_id: `m${run}` });
+      expect(r.status).toBe("captured");
+      // Capture returns its own copy; what reaches the Store and the orchestrator is re-pointed.
+      expect((await store.listActions(`task_demo_${run}`)).map((x) => x.action_id)).toEqual([`act_task_demo_${run}_air-1`]);
+    }
+
+    const list = (await tools.list_chains({})).structuredContent;
+    expect(list.ok && list.chains.map((c) => c.task_id)).toEqual(["task_demo_2"]);
+    expect(await store.listActions("task_demo_1")).toHaveLength(1);
+    expect(await store.listActions("task_demo")).toHaveLength(0);
   });
 
   it("rejects task ids outside [a-z0-9_]", async () => {
