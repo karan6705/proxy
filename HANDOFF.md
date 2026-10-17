@@ -32,6 +32,25 @@ Needed from Karan (types.ts and package.json are yours):
 7. **`must_haves` convention that `compare` reads.** `log_intent` should pass these through unchanged: `term:monthly` or `term:annual` (SaaS), and `item:`, `size:`, `model:`, `color:`, `plan:` entries (store and SaaS). Free-text must-haves are ignored.
 8. **Hotel behaviors for evals.** `createMerchants(deps, { hotel: { behavior: "credit_then_partial" | "accept_full" | "deny", partial_refund_pct } })`. The default is the demo: store credit, then 85% after one push back.
 
+### From Dhwanil: review of main, items 1 to 3 (refunds, "verified" and error handling)
+Found while reviewing `origin/main`. File and line references are the current ones. These three are the ones I'd cover before wiring the real logic. I checked that the files are unchanged since my review.
+
+**1. The self-serve route can double-refund or get stuck** (`src/orchestrator/routes/self-serve.ts:44-61`)
+- My merchants used to refund inside `selfServeCancel`, and the route then refunded again. I'm removing that on my side now. Merchants will return `refund_amount` only, with `stripe_refund_id: null`. Keep the orchestrator as the only thing that refunds.
+- No error handling around the Stripe calls. If `findChargeForAction` (line 49) or `payments.refund` (line 55) throws after the merchant cancelled, the action stays `requested` and no `Step` is written. Then a retry calls `selfServeCancel` again. The route should catch, write a `Step` with the error, and leave the action retryable (not `failed`) when the merchant cancel already succeeded.
+- I'm making `selfServeCancel` idempotent: a repeat for an already-cancelled booking returns the same `ok: true` and `refund_amount`, so a retry works.
+- `findChargeForActionId` (`src/stripe/verify.ts:37-44`) uses Stripe's PaymentIntent search, which is eventually consistent. Right after a charge it can return null, giving "no Stripe charge found". Suggest storing the charge id on the Action when `createTestCharge` returns it and reading it from the Store, with the search only as a fallback.
+
+**2. "Verified" proves less than it claims**
+- `self-serve.ts:55-61` refunds and verifies against the merchant's `cancel.refund_amount`, not the amount owed. A merchant returning 100 on a 41200 charge would end up `verified`. Self-undo is defined as free and a full refund, so require `cancel.refund_amount === action.amount` (otherwise it goes to the human), and verify against `action.amount`.
+- `verifyRefundAmount` (`src/stripe/verify.ts:77,83`) accepts an amount of 0: `refundedAmount >= 0` is always true, so it reports `verified` with no refund. Reject `amount <= 0`. My hotel returns `refund_amount: 0` when Proxy accepts store credit, so this case is real.
+- `verifyRefund(actionId)` (`verify.ts:59-69`) returns true for any succeeded refund of any size. It's exported. Remove it or make it amount-aware.
+- The refund idempotency key `refund:${action_id}` fails at Stripe if a retry has a different amount. Include the amount in the key, or handle the error.
+
+**3. Internal errors reach the agent and are marked retryable** (`src/tools/result.ts:46`)
+- `fail("internal", e.message, true, "retry")` returns the raw error message to the agent and tells it to retry every time. Stripe error text can include a masked key fragment, and the docs promise tokens and codes never reach the agent.
+- Return a generic message, log the detail server-side with context (tool, task_id, error name), and set `retryable: true` only for known transient errors (`StripeApiError` 429 or 5xx, `upstream_unavailable`).
+
 ## Sarah
 
 ### From Dhwanil: merchant confirmation emails and the support desk
