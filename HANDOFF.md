@@ -99,6 +99,9 @@ Found while reviewing `origin/main`. File and line references are the current on
 
 ## Sarah
 
+### A2A transport ownership
+Sarah owns A2A transport in both directions: inbound Proxy requests route to Dhwanil's hotel agent, and hotel replies route back to the orchestrator. If Inkbox inbound A2A does not work, use email between `proxy-agent` and `hotel-agent` with a structured JSON body. The protocol state machine is unchanged.
+
 ### From Karan: demo runs and a Vite warning
 - **Demo runs:** each `/demo/reset` starts a new demo task id (`task_demo_1`, `task_demo_2`, ...), and every run reuses the `task-demo` Inkbox identity. Mail to `task-demo@...` is re-pointed to the current run before it reaches the Store, so nothing is deleted and earlier runs stay as history. Your capture code is unchanged.
 - **Vite warning:** `npm run dev` warns about the variable `import(SDK)` in `src/inkbox/sdk.ts`. Add `/* @vite-ignore */` inside that `import(...)` to silence it and make sure Vite leaves the import alone.
@@ -193,6 +196,9 @@ Read `src/logic/compare.ts` and `tests/logic/compare.test.ts` on `origin/dhwanil
 - Tests: `npm test`.
 
 ## Dhwanil
+
+### A2A transport ownership
+Sarah owns A2A transport in both directions: inbound Proxy requests route to Dhwanil's hotel agent, and hotel replies route back to the orchestrator. If Inkbox inbound A2A does not work, use email between `proxy-agent` and `hotel-agent` with a structured JSON body. The protocol state machine is unchanged.
 
 ### From Karan: PR #6 merged (contract v2 checks passed)
 - Checked: `logic` is typed as `Logic`, `plan_undo` has the v2 signature, the root rule is implemented, the airline has no agent, the transfer address is `support@metrotransfer.example`, merchants never refund, and `negotiate_step` reads only typed fields. 431 tests passed on the merge.
