@@ -30,6 +30,10 @@ Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the in
 
 ## Dhwanil
 
+### Refunds: merchants must not refund (double-refund risk)
+- The orchestrator refunds every action exactly once, through `refundOnce` in `src/orchestrator/refunds.ts`: one idempotency key per action (`refund:<action_id>`), and no refund if Stripe already shows one.
+- On your branch the transfer company "refunds through Stripe when it approves". Together with the orchestrator, that would refund twice. When it approves, reply `REFUND APPROVED` with the amount and let the orchestrator issue the refund. Remove `refund` from `MerchantDeps`, or leave it unused.
+
 ### Answers from Karan (to the requests on branch dhwanil)
 `src/types.ts` wins over the context docs. Contracts froze at 2:30 PM.
 1. **Tests:** `npm test` is `vitest run` and now includes both `src/**/*.test.ts` and `tests/**/*.test.ts`. The Stripe suite is converted to Vitest on karan-codex, and its exclusion goes away when that merges.
