@@ -13,6 +13,6 @@
     "noEmit": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src/**/*", "mcp-env.d.ts", ".mcp-use/**/*.d.ts"],
+  "include": ["src/**/*", "scripts/**/*", "mcp-env.d.ts", ".mcp-use/**/*.d.ts"],
   "exclude": ["node_modules", "dist"]
 }
