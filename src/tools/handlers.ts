@@ -25,6 +25,8 @@ import type {
 import { TASK_ID_PATTERN } from "../types.js";
 import { fail, ok } from "./result.js";
 
+const withMeta = <R extends object>(result: R, meta: LiveChainMeta) => ({ ...result, _meta: { ...meta } });
+
 const CLOSED_CHAIN_STATES = new Set<Chain["state"]>(["closed", "kept", "redone", "expired"]);
 
 function taskIdFor(key: string): string {
@@ -35,7 +37,19 @@ function sameIntent(a: Pick<Intent, "goal" | "constraints" | "preferences">, b: 
   return JSON.stringify([a.goal, a.constraints, a.preferences]) === JSON.stringify([b.goal, b.constraints, b.preferences]);
 }
 
+/** View-only data for the live-chain widget, sent as result `_meta` (not part of the tool contract). */
+export interface LiveChainMeta {
+  /** Server time on the (possibly simulated) clock, so the widget can count down. */
+  server_now: string;
+  /** Each action's undo window from Logic.reversibility; null when there is none. */
+  windows: Record<string, string | null>;
+  /** Amount Stripe shows refunded, for verified actions only. */
+  recovered: Record<string, number>;
+}
+
 export function createToolHandlers(getProxy: () => Proxy) {
+  // Refunded amounts don't change once Stripe verified them, so each is fetched once.
+  const recoveredCache = new Map<string, number>();
   /** Which mismatched actions the agent may undo itself right now. */
   function fixable(p: Proxy, task_id: string, actions: Action[], mismatches: Mismatch[], plan: PlanStep[]): ActionId[] {
     const { logic, sessions, clock } = p.deps;
@@ -245,7 +259,25 @@ export function createToolHandlers(getProxy: () => Proxy) {
               redo_categories: [...new Set(actions.map((a) => a.category))],
             }
           : undefined;
-      return ok({
+      const now = clock.now();
+      const windows: LiveChainMeta["windows"] = {};
+      const recovered: LiveChainMeta["recovered"] = {};
+      for (const a of members) {
+        windows[a.action_id] = logic.reversibility(a, now).window_ends_at;
+        if (a.state !== "verified") continue;
+        if (!recoveredCache.has(a.action_id)) {
+          try {
+            const charge = await p.deps.payments.findChargeForAction(a);
+            if (charge) recoveredCache.set(a.action_id, (await p.deps.payments.verifyRefund(charge, 0)).refunded_amount);
+          } catch {
+            // Stripe unreachable: show nothing rather than a guess; the next poll retries.
+          }
+        }
+        const amount = recoveredCache.get(a.action_id);
+        if (amount !== undefined) recovered[a.action_id] = amount;
+      }
+      const meta: LiveChainMeta = { server_now: now, windows, recovered };
+      return withMeta(ok({
         chain_id: chain.chain_id,
         state: chain.state,
         actions,
@@ -254,7 +286,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
         rounds: chain.steps.reduce((m, s) => Math.max(m, s.round), 0),
         ...(redo ? { redo } : {}),
         next_action,
-      });
+      }), meta);
     },
 
     async list_chains({ task_id }: ListChainsInput) {

@@ -176,6 +176,12 @@ describe("tools wired to the orchestrator", () => {
     const again = (await tools.undo({ action_ids: ["act_flight"], reason: "retry" })).structuredContent;
     expect(again).toMatchObject({ accepted: ["act_flight"] });
     expect(rt.fakePayments?.refunds.size).toBe(1);
+
+    // The widget's view-only _meta: recovered money only for Stripe-verified actions, plus each window.
+    const chain = await tools.get_chain({ chain_id: `chain_${task_id}` });
+    expect(chain.structuredContent).toMatchObject({ ok: true, actions: [{ action_id: "act_flight", stripe_verified: true }] });
+    expect("_meta" in chain && chain._meta).toMatchObject({ server_now: clock.now(), recovered: { act_flight: 41_200 } });
+    expect("_meta" in chain && chain._meta.windows.act_flight).toBe("2026-10-26T10:00:00.000Z");
   });
 
   it("after the session ends, late confirmations extend the chain and everything goes to the human", async () => {
