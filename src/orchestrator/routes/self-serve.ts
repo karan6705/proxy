@@ -1,6 +1,7 @@
 // Self-serve route: a rule-based cancel with the merchant (e.g. the airline's 24-hour rule),
 // then a Stripe refund, then verification. The action is "verified" only when Stripe shows the refund.
 import type { Action, Chain, Clock, Merchants, Payments, Step, StepOutcome, Store } from "../../types.js";
+import { refundOnce } from "../refunds.js";
 
 export interface SelfServeDeps {
   merchants: Pick<Merchants, "selfServeCancel">;
@@ -46,17 +47,15 @@ export async function runSelfServeRoute(deps: SelfServeDeps, chain: Chain, actio
     return finish("failed", "failed", `Merchant refused self-serve cancel: ${cancel.reason ?? "no reason given"}`, null);
   }
 
-  const chargeId = await payments.findChargeForAction(action);
-  if (chargeId === null) {
+  // refundOnce: one idempotency key per action and no refund if Stripe already shows one.
+  const r = await refundOnce(payments, action, cancel.refund_amount);
+  if (r.status === "no_charge") {
     return finish("failed", "failed", "Cancelled with the merchant, but no Stripe charge found for this action", null);
   }
-
-  // Idempotent per action, so a retry after a crash never refunds twice.
-  const { refund_id } = await payments.refund(chargeId, cancel.refund_amount, `refund:${action.action_id}`);
-
-  const check = await payments.verifyRefund(chargeId, cancel.refund_amount);
-  if (!check.verified) {
-    return finish("refund_pending", "pending", `Refund ${refund_id} requested; Stripe shows ${check.refunded_amount} so far`, refund_id);
+  const ref = r.refund_id ?? r.charge_id;
+  // "verified" only when verifyRefund says so; anything else waits as refund_pending.
+  if (!r.verified) {
+    return finish("refund_pending", "pending", `Refund requested; Stripe shows ${r.refunded_amount} of ${cancel.refund_amount} so far`, ref);
   }
-  return finish("verified", "succeeded", `Refunded ${cancel.refund_amount}, verified in Stripe`, refund_id);
+  return finish("verified", "succeeded", `Refunded ${cancel.refund_amount}, verified in Stripe`, ref);
 }

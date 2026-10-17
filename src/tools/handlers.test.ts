@@ -113,7 +113,8 @@ describe("tools wired to the orchestrator", () => {
     expect(list).toMatchObject({ ok: true });
     if (!list.ok) return;
     expect(list.chains).toHaveLength(1);
-    expect(list.chains[0]).toMatchObject({ action_count: 4, money_at_risk: 124_000, root_summary: "Arrival email" });
+    expect(list.chains[0]).toMatchObject({ action_count: 4, money_at_risk: 124_000, root_summary: "Flight SFO to JFK, Nov 3" });
+    // The root is the earliest booked action with a mismatch, even though the host email arrived first.
 
     const u = (await tools.undo({ action_ids: ["act_flight"], reason: "wrong date" })).structuredContent;
     expect(u).toMatchObject({ accepted: [], requires_human: ["act_flight"], chain_id: null });
@@ -127,6 +128,27 @@ describe("tools wired to the orchestrator", () => {
       ["act_hotel", "reversal_protocol"],
       ["act_transfer", "email_support"],
     ]);
+  });
+
+  it("STOP freezes the agent's self-undo until the human replies again", async () => {
+    const { task_id } = await logTask();
+    await captureFlight(task_id);
+    await rt.proxy.onHumanReply({ kind: "stop", received_at: clock.now() });
+    const frozen = (await tools.undo({ action_ids: ["act_flight"], reason: "wrong date" })).structuredContent;
+    expect(frozen).toMatchObject({ accepted: [], requires_human: ["act_flight"] });
+    expect(rt.fakePayments?.refunds.size).toBe(0);
+
+    await rt.proxy.onHumanReply({ kind: "keep", chain_id: `chain_${task_id}`, received_at: clock.now() });
+    const after = (await tools.undo({ action_ids: ["act_flight"], reason: "wrong date" })).structuredContent;
+    expect(after).toMatchObject({ accepted: ["act_flight"] });
+  });
+
+  it("a correction waits for confirmation instead of acting", async () => {
+    const { task_id } = await logTask();
+    await captureFlight(task_id);
+    await rt.proxy.onHumanReply({ kind: "correction", chain_id: `chain_${task_id}`, corrected_text: "ugh no the 13th", received_at: clock.now() });
+    expect(rt.proxy.pendingCorrections.get(`chain_${task_id}`)?.corrected_text).toBe("ugh no the 13th");
+    expect((await rt.store.getAction("act_flight"))?.state).toBe("found");
   });
 
   it("a repeated confirmation with the same ref does not create a second action", async () => {

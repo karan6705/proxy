@@ -206,6 +206,7 @@ const demoAction = z.object({
   source: z.enum(["email", "stripe", "agent"]),
   received_at: z.string(),
   state: z.string(),
+  confidence: z.number().min(0).max(1).optional(),
 });
 const demoReset = z.object({
   clock: z.string().optional(),

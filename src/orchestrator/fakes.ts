@@ -61,9 +61,15 @@ interface FakeCharge {
   refunded: Cents;
 }
 
-/** Fake Stripe. `settleRefunds: false` leaves refunds pending, so verifyRefund reports not verified. */
-export function createFakePayments(opts: { settleRefunds?: boolean } = {}) {
+/**
+ * Fake Stripe. `settleRefunds: false` leaves refunds pending (verifyRefund reports not verified)
+ * until settleAll(). `honorIdempotency: false` imitates an expired idempotency key.
+ */
+export function createFakePayments(opts: { settleRefunds?: boolean; honorIdempotency?: boolean } = {}) {
   const settle = opts.settleRefunds ?? true;
+  const honor = opts.honorIdempotency ?? true;
+  const pending: { charge_id: string; amount: Cents }[] = [];
+  let refundCalls = 0;
   const charges = new Map<string, FakeCharge>();
   const refundsByKey = new Map<string, { refund_id: string; charge_id: string; amount: Cents }>();
   let disputes = 0;
@@ -73,14 +79,16 @@ export function createFakePayments(opts: { settleRefunds?: boolean } = {}) {
       return null;
     },
     async refund(charge_id, amount, idempotency_key) {
-      const prior = refundsByKey.get(idempotency_key);
+      refundCalls += 1;
+      const prior = honor ? refundsByKey.get(idempotency_key) : undefined;
       if (prior) return { refund_id: prior.refund_id };
       const c = charges.get(charge_id);
       if (!c) throw new Error(`No charge ${charge_id}`);
       if (c.refunded + amount > c.amount) throw new Error("Refund exceeds charge");
-      const refund_id = `re_fake_${refundsByKey.size + 1}`;
-      refundsByKey.set(idempotency_key, { refund_id, charge_id, amount });
+      const refund_id = `re_fake_${refundCalls}`;
+      refundsByKey.set(honor ? idempotency_key : `${idempotency_key}#${refundCalls}`, { refund_id, charge_id, amount });
       if (settle) c.refunded += amount;
+      else pending.push({ charge_id, amount });
       return { refund_id };
     },
     async verifyRefund(charge_id, amount) {
@@ -99,6 +107,17 @@ export function createFakePayments(opts: { settleRefunds?: boolean } = {}) {
     refunds: refundsByKey,
     addCharge(charge_id: string, action_id: string, amount: Cents) {
       charges.set(charge_id, { action_id, amount, refunded: 0 });
+    },
+    /** Pending refunds land, as Stripe would after processing. */
+    settleAll() {
+      for (const p of pending.splice(0)) {
+        const c = charges.get(p.charge_id);
+        if (c) c.refunded += p.amount;
+      }
+    },
+    /** Total refunded on a charge, as Stripe would report it. */
+    refundedOn(charge_id: string): Cents {
+      return charges.get(charge_id)?.refunded ?? 0;
     },
   };
 }

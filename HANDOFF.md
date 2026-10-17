@@ -1,5 +1,18 @@
 # Handoff
 
+## Contract v2 (final freeze)
+`src/types.ts` changed once more, by Karan's decision, and is now frozen for real. Adapt your code to these changes:
+1. **`Logic.plan_undo(chain, actions, preferences, now)`.** `actions` (the chain's actions, resolved) is new, so routes can be chosen from each action's category and merchant. (Dhwanil)
+2. **`Action.confidence?: number`** (0 to 1), optional. Capture sets it for LLM-extracted Actions and leaves it unset for structured JSON-LD data. (Sarah)
+3. **`HumanReply` gains two kinds** (Sarah parses them; the orchestrator acts on them):
+   - `{ kind: "stop", received_at }` freezes all undo activity for the human, across every chain, until their next reply. It has no `chain_id`.
+   - `{ kind: "correction", chain_id, corrected_text, received_at }` carries a free-text reply such as "ugh no the 13th", with the human's words unchanged. The orchestrator confirms it once with the human before acting.
+4. **Chain root rule** (documented on `Logic.trace`): `root_action_id` is the earliest booked action with a mismatch, meaning the non-`message` action with the earliest `received_at`. A message is the root only if the chain has no booked action. In the demo the root is the flight. (Dhwanil)
+5. **The airline has no agent.** It is self-serve only (`has_agent: false`). docs/01, 03, 04, 05 and 06 are updated. (Dhwanil, Codex)
+6. **The transfer support address is `support@metrotransfer.example`** everywhere. (Dhwanil, Sarah, Codex)
+7. **Domains are out of scope.** No new category.
+
+
 ## Karan
 
 ### How to ship the MCP App (live chain) with mcp-use 2.10.1
@@ -63,6 +76,10 @@ Found while reviewing `origin/main`. File and line references are the current on
 
 ## Dhwanil
 
+### Refunds: merchants must not refund (double-refund risk)
+- The orchestrator refunds every action exactly once, through `refundOnce` in `src/orchestrator/refunds.ts`: one idempotency key per action (`refund:<action_id>`), and no refund if Stripe already shows one.
+- On your branch the transfer company "refunds through Stripe when it approves". Together with the orchestrator, that would refund twice. When it approves, reply `REFUND APPROVED` with the amount and let the orchestrator issue the refund. Remove `refund` from `MerchantDeps`, or leave it unused.
+
 ### Answers from Karan (to the requests on branch dhwanil)
 `src/types.ts` wins over the context docs. Contracts froze at 2:30 PM.
 1. **Tests:** `npm test` is `vitest run` and now includes both `src/**/*.test.ts` and `tests/**/*.test.ts`. The Stripe suite is converted to Vitest on karan-codex, and its exclusion goes away when that merges.
@@ -79,12 +96,15 @@ Branch `dhwanil`. Done: `compare`, `trace`, `reversibility`, `rank`, the rules t
 
 ## Karan's Codex
 
+### Contract v2 changes for src/agent/
+- In `src/agent/stub-merchants.ts`: the airline has no agent (`has_agent: false`, no `agent_identity`), and the transfer's `support_email` is `support@metrotransfer.example`.
+
 - Codex now works in ../tripwire-codex on branch karan-codex (renamed from karan/codex, which git cannot hold next to a branch named karan). It merges into karan, not main: commit, then run `git fetch && git rebase origin/karan`, and Karan merges it. Run `npm ci` there first; node_modules is not shared between worktrees.
 
 ### Answers from Karan
 - Done: the Stripe suite runs under Vitest (exclusion removed). `@anthropic-ai/sdk` and `@modelcontextprotocol/client` (you import it directly) are in package.json, and `tsx` is a dev dependency. `ANTHROPIC_API_KEY=` and `MCP_URL=http://localhost:3000/mcp` are in `.env.example`.
 - Done: `POST /demo/reset`, `/demo/confirmation` and `/demo/host-email` exist behind `PROXY_DEMO_ROUTES=1`, with the bodies you described. The logged task now uses real server state, so any task id works, not just `task_demo`.
-- Needed from you: `npm run demo:reset` runs `src/agent/reset.ts`, which doesn't exist yet. Please add it as a thin wrapper that calls `resetScriptedDemo(createHttpDemoControl())`.
+- Done: `npm run demo:reset` (src/agent/reset.ts), `npm run demo:rehearse` (src/agent/rehearse.ts) and `npm run demo:offline` (src/agent/scripted.ts --offline), all through tsx.
 
 ### Scripted demo: end the agent's session before the late confirmations
 - Team rule: the agent may only self-undo free, full-refund, self-serve actions during its session. In the scripted demo the whole chain must go to the human.
