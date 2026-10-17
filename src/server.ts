@@ -118,6 +118,12 @@ export const getChain = server.tool(
       "Next: follow next_action. wait_for_human means the human is deciding; redo means book what redo says, using the task email.",
     inputSchema: advertise(getChainInput),
     outputSchema: getChainOutput,
+    // The MCP App: the live undo chain, each row green only when Stripe verifies the refund.
+    view: {
+      name: "live-chain",
+      description: "Live undo chain: one row per action, green when Stripe verifies the refund",
+      prefersBorder: true,
+    },
     annotations: readHints,
   },
   handler(getChainInput, tools.get_chain),

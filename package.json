@@ -11,6 +11,7 @@
     "dev": "mcp-use dev --entry src/server.ts --views-dir src/app",
     "build": "mcp-use build --entry src/server.ts --views-dir src/app",
     "start": "mcp-use start",
+    "preview": "mcp-use build --entry src/server.ts --views-dir src/app && mcp-use start --with-inspector",
     "deploy": "mcp-use deploy",
     "typecheck": "mcp-use typecheck --entry src/server.ts",
     "test": "vitest run",

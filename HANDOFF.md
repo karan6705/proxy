@@ -16,6 +16,9 @@
 ## Karan
 
 ### How to ship the MCP App (live chain) with mcp-use 2.10.1
+- **Status:** the live-chain widget is at `src/app/live-chain/` and shown by `get_chain`. It polls `get_chain` every 2 s and turns a row green only when `stripe_verified` is true.
+- **Known limit:** `npm run dev` can't load views from `src/app/`, because the mcp-use 2.10.1 dev server only forwards `/views/...` paths to Vite. To see the widget, use `npm run preview` (build, then start with the inspector at `/inspector`). Deploys use the build, so they're unaffected.
+- **No countdown:** `get_chain` has no server time and the demo clock is simulated, so the widget shows when the window closes instead of a countdown.
 Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the installed CLI and types.
 - A view is `src/app/<name>/view.tsx` with a default-exported React component. The CLI finds every `<views-dir>/*/view.tsx`; our scripts pass `--views-dir src/app` (the default is `views/`).
 - Bind it to a tool with `view: { name: "<name>", description, prefersBorder, csp: { resourceDomains: [...] } }` in `server.tool({...})`. The tool must declare an `outputSchema`; the view reads the tool's `structuredContent`.
