@@ -301,3 +301,50 @@ describe("compare: wrong quantity, off-task items and unexpected subscriptions",
     expect(compare(intent, [saas("Acme Pro, monthly")])).toEqual([]);
   });
 });
+
+describe("compare: billing term wording on receipts", () => {
+  const wantMonthly = demoIntent({ constraints: { must_haves: ["term:monthly"] } });
+  const wantAnnual = demoIntent({ constraints: { must_haves: ["term:annual"] } });
+
+  it.each(["Acme Pro, P1Y", "Acme Pro, P12M", "Acme Pro $240/yr", "Acme Pro $240 / year", "Acme Pro, 12-month plan", "Acme Pro, yearly"])(
+    "reads %j as annual",
+    (summary) => {
+      expect(compare(wantMonthly, [saas(summary)])).toMatchObject([{ field: "term", expected: "monthly", actual: "annual" }]);
+      expect(compare(wantAnnual, [saas(summary)])).toEqual([]);
+    },
+  );
+
+  it.each(["Acme Pro $20/mo", "Acme Pro $20 / month", "Acme Pro, P1M", "Acme Pro, monthly"])("reads %j as monthly", (summary) => {
+    expect(compare(wantMonthly, [saas(summary)])).toEqual([]);
+    expect(compare(wantAnnual, [saas(summary)])).toMatchObject([{ field: "term", expected: "annual", actual: "monthly" }]);
+  });
+
+  it("cannot tell the term when the receipt says nothing, so it does not guess (a known limit)", () => {
+    expect(compare(wantMonthly, [saas("Acme Pro")])).toEqual([]);
+  });
+});
+
+describe("compare: a charge seen by both email and Stripe is counted once", () => {
+  const budget = 124000;
+  const intent = demoIntent({ constraints: { dates: { start: "2026-11-13", end: "2026-11-16" }, budget_total: budget } });
+  const stripeCopy = (a: Action): Action => ({
+    ...a,
+    action_id: `${a.action_id}_stripe`,
+    source: "stripe",
+    received_at: new Date(Date.parse(a.received_at) + 60_000).toISOString(),
+  });
+
+  it("does not go over a budget the receipts exactly meet", () => {
+    const receipts = demoActions(false);
+    expect(compare(intent, [...receipts, ...receipts.map(stripeCopy)])).toEqual([]);
+  });
+
+  it("still counts a Stripe charge that has no receipt", () => {
+    const receipts = demoActions(false).filter((a) => a.category !== "hotel");
+    const hotel = demoActions(false).find((a) => a.category === "hotel") as Action;
+    const onlyStripe: Action = { ...stripeCopy(hotel), received_at: "2026-10-17T12:00:00.000Z" };
+    expect(compare(demoIntent({ constraints: { dates: { start: "2026-11-13", end: "2026-11-16" }, budget_total: budget - 1 } }), [...receipts, onlyStripe])).toMatchObject([
+      { action_id: "act_hotel_stripe", field: "amount", expected: budget - 1, actual: budget },
+    ]);
+  });
+});
