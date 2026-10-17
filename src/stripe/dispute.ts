@@ -1,4 +1,4 @@
-import type { EvidencePacket } from "../types.js";
+import type { Action, EvidencePacket, Intent, Mismatch, Timestamp } from "../types.js";
 import { getStripeClient, type StripeParam, type StripeRequester } from "./client.js";
 
 export interface StripeDisputeEvidence {
@@ -7,6 +7,17 @@ export interface StripeDisputeEvidence {
   product_description: string;
   service_date?: string;
   uncategorized_text: string;
+}
+
+export interface DisputeChainEvidence {
+  intent: Intent;
+  order: Action;
+  confirmation_excerpt: string;
+  stripe_charge_id: string | null;
+  mismatch: Mismatch;
+  why_wrong: string;
+  message_timeline: NonNullable<EvidencePacket["message_timeline"]>;
+  deadline: Timestamp;
 }
 
 interface StripeDispute {
@@ -24,23 +35,44 @@ function truncate(value: string, max: number): string {
 }
 
 export function buildDisputeEvidence(packet: EvidencePacket): StripeDisputeEvidence {
+  const messageTimeline = packet.message_timeline ?? [];
   const audit = {
-    action_id: packet.order.action_id,
-    task_id: packet.intent.task_id,
-    merchant: packet.order.merchant,
-    merchant_ref: packet.order.ref,
+    order: packet.order,
+    intent: packet.intent,
     stripe_charge_id: packet.stripe_charge_id,
     mismatch: packet.mismatch,
     why_wrong: packet.why_wrong,
+    message_timeline: messageTimeline,
     deadline: packet.deadline,
   };
 
   return {
-    customer_communication: truncate(packet.confirmation_excerpt, 20_000),
+    customer_communication: truncate(
+      [
+        packet.confirmation_excerpt,
+        ...messageTimeline.map((message) => `${message.at} ${message.direction} via ${message.channel}: ${message.summary}`),
+      ].join("\n"),
+      20_000,
+    ),
     customer_email_address: truncate(packet.intent.task_email, 500),
     product_description: truncate(`${packet.order.category}: ${packet.order.summary} (${packet.order.ref})`, 5_000),
     service_date: packet.order.dates?.start,
     uncategorized_text: truncate(JSON.stringify(audit), 20_000),
+  };
+}
+
+export function buildDisputePacket(chain: DisputeChainEvidence): EvidencePacket {
+  if (!chain.mismatch.evidence) throw new Error("Dispute evidence requires receipt-backed mismatch evidence");
+  if (chain.message_timeline.length === 0) throw new Error("Dispute evidence requires a message timeline");
+  return {
+    intent: chain.intent,
+    order: chain.order,
+    confirmation_excerpt: chain.confirmation_excerpt,
+    stripe_charge_id: chain.stripe_charge_id,
+    mismatch: chain.mismatch,
+    why_wrong: chain.why_wrong,
+    deadline: chain.deadline,
+    message_timeline: chain.message_timeline,
   };
 }
 

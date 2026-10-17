@@ -1,4 +1,5 @@
 import type { Action } from "../types.js";
+import { rememberChargeForAction } from "./charge-links.js";
 import { getStripeClient, type StripeRequester } from "./client.js";
 
 interface StripePaymentIntent {
@@ -46,6 +47,7 @@ export async function createTestCharge(
 
   const chargeId = typeof intent.latest_charge === "string" ? intent.latest_charge : intent.latest_charge?.id;
   if (!chargeId) throw new Error(`Stripe PaymentIntent ${intent.id} did not produce a charge`);
+  rememberChargeForAction(action.action_id, chargeId);
 
   return {
     payment_intent_id: intent.id,

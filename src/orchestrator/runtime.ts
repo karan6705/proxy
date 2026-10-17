@@ -1,16 +1,24 @@
 // Builds the server's orchestrator from what is available: Sarah's Store (Supabase from env, else in
 // memory), capture and human channel; her Inkbox client when INKBOX_API_KEY or INKBOX_DRY_RUN is set;
 // real Stripe test mode when a sk_test_ key is set. Logic and Merchants stay stand-ins until Dhwanil's merge.
-import { createAnthropicExtractor, createCapture, createInboundEmailRoute, type Capture } from "../capture/index.js";
+import { createAnthropicExtractor, createCapture, createInboundEmailRoute, deliverToCapture, type Capture } from "../capture/index.js";
 import { createStoreFromEnv } from "../db/index.js";
 import { createClient, createHumanChannel, createHumanRoutes, createInkbox, type HumanChannel } from "../inkbox/index.js";
-import { createPayments } from "../stripe/index.js";
+import { logic } from "../logic/index.js";
+import {
+  addressMode,
+  createInkboxDeliver,
+  createMerchants,
+  merchantRoutes,
+  type MerchantDeps,
+  type MerchantsImpl,
+} from "../merchants/index.js";
+import { createPayments, createTestCharge } from "../stripe/index.js";
 import type { Action, Clock, Inkbox, OrchestratorHooks, Params, Preferences, RouteHandler, Store, TaskId } from "../types.js";
-import { createFakePayments, createStubMerchants } from "./fakes.js";
+import { createFakePayments } from "./fakes.js";
 import { createProxy, type DemoTask, type Proxy } from "./proxy.js";
 import { createSessions } from "./sessions.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
-import { createStandInLogic } from "./standin-logic.js";
 
 export interface Runtime {
   proxy: Proxy;
@@ -21,7 +29,7 @@ export interface Runtime {
   routes: RouteHandler[];
   /** Present when payments are faked (no sk_test_ key); demo routes register charges here. */
   fakePayments: ReturnType<typeof createFakePayments> | null;
-  merchants: ReturnType<typeof createStubMerchants>;
+  merchants: MerchantsImpl;
 }
 
 export interface RuntimeOverrides {
@@ -72,11 +80,50 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   const inkbox = overrides.inkbox ?? (useInkbox ? createInkbox({ store, clock }) : createStandInInkbox());
   const useStripe = (env.STRIPE_SECRET_KEY ?? "").startsWith("sk_test_");
   const fakePayments = useStripe ? null : createFakePayments();
-  const merchants = createStubMerchants();
+  const fakeChargesByKey = new Map<string, string>();
+  let fakeChargeSequence = 0;
+  let capture: Capture | null = null;
+  const mode = addressMode(env);
+  const liveDeliver = mode === "real" ? createInkboxDeliver({ env }) : null;
+  const merchantDeps: MerchantDeps = {
+    async charge(args) {
+      const action_id = `act_${args.task_id}_${args.ref.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+      if (fakePayments) {
+        const existing = fakeChargesByKey.get(args.idempotency_key);
+        if (existing) return { charge_id: existing };
+        const charge_id = `ch_demo_${++fakeChargeSequence}`;
+        fakeChargesByKey.set(args.idempotency_key, charge_id);
+        fakePayments.addCharge(charge_id, action_id, args.amount);
+        return { charge_id };
+      }
+      const result = await createTestCharge(
+        {
+          action_id,
+          task_id: args.task_id,
+          merchant: args.merchant,
+          category: args.merchant === "airline" ? "flight" : args.merchant === "hotel" ? "hotel" : args.merchant === "transfer" ? "transfer" : "message",
+          summary: args.description,
+          amount: args.amount,
+          ref: args.ref,
+          source: "email",
+          received_at: clock.now(),
+          state: "found",
+        },
+        args.idempotency_key,
+      );
+      return { charge_id: result.charge_id };
+    },
+    async deliver(email) {
+      if (liveDeliver) return liveDeliver(email);
+      if (!capture) throw new Error("Capture is not ready for merchant email delivery");
+      return deliverToCapture(capture)(email);
+    },
+  };
+  const merchants = createMerchants(merchantDeps, { addresses: mode });
 
   const proxy = createProxy({
     store,
-    logic: createStandInLogic(params.MIN_HOURS),
+    logic,
     inkbox,
     payments: fakePayments ? fakePayments.payments : createPayments(),
     merchants,
@@ -90,7 +137,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
 
   const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
   const captureSide = proxy.deps.demo ? repointDemo(store, proxy, proxy.deps.demo) : { store, hooks: proxy };
-  const capture = createCapture({
+  capture = createCapture({
     store: captureSide.store,
     hooks: captureSide.hooks,
     clock,
@@ -104,7 +151,11 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     humanNumber: env.HUMAN_PHONE?.trim() ?? "",
   });
   proxy.setHumanChannel(human);
-  const routes = [createInboundEmailRoute({ capture, fetchFullMessage }), ...createHumanRoutes(human)];
+  const routes = [
+    createInboundEmailRoute({ capture, fetchFullMessage }),
+    ...createHumanRoutes(human),
+    ...merchantRoutes(merchants, merchantDeps, clock),
+  ];
 
   return { proxy, store, human, capture, routes, fakePayments, merchants };
 }

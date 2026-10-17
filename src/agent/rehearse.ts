@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import type { SimulatedClock } from "../types.js";
 import { connectToolClient, type ToolClient } from "./mcp-client.js";
+import { createHttpMerchants } from "./http-merchants.js";
 import { createOfflineDemoControl, createOfflineToolClient } from "./offline.js";
 import { createDemoPayments, createMockAgentPayments, type AgentPayments } from "./payments.js";
 import { resetDemo } from "./reset.js";
@@ -82,6 +83,7 @@ export async function runRehearsal(options: RehearsalOptions = {}): Promise<Rehe
     await runScriptedDemo({
       client: client!,
       payments: options.payments ?? (offline ? createMockAgentPayments() : createDemoPayments()),
+      ...(offline ? {} : { merchants: createHttpMerchants(mcpUrl) }),
       clock: options.clock ?? createDemoClock(),
       control,
       onStep: report,
