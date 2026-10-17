@@ -57,6 +57,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     clock,
     params,
     defaultPreferences,
+    demoTaskId: env.PROXY_DEMO_ROUTES === "1" ? (env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo") : null,
   });
 
   const anthropicKey = env.ANTHROPIC_API_KEY?.trim();

@@ -74,12 +74,17 @@ export function createToolHandlers(getProxy: () => Proxy) {
         sessions.touch(existing.task_id);
         return ok({ task_id: existing.task_id, task_email: existing.task_email });
       }
-      const task_id = taskIdFor(input.idempotency_key);
+      // Each task gets its own Inkbox identity; the demo reuses one pre-created identity.
+      const task_id = p.deps.demoTaskId ?? taskIdFor(input.idempotency_key);
       if (!TASK_ID_PATTERN.test(task_id)) {
         return fail("invalid_input", `Task id ${task_id} must use only lowercase letters, digits and underscores.`, false, "fix_now");
       }
+      if (p.deps.demoTaskId && (await store.getIntent(task_id))) {
+        return fail("upstream_unavailable", `The demo identity ${task_id} is already used by another task. Reset the demo (POST /demo/reset) first.`, false, "stop");
+      }
       let task_email: string;
       try {
+        // Sarah's Inkbox client gets or creates the identity task_<id> -> task-<id>@...
         ({ task_email } = await inkbox.createTaskAddress(task_id));
       } catch {
         return fail("upstream_unavailable", "Could not create the task email address. Retry shortly.", true, "retry");
