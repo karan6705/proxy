@@ -116,6 +116,10 @@ Read `src/logic/compare.ts` and `tests/logic/compare.test.ts` on `origin/dhwanil
 
 ## Dhwanil
 
+### A2A: the hotel agent must send with its own key
+- Inkbox A2A needs a separate API key for each sending identity, and it rejects the admin key (`INKBOX_API_KEY`). So the hotel agent must send its `accept` / `counter` / `deny` replies with the `hotel-agent` identity's own agent-scoped key, never the admin key.
+- Sarah creates the per-identity keys (`inkbox.apiKeys.create({ label, scopedIdentityId })`). Ask her for the `hotel-agent` key, read it from an env variable (e.g. `INKBOX_HOTEL_AGENT_API_KEY`), and ask Karan under "Karan" to add the name to `.env.example`. Never commit or log the key.
+
 ### Refunds: merchants must not refund (double-refund risk)
 - The orchestrator refunds every action exactly once, through `refundOnce` in `src/orchestrator/refunds.ts`: one idempotency key per action (`refund:<action_id>`), and no refund if Stripe already shows one.
 - On your branch the transfer company "refunds through Stripe when it approves". Together with the orchestrator, that would refund twice. When it approves, reply `REFUND APPROVED` with the amount and let the orchestrator issue the refund. Remove `refund` from `MerchantDeps`, or leave it unused.
