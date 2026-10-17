@@ -11,11 +11,30 @@
 5. **The airline has no agent.** It is self-serve only (`has_agent: false`). docs/01, 03, 04, 05 and 06 are updated. (Dhwanil, Codex)
 6. **The transfer support address is `support@metrotransfer.example`** everywhere. (Dhwanil, Sarah, Codex)
 7. **Domains are out of scope.** No new category.
+8. **`EventKind` gains `imessage_in`.** Log inbound iMessages with it, not `sms_in` with an `imessage:` outcome. (Sarah)
+9. **`Action.confidence`** (item 2) is how capture marks LLM extractions. Actions under 0.5 are dropped and logged, never passed to `onAction`. (Sarah)
+10. **Task ids are restricted to `[a-z0-9_]`** (`TASK_ID_PATTERN` in `types.ts`), because a task id becomes an Inkbox handle (`task_demo` becomes `task-demo@...`). `log_intent` returns `invalid_input` otherwise, and so do `review` and `list_chains` for a malformed `task_id`. (Everyone)
+- **Sarah, still to adapt from item 3:** the human channel should forward STOP as `{ kind: "stop" }` (it currently ignores it as `opt_out`), and loose replies as `{ kind: "correction", chain_id, corrected_text }` (it currently asks the human to clarify).
 
 
 ## Karan
 
+### Public URL for Inkbox webhooks (until the Manufact deploy is up)
+Inkbox can't reach `localhost`, so `/inkbox/inbound`, `/inkbox/text` and `/inkbox/imessage` need a public URL.
+1. **mcp-use's built-in tunnel (try first):** `npm run dev -- --tunnel`. It prints a public URL that forwards to the whole local server, webhooks included.
+2. **ngrok (fallback):** run `npm run dev`, then `ngrok http 3000`, and use the `https://...ngrok...` URL it prints.
+3. **Inkbox's own Tunnels API** is listed in their docs (inkbox.ai/docs/api/tunnels) but nobody has tested it. Use 1 or 2.
+
+Then subscribe with that URL (Sarah's snippet; the first subscription on an identity returns its signing secret once, so put it in `.env` as `INKBOX_WEBHOOK_SECRET`):
+- Each task identity (or `task-demo` for the demo), event `message.received`, URL `https://<public>/inkbox/inbound`.
+- `proxy-agent`, event `text.received` to `https://<public>/inkbox/text`, and `imessage.received` to `https://<public>/inkbox/imessage`.
+
+The tunnel URL changes every run, so re-subscribe after restarting it. `WEBHOOK_URL=https://<public>/inkbox/inbound node --env-file=.env src/inkbox/check.mjs` tests inbound delivery end to end. Without a tunnel, `INKBOX_DRY_RUN=1` accepts unsigned test posts to the same routes.
+
 ### How to ship the MCP App (live chain) with mcp-use 2.10.1
+- **Status:** the live-chain widget is at `src/app/live-chain/` and shown by `get_chain`. It polls `get_chain` every 2 s and turns a row green only when `stripe_verified` is true.
+- **Known limit:** `npm run dev` can't load views from `src/app/`, because the mcp-use 2.10.1 dev server only forwards `/views/...` paths to Vite. To see the widget, use `npm run preview` (build, then start with the inspector at `/inspector`). Deploys use the build, so they're unaffected.
+- **No countdown:** `get_chain` has no server time and the demo clock is simulated, so the widget shows when the window closes instead of a countdown.
 Found by scaffolding `create-mcp-use-app --template mcp-apps` and reading the installed CLI and types.
 - A view is `src/app/<name>/view.tsx` with a default-exported React component. The CLI finds every `<views-dir>/*/view.tsx`; our scripts pass `--views-dir src/app` (the default is `views/`).
 - Bind it to a tool with `view: { name: "<name>", description, prefersBorder, csp: { resourceDomains: [...] } }` in `server.tool({...})`. The tool must declare an `outputSchema`; the view reads the tool's `structuredContent`.
@@ -171,6 +190,15 @@ Read `src/logic/compare.ts` and `tests/logic/compare.test.ts` on `origin/dhwanil
 
 ### Refunds: done
 Merchants no longer refund. `selfServeCancel`, the hotel agent and the support desks only agree an amount and return it; the orchestrator refunds and verifies through `Payments`. `MerchantDeps` is now `{ charge, deliver }`. Cancelling again, or emailing a desk again, returns the same agreed refund, so an orchestrator retry works.
+
+### A2A: the hotel agent must send with its own key
+- Inkbox A2A needs a separate API key for each sending identity, and it rejects the admin key (`INKBOX_API_KEY`). So the hotel agent must send its `accept` / `counter` / `deny` replies with the `hotel-agent` identity's own agent-scoped key, never the admin key.
+- Sarah creates the per-identity keys (`inkbox.apiKeys.create({ label, scopedIdentityId })`). Ask her for the `hotel-agent` key, read it from an env variable (e.g. `INKBOX_HOTEL_AGENT_API_KEY`), and ask Karan under "Karan" to add the name to `.env.example`. Never commit or log the key.
+- **Dhwanil, done on my side:** the merchants read `INKBOX_AIRLINE_API_KEY`, `INKBOX_HOTEL_AGENT_API_KEY` and `INKBOX_TRANSFER_SUPPORT_API_KEY`, and `createInkboxDeliver` sends each email as the right identity with its own key (see "merchants on real Inkbox identities" under Karan). Still open: something has to receive A2A tasks sent to `hotel-agent` and call `merchants.agent("hotel").respond`.
+
+### Refunds: merchants must not refund (done: see "Refunds: done" above)
+- The orchestrator refunds every action exactly once, through `refundOnce` in `src/orchestrator/refunds.ts`: one idempotency key per action (`refund:<action_id>`), and no refund if Stripe already shows one.
+- On your branch the transfer company "refunds through Stripe when it approves". Together with the orchestrator, that would refund twice. When it approves, reply `REFUND APPROVED` with the amount and let the orchestrator issue the refund. Remove `refund` from `MerchantDeps`, or leave it unused.
 
 ### Answers from Karan (to the requests on branch dhwanil)
 `src/types.ts` wins over the context docs. Contracts froze at 2:30 PM.

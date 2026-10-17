@@ -2,7 +2,9 @@
 // capture, inkbox and stripe call. Tools and demo routes go through this object.
 import type {
   Action,
+  Alert,
   Chain,
+  ChainId,
   Clock,
   EventRow,
   Inkbox,
@@ -30,6 +32,13 @@ export interface ProxyDeps {
   params: Params;
   /** Preferences applied when log_intent omits them (the demo can override). */
   defaultPreferences: Preferences;
+  /** The one human number (HUMAN_PHONE); empty until it is registered. */
+  humanNumber: string;
+  /**
+   * With PROXY_DEMO_ROUTES=1, every task reuses this pre-created Inkbox identity instead of getting its
+   * own, so the demo needs no new identities. Null outside the demo.
+   */
+  demoTaskId: TaskId | null;
 }
 
 export interface Proxy extends OrchestratorHooks {
@@ -41,7 +50,25 @@ export interface Proxy extends OrchestratorHooks {
   isFrozen(): boolean;
   /** Corrections waiting for the human's confirmation, by chain. */
   pendingCorrections: ReadonlyMap<string, { corrected_text: string; received_at: string }>;
+  /** Connects Sarah's human channel (created after the orchestrator, since it calls the orchestrator's hooks). */
+  setHumanChannel(channel: HumanChannelLink): void;
+  /**
+   * Texts the human about a chain and records the alert on it. Replies are matched to the most
+   * recently alerted open chain, so every text to the human must go through here.
+   */
+  textHuman(chain_id: ChainId, kind: Alert["kind"], body: string): Promise<void>;
+  /** Asks the human about a counteroffer; their next YES/NO is read as that decision. */
+  askHumanAboutCounter(chain_id: ChainId, negotiation_id: string, body: string): Promise<void>;
+  /** The open chain with the most recent alert, which an unaddressed reply belongs to. */
+  mostRecentlyAlertedOpenChain(): Promise<Chain | null>;
 }
+
+/** The part of Sarah's HumanChannel the orchestrator calls. */
+export interface HumanChannelLink {
+  expectCounterDecision(chain_id: ChainId, negotiation_id: string): void;
+}
+
+const OPEN_STATES = new Set<Chain["state"]>(["detected", "alerted", "undoing", "partial"]);
 
 /** Run identifiers for the events log; evals set these, the demo uses the fixed "demo" values. */
 const RUN = { run_id: "demo", arm: "proxy", scenario_id: "demo", layer: "live" } as const;
@@ -49,6 +76,7 @@ const RUN = { run_id: "demo", arm: "proxy", scenario_id: "demo", layer: "live" }
 export function createProxy(deps: ProxyDeps): Proxy {
   const { store, logic, clock } = deps;
   let frozen = false;
+  let humanChannel: HumanChannelLink | null = null;
   const pendingCorrections = new Map<string, { corrected_text: string; received_at: string }>();
 
   async function logEvent(row: Partial<EventRow> & Pick<EventRow, "kind">) {
@@ -99,9 +127,38 @@ export function createProxy(deps: ProxyDeps): Proxy {
     return { mismatches, chains: saved };
   }
 
+  async function mostRecentlyAlertedOpenChain(): Promise<Chain | null> {
+    const lastAlert = (c: Chain) => c.alerts.reduce((t, a) => Math.max(t, Date.parse(a.sent_at)), 0);
+    const open = (await store.listChains()).filter((c) => OPEN_STATES.has(c.state) && c.alerts.length > 0);
+    return open.sort((a, b) => lastAlert(b) - lastAlert(a))[0] ?? null;
+  }
+
+  async function textHuman(chain_id: ChainId, kind: Alert["kind"], body: string) {
+    const chain = await store.getChain(chain_id);
+    if (!chain) throw new Error(`No chain ${chain_id}`);
+    if (!deps.humanNumber) throw new Error("HUMAN_PHONE is not set; the human can't be texted");
+    await deps.inkbox.sendText("sms", deps.humanNumber, body);
+    const alert: Alert = { channel: "sms", kind, body, sent_at: clock.now() };
+    await store.upsertChain({
+      ...chain,
+      alerts: [...chain.alerts, alert],
+      state: chain.state === "detected" && kind === "chain_opened" ? "alerted" : chain.state,
+    });
+  }
+
   return {
     deps,
     refreshChains,
+    mostRecentlyAlertedOpenChain,
+    textHuman,
+    setHumanChannel(channel) {
+      humanChannel = channel;
+    },
+    async askHumanAboutCounter(chain_id, negotiation_id, body) {
+      // Tell the channel first, so a fast reply can't arrive before it knows what YES/NO means.
+      humanChannel?.expectCounterDecision(chain_id, negotiation_id);
+      await textHuman(chain_id, "reminder", body);
+    },
     logEvent,
     isFrozen: () => frozen,
     pendingCorrections,
@@ -118,7 +175,16 @@ export function createProxy(deps: ProxyDeps): Proxy {
       await logEvent({ kind: "stripe_event", task_id: event.task_id, outcome: event.kind });
     },
 
-    async onHumanReply(reply) {
+    async onHumanReply(incoming) {
+      // A reply that names no open chain belongs to the most recently alerted open chain.
+      let reply = incoming;
+      if (reply.kind !== "stop") {
+        const named = await store.getChain(reply.chain_id);
+        if (!named || !OPEN_STATES.has(named.state)) {
+          const current = await mostRecentlyAlertedOpenChain();
+          if (current) reply = { ...reply, chain_id: current.chain_id };
+        }
+      }
       const chain_id = reply.kind === "stop" ? null : reply.chain_id;
       await logEvent({ kind: "sms_in", chain_id, outcome: reply.kind });
       if (reply.kind === "stop") {
