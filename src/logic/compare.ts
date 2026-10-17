@@ -31,8 +31,10 @@ import { dateToMs, timestampToMs } from "./dates.js";
 const SETTLED_STATES: ReadonlySet<ActionState> = new Set(["verified", "kept"]);
 
 const ITEM_KEYS: ReadonlySet<string> = new Set(["item", "size", "model", "color", "plan"]);
-const ANNUAL = /\b(annual|annually|yearly|per year|12[- ]month)\b/i;
-const MONTHLY = /\b(monthly|per month|month[- ]to[- ]month)\b/i;
+// Words and shapes receipts use for a billing term: "annual", "yearly", "per year", "12-month", "/yr", "/year",
+// ISO durations P1Y and P12M, and the monthly equivalents.
+const ANNUAL = /\b(annual|annually|yearly|per year|12[- ]month|P1Y|P12M)\b|\/\s*(?:yr|year)\b/i;
+const MONTHLY = /\b(monthly|per month|month[- ]to[- ]month|P1M)\b|\/\s*(?:mo|month)\b/i;
 const MUST_HAVE = /^\s*([a-z]+)\s*:\s*(.+?)\s*$/i;
 const QUANTITY_IN_SUMMARY = /(?:\bx\s*|\bqty:?\s*|\bquantity:?\s*)(\d+)\b|\b(\d+)\s*(?:units?|pcs|pieces|items?)\b/i;
 
@@ -146,13 +148,20 @@ function dateMismatch(range: DateRange | undefined, action: Action): Mismatch | 
   };
 }
 
-/** The first action (in received order) that pushes the running total over budget. Total equal to budget is fine. */
+/**
+ * The first action (in received order) that pushes the running total over budget. Total equal to budget is fine.
+ * A charge seen by Stripe and also by email has the same ref: it is counted once, from the receipt, not twice.
+ */
 function budgetCrossing(budget: number | undefined, ordered: Action[]): { action_id: ActionId; total: number } | null {
   if (budget === undefined) {
     return null;
   }
+  const receiptRefs = new Set(ordered.filter((a) => a.source !== "stripe").map((a) => a.ref));
   let total = 0;
   for (const action of ordered) {
+    if (action.source === "stripe" && receiptRefs.has(action.ref)) {
+      continue;
+    }
     total += action.amount;
     if (total > budget) {
       return { action_id: action.action_id, total };
