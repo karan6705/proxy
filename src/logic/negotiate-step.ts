@@ -138,7 +138,7 @@ export function negotiateStep(
     const meetsMinimum = counter.amount * 100 >= preferences.min_partial_refund_pct * state.order_amount;
     return meetsMinimum
       ? acceptCounter(counter)
-      : pushBack(counter, "The offered refund is below the minimum the human accepts.");
+      : pushBack(counter, "That refund is below the minimum the customer accepts. Please improve the offer.");
   };
 
   switch (message.type) {
@@ -174,7 +174,7 @@ export function negotiateStep(
       const counter = { kind, amount };
       if (kind === "store_credit") {
         return preferences.no_store_credit
-          ? pushBack(counter, "Store credit is not acceptable under the human's preferences.")
+          ? pushBack(counter, "The customer does not accept store credit. Please refund the original payment.")
           : acceptCounter(counter);
       }
       if (kind === "partial_refund") {
