@@ -247,6 +247,41 @@ describe("QA workflows", () => {
     expect(texts().at(-1)?.body).toMatch(/^Partly done\. \$600 of \$1,240 back.*Still open: Hotel \(dispute the \$640 charge with your card\)\. Reply KEEP to accept the rest\.$/);
   });
 
+  it("8b. A hanging hotel agent blocks nothing: by text, the transfer refunds within seconds, then the timeout text and the email follow-up", async () => {
+    const calls: { type: string; via: string }[] = [];
+    // Like an A2A send that never returns.
+    const hanging: ProtocolTransport = { send: (_m, _to, message, via = "default") => (calls.push({ type: message.type, via }), new Promise<void>(() => {})) };
+    build({ PROXY_AGENT_TIMEOUT_MS: "150" }, { transport: hanging });
+    await logIntent();
+    const c = await demoChain();
+    const started = Date.now();
+    expect((await textIn(HUMAN, "UNDO ALL")).status).toBe(200);
+    await settle(async () => (await actionState(c.transfer)) === "verified" && (await actionState(c.flight)) === "verified", 3000);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(await refunded(c.transfer)).toBe(18_800);
+    await settle(async () => calls.some((x) => x.via === "email"), 3000);
+
+    const bodies = texts().map((t) => t.body);
+    const at = (text: string) => bodies.indexOf(text);
+    expect(at("Got it. Starting the undo. I'll text you as each step is confirmed in Stripe.")).toBeGreaterThan(0);
+    expect(at("Transfer refunded, $188, confirmed in Stripe.")).toBeGreaterThan(at("Got it. Starting the undo. I'll text you as each step is confirmed in Stripe."));
+    expect(at("The hotel hasn't answered, following up by email.")).toBeGreaterThan(at("Transfer refunded, $188, confirmed in Stripe."));
+    expect(calls).toEqual([{ type: "request_reversal", via: "default" }, { type: "request_reversal", via: "email" }]);
+  });
+
+  it("8c. A reply goes to the current demo run, even when an earlier run's alert has a later simulated time", async () => {
+    clock.advance(60_000); // the earlier run's alert lands later on the simulated clock
+    const first = await demoChain();
+    clock.set(START); // the next reset puts the clock back
+    await rt.proxy.startDemoTask();
+    await logIntent();
+    const second = await demoChain();
+    expect(second.chain_id).not.toBe(first.chain_id);
+    await imessageIn("UNDO ALL");
+    await settle(async () => (await chainState(second.chain_id)) === "redo_requested");
+    expect(await chainState(first.chain_id)).toBe("alerted");
+  });
+
   it("9. The hotel denies: the human is told and offered the next option", async () => {
     const denying: ProtocolTransport = {
       async send(_m, _to, message) {
