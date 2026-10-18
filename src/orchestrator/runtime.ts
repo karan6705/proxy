@@ -99,6 +99,11 @@ const shortDate = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Num
  */
 export const isCloud = (env: NodeJS.ProcessEnv): boolean => env.PROXY_MODE === "cloud";
 
+/** In cloud mode the Inkbox webhooks and the mock merchants' endpoints are not mounted at all (404). */
+export function routesFor(routes: RouteHandler[], cloud: boolean): RouteHandler[] {
+  return cloud ? routes.filter((r) => !(r.path.startsWith("/inkbox/") || r.path.startsWith("/merchants") || r.path === "/web/reply")) : routes;
+}
+
 export function createRuntime(clock: Clock, params: Params, defaultPreferences: Preferences, overrides: RuntimeOverrides = {}): Runtime {
   const env = overrides.env ?? process.env;
   const cloud = isCloud(env);
