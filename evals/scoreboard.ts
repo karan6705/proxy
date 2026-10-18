@@ -75,7 +75,9 @@ function layer2Rows(results: Layer2Results): Row[] {
     { label: "Mistakes noticed or caught", naive: outOf(naive.self_detected, naive.episodes_with_real_mistakes), proxy: outOf(proxy.caught, proxy.mistakes), hint: "agent said PROBLEM / Proxy flagged" },
     { label: "False “done” claims", naive: String(naive.false_done_claims), proxy: NA },
     { label: "False alarms", naive: NA, proxy: String(proxy.false_alarms) },
-    { label: "Refunds agreed", naive: NA, proxy: dollars(proxy.refund_agreed), hint: "merchant-agreed, not Stripe-verified" },
+    results.mode === "mcp"
+      ? { label: "Refunds Stripe shows", naive: NA, proxy: `${proxy.stripe_verified_actions ?? 0} actions`, hint: "the server's own verification" }
+      : { label: "Refunds agreed", naive: NA, proxy: dollars(proxy.refund_agreed), hint: "merchant-agreed, not Stripe-verified" },
     { label: "Agent tokens", naive: naive.tokens.toLocaleString("en-US"), proxy: proxy.tokens.toLocaleString("en-US") },
   ];
 }
@@ -148,7 +150,7 @@ export function renderScoreboard(layer1: Layer1Results | null, layer2: Layer2Res
     ? `<h2>Scripted scenarios</h2><div class="tag">${escapeHtml(layer1.summaries[0]?.scenarios ?? 0)} scenarios · Layer 1 · scripted · ${escapeHtml(runDate(layer1.run_id))}</div>${table(layer1Rows(layer1), "Naive (scripted)", notMeasured(layer1))}`
     : `<h2>Scripted scenarios</h2><p class="empty">No Layer 1 results yet. Run: npx tsx evals/run.ts</p>`;
   const second = layer2
-    ? `<h2>Live agent</h2><div class="tag">${escapeHtml(layer2.model)} · ${escapeHtml(layer2.summary.trials_per_task_arm)} trials per task and arm · Layer 2 · live · ${escapeHtml(runDate(layer2.run_id))}</div>${table(layer2Rows(layer2), "Naive (self-check)", "time to alert · Stripe-verified money · redo correctness")}${taskBlock(layer2)}`
+    ? `<h2>Live agent</h2><div class="tag">${escapeHtml(layer2.model)} · ${escapeHtml(layer2.summary.trials_per_task_arm)} trials per task and arm · Layer 2 · live · ${escapeHtml(runDate(layer2.run_id))}</div>${table(layer2Rows(layer2), "Naive (self-check)", layer2.mode === "mcp" ? "time to alert · redo correctness" : "time to alert · Stripe-verified money · redo correctness")}${taskBlock(layer2)}`
     : `<h2>Live agent</h2><p class="empty">No Layer 2 results yet. Run: npx tsx --env-file=.env evals/live/run.ts</p>`;
   const caveat = layer2?.mode === "mcp" ? `${CAVEAT} Layer 2 Proxy ran over MCP against a server.` : `${CAVEAT} Layer 2 Proxy ran in process, not over MCP.`;
   return `<!doctype html>

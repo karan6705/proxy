@@ -60,7 +60,7 @@ export interface Layer2Results {
   summary: {
     trials_per_task_arm: number;
     naive: { episodes: number; episodes_with_real_mistakes: number; self_detected: number; false_done_claims: number; tokens: number };
-    proxy: { episodes: number; episodes_with_real_mistakes: number; mistakes: number; caught: number; false_alarms: number; refund_agreed: number; tokens: number };
+    proxy: { episodes: number; episodes_with_real_mistakes: number; mistakes: number; caught: number; false_alarms: number; refund_agreed: number; stripe_verified_actions?: number; tokens: number };
   };
   episodes: Episode[];
 }
@@ -176,7 +176,11 @@ export function renderResults(layer1: { data: Layer1Results; file: string } | nu
     out.push(`| Mistakes noticed (naive: agent said PROBLEM) or caught (Proxy: flagged) | ${outOf(summary.naive.self_detected, summary.naive.episodes_with_real_mistakes)} | ${outOf(summary.proxy.caught, summary.proxy.mistakes)} |`);
     out.push(`| False "done" claims | ${summary.naive.false_done_claims} | n/a |`);
     out.push(`| False alarms | n/a | ${summary.proxy.false_alarms} |`);
-    out.push(`| Refunds agreed by merchants | n/a | ${dollars(summary.proxy.refund_agreed)} |`);
+    if (layer2.data.mode === "mcp") {
+      out.push(`| Actions whose refund Stripe shows (the server's own verification) | n/a | ${summary.proxy.stripe_verified_actions ?? 0} |`);
+    } else {
+      out.push(`| Refunds agreed by merchants | n/a | ${dollars(summary.proxy.refund_agreed)} |`);
+    }
     out.push(`| Agent tokens | ${summary.naive.tokens.toLocaleString("en-US")} | ${summary.proxy.tokens.toLocaleString("en-US")} |`);
     out.push("");
 
