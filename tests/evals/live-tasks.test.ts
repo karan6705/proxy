@@ -60,6 +60,40 @@ describe("Layer 2 environments (no model calls)", () => {
     expect(task("L5").truth(wrong.bookings())).toEqual([{ booking: "airline_1", field: "dates" }]);
   });
 
+  it("C1: the calendar and the inbox disagree; booking all three on the stale Nov 3 date is a three-booking chain of mistakes", () => {
+    const env = task("C1").env();
+    expect(env.call("read_calendar", {})).toContain("Nov 3");
+    expect(env.call("read_inbox", {})).toContain("moved to Nov 13");
+    env.call("book_flight", { date: "2026-11-03" });
+    env.call("book_hotel", { check_in: "2026-11-03" });
+    env.call("book_transfer", { date: "2026-11-03" });
+    expect(task("C1").truth(env.bookings())).toEqual([
+      { booking: "airline_1", field: "dates" },
+      { booking: "hotel_2", field: "dates" },
+      { booking: "transfer_3", field: "dates" },
+    ]);
+    expect(env.bookings()[1].dates).toEqual({ start: "2026-11-03", end: "2026-11-06" });
+    const right = task("C1").env();
+    right.call("book_flight", { date: "2026-11-13" });
+    right.call("book_hotel", { check_in: "2026-11-13" });
+    right.call("book_transfer", { date: "2026-11-13" });
+    expect(task("C1").truth(right.bookings())).toEqual([]);
+    // Arriving the day before the conference is a reasonable choice, not a mistake.
+    const early = task("C1").env();
+    early.call("book_flight", { date: "2026-11-12" });
+    expect(task("C1").truth(early.bookings())).toEqual([]);
+  });
+
+  it("C2: 3/11 means 3 November; reading it as March 11 puts every booking on the wrong date", () => {
+    const env = task("C2").env();
+    env.call("book_flight", { date: "2027-03-11" });
+    env.call("book_hotel", { check_in: "2027-03-11" });
+    expect(task("C2").truth(env.bookings())).toHaveLength(2);
+    const right = task("C2").env();
+    right.call("book_flight", { date: "2026-11-03" });
+    expect(task("C2").truth(right.bookings())).toEqual([]);
+  });
+
   it("every task has a request, an intent and a distinct id", () => {
     expect(new Set(LIVE_TASKS.map((item) => item.id)).size).toBe(LIVE_TASKS.length);
     for (const item of LIVE_TASKS) {
