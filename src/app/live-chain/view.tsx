@@ -1,4 +1,4 @@
-/** Live undo chain: one row per action, green only when Stripe verifies the refund. Shown by get_chain. */
+/** Live undo chain: one row per action, green with a check only when Stripe confirms the refund. Shown by get_chain. */
 import { useCallTool, useToolContext } from "mcp-use/react";
 import { useEffect, useState } from "react";
 import "./view.css";
@@ -13,42 +13,56 @@ interface LiveMeta {
   recovered: Record<string, number>;
   /** Message actions whose correction was sent; done with no money. */
   corrected?: string[];
+  /** Last few agent-to-agent lines. */
+  protocol?: Array<{ at: string; actor: string; text: string }>;
 }
 
 const ROUTE_LABEL: Record<string, string> = {
   self_serve: "Self-serve cancel",
   reversal_protocol: "Agent to agent",
   email_support: "Support email",
-  correction: "Correction",
+  correction: "Correction email",
   stripe_dispute: "Stripe dispute",
 };
 
 const STATE_LABEL: Record<string, string> = {
   found: "Waiting",
   planned: "Planned",
-  requested: "Requested",
-  accepted: "Accepted",
-  countered: "Countered",
+  requested: "Asked the merchant",
+  accepted: "Agreed",
+  countered: "Negotiating",
   denied: "Denied",
-  no_agent: "Emailing support",
+  no_agent: "Needs you",
   refund_pending: "Refund pending",
-  verified: "Verified in Stripe",
+  verified: "Confirmed in Stripe",
   failed: "Failed",
   kept: "Kept",
+};
+
+const CHAIN_LABEL: Record<string, string> = {
+  detected: "Mistake found",
+  alerted: "Waiting for the human",
+  undoing: "Undoing",
+  partial: "Partly undone",
+  reversed: "Reversed",
+  redo_requested: "Reversed · agent rebooking",
+  redone: "Reversed and rebooked",
+  kept: "Kept",
+  expired: "Expired",
+  closed: "Closed",
 };
 
 const usd = (cents: number) =>
   (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: cents % 100 ? 2 : 0 });
 
-function timeLeft(windowEnd: string | null | undefined, nowMs: number): string {
-  if (!windowEnd) return "No deadline";
-  const ms = Date.parse(windowEnd) - nowMs;
+function countdown(ms: number): string {
   if (ms <= 0) return "Window closed";
-  const mins = Math.floor(ms / 60_000);
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h >= 48) return `${Math.floor(h / 24)}d left`;
-  return h > 0 ? `${h}h ${m}m left` : `${m}m left`;
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h >= 48) return `${Math.floor(h / 24)} days left`;
+  return `${h > 0 ? `${h}h ` : ""}${String(m).padStart(h > 0 ? 2 : 1, "0")}m ${String(sec).padStart(2, "0")}s left`;
 }
 
 function asMeta(value: unknown): LiveMeta | undefined {
@@ -56,6 +70,8 @@ function asMeta(value: unknown): LiveMeta | undefined {
   const v = value as Partial<LiveMeta>;
   return typeof v.server_now === "string" && v.windows && v.recovered ? (v as LiveMeta) : undefined;
 }
+
+const WHO: Record<string, string> = { proxy: "Proxy", hotel_agent: "Hotel agent", stripe: "Stripe" };
 
 export default function LiveChain() {
   const tool = useToolContext<"get_chain">();
@@ -79,7 +95,7 @@ export default function LiveChain() {
     if (meta) setOffsetMs(Date.parse(meta.server_now) - Date.now());
   }, [meta?.server_now]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll get_chain so rows turn green as Stripe verifies each refund.
+  // Poll get_chain so rows turn green as Stripe confirms each refund.
   useEffect(() => {
     if (!chainId || done) return;
     const timer = window.setInterval(() => {
@@ -108,50 +124,77 @@ export default function LiveChain() {
   const now = tick + offsetMs;
   const corrected = new Set(meta?.corrected ?? []);
   const isDone = (a: { action_id: string; stripe_verified: boolean }) => a.stripe_verified || corrected.has(a.action_id);
-  const verified = chain.actions.filter((a) => a.stripe_verified).length;
+  const total = chain.actions.reduce((sum, a) => sum + a.amount, 0);
   const recovered = chain.actions.reduce((sum, a) => sum + (a.stripe_verified ? (meta?.recovered[a.action_id] ?? 0) : 0), 0);
+  const pct = total > 0 ? Math.min(100, Math.round((recovered / total) * 100)) : 0;
+  const openWindows = chain.actions
+    .filter((a) => !isDone(a))
+    .map((a) => meta?.windows[a.action_id])
+    .filter((w): w is string => typeof w === "string")
+    .map((w) => Date.parse(w))
+    .sort((a, b) => a - b);
+  const deadline = openWindows[0];
+  const protocol = meta?.protocol ?? [];
 
   return (
     <div className="lc">
       <header className="lc-head">
-        <div>
-          <div className="lc-title">Undo chain</div>
-          <div className="lc-sub">
-            {chain.actions.length} actions · {verified} verified in Stripe
-          </div>
+        <div className="lc-eyebrow">Proxy · undo chain · {CHAIN_LABEL[chain.state] ?? chain.state}</div>
+        <div className="lc-big">
+          <span className="lc-big-label">Recovered</span>
+          <span className="lc-big-value">{usd(recovered)}</span>
+          <span className="lc-big-of">of {usd(total)}</span>
         </div>
-        <div className="lc-totals">
-          <div className="lc-total">
-            <span className="lc-total-label">At risk</span>
-            <span className="lc-total-value">{usd(chain.money_at_risk)}</span>
-          </div>
-          <div className="lc-total lc-total-ok">
-            <span className="lc-total-label">Recovered</span>
-            <span className="lc-total-value">{usd(recovered)}</span>
-          </div>
+        <div className="lc-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+          <div className="lc-bar-fill" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="lc-sub">
+          <span>
+            {chain.actions.filter(isDone).length} of {chain.actions.length} done · confirmed in Stripe
+          </span>
+          {deadline !== undefined && !done && <span className="lc-countdown">{countdown(deadline - now)}</span>}
         </div>
       </header>
 
       <ol className="lc-rows">
-        {chain.actions.map((a) => (
-          <li key={a.action_id} className={`lc-row ${isDone(a) ? "lc-ok" : a.state === "failed" ? "lc-bad" : ""}`}>
-            <span className="lc-dot" aria-hidden="true" />
-            <span className="lc-what">
-              <span className="lc-summary">{a.summary}</span>
-              <span className="lc-route">{a.route ? (ROUTE_LABEL[a.route] ?? a.route) : "Not planned"}</span>
-            </span>
-            <span className="lc-amount">{a.amount ? usd(a.amount) : "—"}</span>
-            <span className="lc-time">{isDone(a) ? "Done" : timeLeft(meta?.windows[a.action_id], now)}</span>
-            <span className="lc-state">{corrected.has(a.action_id) ? "Correction sent" : (STATE_LABEL[a.state] ?? a.state)}</span>
-          </li>
-        ))}
+        {chain.actions.map((a) => {
+          const ok = isDone(a);
+          const got = meta?.recovered[a.action_id];
+          return (
+            <li key={a.action_id} className={`lc-row ${ok ? "lc-ok" : a.state === "failed" || a.state === "denied" ? "lc-bad" : ""}`}>
+              <span className="lc-mark" aria-hidden="true">{ok ? "✓" : ""}</span>
+              <span className="lc-what">
+                <span className="lc-summary">{a.summary}</span>
+                <span className="lc-route">{a.route ? (ROUTE_LABEL[a.route] ?? a.route) : "Not planned"}</span>
+              </span>
+              <span className="lc-right">
+                <span className="lc-amount">
+                  {a.stripe_verified && got !== undefined && got !== a.amount ? `${usd(got)} of ${usd(a.amount)}` : a.amount ? usd(a.amount) : "—"}
+                </span>
+                <span className="lc-state">{corrected.has(a.action_id) ? "Correction sent" : (STATE_LABEL[a.state] ?? a.state)}</span>
+              </span>
+            </li>
+          );
+        })}
       </ol>
 
+      {protocol.length > 0 && (
+        <section className="lc-a2a" aria-label="Agent to agent">
+          <div className="lc-a2a-title">Agent to agent</div>
+          {protocol.map((p, i) => (
+            <div key={`${p.at}-${i}`} className={`lc-bubble lc-from-${p.actor}`}>
+              <span className="lc-who">{WHO[p.actor] ?? p.actor}</span>
+              <span>{p.text.replace(/^[^:]+: /, "")}</span>
+            </div>
+          ))}
+        </section>
+      )}
+
       <footer className="lc-foot">
-        {chain.next_action === "wait_for_human" && "Waiting for the human's reply: UNDO ALL, PICK or KEEP."}
+        {chain.next_action === "wait_for_human" && "Waiting for the human: UNDO ALL, PICK or KEEP."}
         {chain.next_action === "redo" && "Reversed. The agent is rebooking with the corrected intent."}
-        {chain.next_action === "stop" && `Chain ${chain.state}.`}
-        {chain.rounds > 0 && ` Negotiation rounds: ${chain.rounds}.`}
+        {chain.next_action === "stop" &&
+          (chain.state === "redone" ? "Reversed and rebooked for the right dates." : `Chain ${CHAIN_LABEL[chain.state] ?? chain.state}.`)}
       </footer>
     </div>
   );

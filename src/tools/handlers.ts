@@ -49,6 +49,8 @@ export interface LiveChainMeta {
   recovered: Record<string, number>;
   /** Message actions whose correction was sent and acknowledged; their rows are done (green) with no money. */
   corrected: string[];
+  /** The last few agent-to-agent lines for this chain, in plain English (from the demo feed). */
+  protocol: Array<{ at: string; actor: string; text: string }>;
 }
 
 /** "Rebook the flight, hotel and transfer for Nov 13 to Nov 16, using <task email>. The host already has the right dates." */
@@ -354,7 +356,12 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const corrected = members
         .filter((a) => a.amount === 0 && a.state === "accepted" && chain.steps.some((s) => s.action_id === a.action_id && s.route === "correction" && s.outcome === "succeeded"))
         .map((a) => a.action_id);
-      const meta: LiveChainMeta = { server_now: now, windows, recovered, corrected };
+      const protocol = p.feed
+        .list(chain.task_id)
+        .filter((e) => e.chain_id === chain.chain_id && (e.kind === "protocol_in" || e.kind === "protocol_out" || (e.kind === "stripe_refund" && e.data.action_id && members.some((a) => a.action_id === e.data.action_id && a.merchant === "hotel"))))
+        .slice(-6)
+        .map((e) => ({ at: e.at, actor: e.actor, text: e.text }));
+      const meta: LiveChainMeta = { server_now: now, windows, recovered, corrected, protocol };
       return withMeta(ok({
         chain_id: chain.chain_id,
         state: chain.state,
