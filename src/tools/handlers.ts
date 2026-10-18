@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import { expectedRefund } from "../orchestrator/refunds.js";
 import { actionLabel, humanDate, money } from "../orchestrator/copy.js";
 import { checkIntent } from "../orchestrator/intent-words.js";
+import type { SandboxLookup } from "../orchestrator/sandbox.js";
+import { textGetChain, textListChains, textLogIntent, textReversibility, textReview, textUndo } from "./text.js";
 import { checkSelfUndo } from "../orchestrator/self-undo.js";
 import { runSelfServeRoute } from "../orchestrator/routes/self-serve.js";
 import type { Proxy } from "../orchestrator/proxy.js";
@@ -78,7 +80,7 @@ async function intentStatus(p: Proxy, task_id: string) {
 
 const merchantName = (p: Proxy, id: string) => p.deps.merchants?.get?.(id)?.name ?? id;
 
-export function createToolHandlers(getProxy: () => Proxy) {
+export function createToolHandlers(getProxy: () => Proxy, sandboxes?: SandboxLookup) {
   // Refunded amounts don't change once Stripe verified them, so each is fetched once.
   const recoveredCache = new Map<string, number>();
   /** Mismatches already written to each runtime's demo feed, so repeated reviews don't repeat them. */
@@ -123,7 +125,8 @@ export function createToolHandlers(getProxy: () => Proxy) {
           return fail("idempotency_conflict", "This idempotency_key was already used with a different intent. Use a new key for a new task.", false, "fix_now");
         }
         sessions.touch(existing.task_id);
-        return ok({ task_id: existing.task_id, task_email: existing.task_email, ...(await intentStatus(p, existing.task_id)) });
+        const again = { task_id: existing.task_id, task_email: existing.task_email, ...(await intentStatus(p, existing.task_id)) };
+        return ok(again, textLogIntent(again));
       }
       // Each task gets its own Inkbox identity. A demo run gets a fresh task id but reuses the demo identity.
       const task_id = runId ?? taskIdFor(input.idempotency_key);
@@ -162,9 +165,11 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const check = checkIntent(input.constraints, input.original_request, Number(clock.now().slice(0, 4)));
       if (check.status === "disagrees") {
         await p.askAboutIntent(task_id, check);
-        return ok({ task_id, task_email, intent_check: { status: check.status, understood: check.understood, said: check.said }, next_action: "wait_for_human" as const });
+        const asked = { task_id, task_email, intent_check: { status: check.status, understood: check.understood, said: check.said }, next_action: "wait_for_human" as const };
+        return ok(asked, textLogIntent(asked));
       }
-      return ok({ task_id, task_email, ...(input.original_request !== undefined ? { intent_check: { status: check.status } } : {}) });
+      const created = { task_id, task_email, ...(input.original_request !== undefined ? { intent_check: { status: check.status } } : {}) };
+      return ok(created, textLogIntent(created));
     },
 
     async reversibility(input: ReversibilityInput) {
@@ -183,11 +188,12 @@ export function createToolHandlers(getProxy: () => Proxy) {
         received_at: now,
         state: "found",
       };
-      return ok(logic.reversibility(preview, now));
+      const rev = logic.reversibility(preview, now);
+      return ok(rev, textReversibility(rev));
     },
 
     async review({ task_id }: ReviewInput) {
-      const p = getProxy();
+      const p = sandboxes?.forTask(task_id) ?? getProxy();
       const { store, sessions } = p.deps;
       const intent = await store.getIntent(task_id);
       if (!intent) return fail("not_found", `No task ${task_id}. Call log_intent first and use its task_id.`, false, "fix_now");
@@ -212,13 +218,14 @@ export function createToolHandlers(getProxy: () => Proxy) {
           data: { action_id: m.action_id, field: m.field, expected: String(m.expected), actual: String(m.actual) },
         });
       }
-      return ok({
+      const reviewed = {
         status: mismatches.length > 0 ? ("chain_open" as const) : ("clean" as const),
         mismatches,
         fixable_now: fixable(p, task_id, actions, mismatches, plan),
         chain_ids: chains.map((c) => c.chain_id),
         evidence_seen: await store.countEvidence(task_id),
-      });
+      };
+      return ok(reviewed, textReview(reviewed));
     },
 
     async undo({ action_ids, reason }: UndoInput) {
@@ -305,11 +312,11 @@ export function createToolHandlers(getProxy: () => Proxy) {
         }
       }
       await p.logEvent({ kind: "tool", tool_name: "undo", chain_id, outcome: `accepted:${accepted.length}` });
-      return ok({ accepted, requires_human, chain_id });
+      return ok({ accepted, requires_human, chain_id }, textUndo({ accepted, requires_human, chain_id }));
     },
 
     async get_chain({ chain_id }: GetChainInput) {
-      const p = getProxy();
+      const p = sandboxes?.forChain(chain_id) ?? getProxy();
       const { store, logic, clock } = p.deps;
       const chain = await store.getChain(chain_id);
       if (!chain) return fail("not_found", `No chain ${chain_id}. Use a chain_id from review or list_chains.`, false, "fix_now");
@@ -389,7 +396,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const labels: LiveChainMeta["labels"] = {};
       for (const a of members) labels[a.action_id] = actionLabel(a, merchantName(p, a.merchant));
       const meta: LiveChainMeta = { server_now: now, windows, recovered, corrected, labels, protocol };
-      return withMeta(ok({
+      const view = {
         chain_id: chain.chain_id,
         state: chain.state,
         actions,
@@ -398,29 +405,44 @@ export function createToolHandlers(getProxy: () => Proxy) {
         rounds: chain.steps.reduce((m, s) => Math.max(m, s.round), 0),
         ...(redo ? { redo } : {}),
         next_action,
-      }), meta);
+      };
+      return withMeta(ok(view, textGetChain(view, recovered, corrected)), meta);
     },
 
     async list_chains({ task_id }: ListChainsInput) {
       const { store, logic, clock, demo } = getProxy().deps;
+      const summarize = async (st: typeof store, list: Chain[]) => {
+        const out: ChainSummary[] = [];
+        for (const c of list) {
+          const root = await st.getAction(c.root_action_id);
+          out.push({
+            chain_id: c.chain_id,
+            task_id: c.task_id,
+            state: c.state,
+            money_at_risk: c.money_at_risk,
+            window_ends_at: c.window_ends_at,
+            action_count: c.action_ids.length,
+            root_summary: root?.summary ?? c.root_action_id,
+          });
+        }
+        return out;
+      };
+      // Sandbox runs (try_proxy_demo) are listed whatever their state, so a finished example is always there.
+      const sandboxed: ChainSummary[] = [];
+      for (const c of sandboxes ? await sandboxes.chains() : []) {
+        if (task_id !== undefined && c.task_id !== task_id) continue;
+        const sp = sandboxes!.forTask(c.task_id);
+        if (sp) sandboxed.push(...(await summarize(sp.deps.store, [c])));
+      }
       // In the demo, only the current run's chains; earlier runs stay in the Store as history.
       const scope = task_id ?? demo?.current ?? undefined;
-      if (demo && task_id === undefined && !demo.current) return ok({ chains: [] });
-      const open = (await store.listChains(scope)).filter((c) => !CLOSED_CHAIN_STATES.has(c.state));
-      const chains: ChainSummary[] = [];
-      for (const c of logic.rank(open, clock.now())) {
-        const root = await store.getAction(c.root_action_id);
-        chains.push({
-          chain_id: c.chain_id,
-          task_id: c.task_id,
-          state: c.state,
-          money_at_risk: c.money_at_risk,
-          window_ends_at: c.window_ends_at,
-          action_count: c.action_ids.length,
-          root_summary: root?.summary ?? c.root_action_id,
-        });
+      let mine: ChainSummary[] = [];
+      if (!(demo && task_id === undefined && !demo.current)) {
+        const open = (await store.listChains(scope)).filter((c) => !CLOSED_CHAIN_STATES.has(c.state));
+        mine = await summarize(store, logic.rank(open, clock.now()));
       }
-      return ok({ chains });
+      const chains = [...mine, ...sandboxed];
+      return ok({ chains }, textListChains(chains));
     },
 
     async mistakes() {
