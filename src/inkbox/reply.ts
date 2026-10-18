@@ -9,8 +9,10 @@ export type ParsedReply =
   | { kind: "numbers"; picks: number[] }
   | { kind: "yes" }
   | { kind: "no" }
-  /** STOP, START and carrier keywords. Handled by the carrier; never answered. */
-  | { kind: "opt_out" }
+  /** STOP and its synonyms: freezes all undo activity until the human replies again. */
+  | { kind: "stop" }
+  /** START, UNSTOP, HELP: the carrier answers these; never forwarded or answered. */
+  | { kind: "carrier" }
   | { kind: "unknown" };
 
 const normalize = (body: string) =>
@@ -39,7 +41,8 @@ export function parseReply(body: string): ParsedReply {
     const picks = numbersOf(picked[1]);
     return picks ? { kind: "pick", picks } : { kind: "unknown" };
   }
-  if (/^(STOP|STOPALL|UNSUBSCRIBE|CANCEL|END|QUIT|START|UNSTOP|HELP)$/.test(s)) return { kind: "opt_out" };
+  if (/^(STOP|STOPALL|UNSUBSCRIBE|CANCEL|END|QUIT)$/.test(s)) return { kind: "stop" };
+  if (/^(START|UNSTOP|HELP)$/.test(s)) return { kind: "carrier" };
   if (/^(YES|Y|ACCEPT|OK|OKAY)$/.test(s)) return { kind: "yes" };
   if (/^(NO|N|DECLINE|PUSH BACK)$/.test(s)) return { kind: "no" };
   const nums = numbersOf(s);
