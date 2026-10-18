@@ -437,7 +437,7 @@ export interface ProtocolEnvelope {
   negotiation_id: NegotiationId;
   chain_id: ChainId;
   action_id: ActionId;
-  /** 1-based; at most 3. */
+  /** 1-based; at most MAX_ROUNDS (4, src/logic/negotiate-step.ts). */
   round: number;
   sent_at: Timestamp;
 }
