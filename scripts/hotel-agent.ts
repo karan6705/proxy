@@ -4,7 +4,19 @@
 //   MCP_URL=http://localhost:3000/mcp npm run demo:hotel
 // Needs INKBOX_API_KEY and INKBOX_HOTEL_AGENT_API_KEY (A2A rejects the admin key). Keys are never printed.
 import { createA2AAccess, createClient, createMerchantBridge } from "../src/inkbox/index.js";
-import type { MerchantProtocolMessage } from "../src/types.js";
+import type { MerchantProtocolMessage, ProxyProtocolMessage } from "../src/types.js";
+import { merchantLine, money } from "../src/orchestrator/copy.js";
+
+const tty = process.stdout.isTTY;
+const color = { in: tty ? "\x1b[36m" : "", out: tty ? "\x1b[32m" : "", dim: tty ? "\x1b[2m" : "", off: tty ? "\x1b[0m" : "" };
+const orderAmounts = new Map<string, number>();
+
+function proxyAsks(m: ProxyProtocolMessage): string {
+  if (m.type === "request_reversal") return `please cancel ${m.order.ref} and refund ${money(m.order.amount)} (${m.what_went_wrong})`;
+  if (m.type === "push_back") return "no store credit, per our human's preferences; asking for a refund";
+  if (m.type === "accept_counter") return "we accept your offer";
+  return "checking with our human";
+}
 
 const env = process.env;
 const base = new URL(env.MCP_URL ?? "http://localhost:3000/mcp");
@@ -29,8 +41,12 @@ const bridge = createMerchantBridge({
         throw new Error(`hotel agent route answered ${res.status}`);
       }
       const answer = (await res.json()) as MerchantProtocolMessage;
-      const amount = answer.type === "counter" ? ` ${answer.kind} ${answer.amount}` : answer.type === "accept" ? ` ${answer.refund_amount}` : "";
-      console.log(`[hotel-agent] ${new Date().toISOString()} ${message.type} round ${message.round} (${message.negotiation_id}) -> ${answer.type}${amount}`);
+      const time = new Date().toTimeString().slice(0, 8);
+      const amount = message.type === "request_reversal" ? message.order.amount : (orderAmounts.get(message.negotiation_id) ?? 0);
+      if (message.type === "request_reversal") orderAmounts.set(message.negotiation_id, message.order.amount);
+      // The same plain-English lines as the stage page, so both agents' sides can be shown side by side.
+      console.log(`${time}  ${color.dim}round ${message.round}${color.off}  ${color.in}Proxy  ${color.off}${proxyAsks(message)}`);
+      console.log(`${time}  ${color.dim}round ${answer.round}${color.off}  ${color.out}Hotel  ${color.off}${merchantLine("Harborview Hotel agent", answer, amount).replace(/^Harborview Hotel agent: /, "")}`);
       return answer;
     },
   },
@@ -43,7 +59,7 @@ const bridge = createMerchantBridge({
   log: (line) => console.log(`[hotel-agent] ${line}`),
 });
 bridge.start();
-console.log(`hotel-agent bridge polling; answers via ${agentUrl.origin}. Ctrl+C to stop.`);
+console.log(`Harborview Hotel agent (hotel-agent) is listening for Proxy on Inkbox A2A and email. Answers come from ${agentUrl.origin}. Ctrl+C to stop.`);
 
 // The bridge's poll timer doesn't hold the process open on its own, so keep it alive until Ctrl+C.
 const keepAlive = setInterval(() => {}, 60_000);

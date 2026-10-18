@@ -61,6 +61,8 @@ function redoInstruction(intent: { task_email: string; constraints: { dates?: { 
   return `Rebook the ${list}${when}, using ${intent.task_email}.${told}`;
 }
 
+const merchantName = (p: Proxy, id: string) => p.deps.merchants.get(id)?.name ?? id;
+
 export function createToolHandlers(getProxy: () => Proxy) {
   // Refunded amounts don't change once Stripe verified them, so each is fetched once.
   const recoveredCache = new Map<string, number>();
@@ -183,7 +185,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
           chain_id: chains.find((c) => c.action_ids.includes(m.action_id))?.chain_id ?? null,
           actor: "proxy",
           kind: "mismatch",
-          text: `Proxy: ${a?.summary ?? m.action_id} has the wrong ${m.field} (${humanDate(m.actual)}, not ${humanDate(m.expected)}).`,
+          text: `Proxy: ${a ? (a.category === "message" ? `the email to ${merchantName(p, a.merchant)}` : `the ${a.category} with ${merchantName(p, a.merchant)}`) : m.action_id} has the wrong ${m.field} (${humanDate(m.actual)}, not ${humanDate(m.expected)}).`,
           data: { action_id: m.action_id, field: m.field, expected: String(m.expected), actual: String(m.actual) },
         });
       }
@@ -264,7 +266,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
           at: clock.now(),
         });
         if (merchants) {
-          p.note({ task_id: action.task_id, chain_id: chain.chain_id, actor: "agent", kind: "self_undo", text: `Agent undid its own booking: ${action.summary} (free under the airline's 24-hour rule).`, data: { action_id: id, amount: action.amount } });
+          p.note({ task_id: action.task_id, chain_id: chain.chain_id, actor: "agent", kind: "self_undo", text: `Agent undid its own ${action.category} with ${merchantName(p, action.merchant)} (free under the airline's 24-hour rule).`, data: { action_id: id, amount: action.amount } });
           const r = await runSelfServeRoute({ merchants, payments: p.deps.payments, store, clock }, chain, { ...action, state: "planned" });
           if (r.action.state === "verified") {
             p.note({ task_id: action.task_id, chain_id: chain.chain_id, actor: "stripe", kind: "stripe_refund", text: `Stripe: ${money(action.amount)} refunded on the ${p.deps.merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, data: { action_id: id, amount: action.amount, of: action.amount, refund_id: r.step.stripe_ref } });
