@@ -16,7 +16,7 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 | MCP server URL | yes | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (deployed on Manufact Cloud, verified over MCP: six tools). It is a dry-run copy with an in-memory store, which is fine for judges to connect to. Do not use a tunnel URL: it changes when the laptop restarts. |
 | Manufact organization ID | yes | `9833fb6a-873c-4b80-b5a6-16c3f30ba17c`: the organization that owns the deployed server (Sarah Khadder's Projects, slug `org-3e8505eb-iovbr`). If the server is ever redeployed under a different organization, use that organization's ID instead. |
 | Demo video URL (YouTube/Loom/etc.) | yes | `<PUBLIC VIDEO LINK>`. It must show the server working in more than one MCP client (Claude Code, Codex, Cursor), and judges must be able to watch it without requesting access. Open the link in a private window before pasting. |
-| Setup instructions for judges | no | See the draft below. |
+| Setup instructions for judges | no | See the draft below. Source code (public): https://github.com/karan6705/proxy |
 | What was the biggest blocker while building your project? | no | See the draft below. |
 | What is one missing capability that would unlock your next step? | no | See the draft below. |
 | Which capabilities would you use in the next 30 days? (up to 2) | no | Suggested: "Durable state or memory across agent sessions" and "Test workflows across MCP clients and catch regressions". The team should confirm. |
@@ -24,11 +24,11 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 
 ### Setup instructions for judges (draft)
 
-> Connect any MCP client to `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (streamable HTTP, no authentication). It exposes six tools: `log_intent`, `reversibility`, `review`, `undo`, `get_chain`, `list_chains`; a `mistakes` resource; and a live-chain view.
+> Connect any MCP client to `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (streamable HTTP, no authentication). It exposes seven tools: `log_intent`, `reversibility`, `review`, `undo`, `get_chain`, `list_chains` and `try_proxy_demo` (runs the whole story in a simulated sandbox); a `mistakes` resource; a prompt, `undo_my_agents_mistake`; and a live-chain view.
 >
-> Try it: call `log_intent` with a goal and constraints (it returns a `task_email` unique to that task), book through that address, then call `review(task_id)`. Every error has `retryable` and `next_action`; follow `next_action`. `undo` only touches the agent's own free, full-refund actions; anything else waits for the human, who answers UNDO ALL, PICK or KEEP by text, so no tool lets the agent approve its own undo.
+> Fastest way to see it work: call `try_proxy_demo` (a simulated sandbox: no real money, messages or merchants), then `get_chain` with the `chain_id` it returns. Or, by hand: call `log_intent` with a goal and constraints (it returns a `task_email` unique to that task), book through that address, then call `review(task_id)`. Every error has `retryable` and `next_action`; follow `next_action`. `undo` only touches the agent's own free, full-refund actions; anything else waits for the human, who answers UNDO ALL, PICK or KEEP by text, so no tool lets the agent approve its own undo.
 >
-> To watch a full run without setting anything up, open `https://bold-zero-0m4lf.run.mcp-use.com/web/stage?fixture=1`. The merchants and their agents in our demo are our own mocks, the clock is simulated, and money is Stripe test mode. Clients shown in the video: `<list only the clients you actually recorded, for example Claude Code, Codex, Cursor>`.
+> To watch a full run without setting anything up, open `https://bold-zero-0m4lf.run.mcp-use.com/web/stage` (the finished example) or `/web/stage?fixture=1` (the story replayed). Source code: https://github.com/karan6705/proxy. The merchants and their agents in our demo are our own mocks, the clock is simulated, and money is Stripe test mode. Clients shown in the video: `<list only the clients you actually recorded, for example Claude Code, Codex, Cursor>`.
 
 ### Builder feedback (drafts from what actually happened in this build; edit or delete anything you did not experience)
 

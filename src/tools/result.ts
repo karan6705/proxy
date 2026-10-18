@@ -13,18 +13,24 @@ export interface HandlerOptions {
   logError?: (entry: ToolErrorLog) => void;
 }
 
-export function ok<T extends object>(data: T) {
+/**
+ * `text` is a plain-English answer, sent first so clients that ignore structuredContent (and MCP App views)
+ * still get it; the JSON follows as a second block for machine readers.
+ */
+export function ok<T extends object>(data: T, text?: string) {
   const structuredContent = { ok: true as const, ...data };
+  const json = JSON.stringify(structuredContent);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }],
+    content: text ? [{ type: "text" as const, text }, { type: "text" as const, text: json }] : [{ type: "text" as const, text: json }],
     structuredContent,
   };
 }
 
 export function fail(code: ErrorCode, message: string, retryable: boolean, next_action: NextAction) {
   const structuredContent: ToolError = { ok: false, code, message, retryable, next_action };
+  const plain = `Error (${code}): ${message} ${retryable ? "You can retry." : "Don't retry the same call."} Next: ${next_action.replace(/_/g, " ")}.`;
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }],
+    content: [{ type: "text" as const, text: plain }, { type: "text" as const, text: JSON.stringify(structuredContent) }],
     structuredContent,
     isError: true as const,
   };

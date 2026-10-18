@@ -25,7 +25,11 @@
     "demo:stage": "tsx --env-file-if-exists=.env scripts/demo-stage.ts",
     "demo:go": "tsx --env-file-if-exists=.env scripts/demo-go.ts",
     "demo:offline-stage": "tsx --env-file-if-exists=.env scripts/demo-offline-stage.ts",
-    "scoreboard:snapshot": "tsx scripts/scoreboard-snapshot.ts"
+    "scoreboard:snapshot": "tsx scripts/scoreboard-snapshot.ts",
+    "prebuild": "tsx scripts/write-build-info.ts",
+    "predev": "tsx scripts/write-build-info.ts",
+    "prepreview": "tsx scripts/write-build-info.ts",
+    "prestart": "tsx scripts/write-build-info.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
