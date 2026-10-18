@@ -13,6 +13,8 @@ interface LiveMeta {
   recovered: Record<string, number>;
   /** Message actions whose correction was sent; done with no money. */
   corrected?: string[];
+  /** Short row titles. */
+  labels?: Record<string, string>;
   /** Last few agent-to-agent lines. */
   protocol?: Array<{ at: string; actor: string; text: string }>;
 }
@@ -164,7 +166,7 @@ export default function LiveChain() {
             <li key={a.action_id} className={`lc-row ${ok ? "lc-ok" : a.state === "failed" || a.state === "denied" ? "lc-bad" : ""}`}>
               <span className="lc-mark" aria-hidden="true">{ok ? "✓" : ""}</span>
               <span className="lc-what">
-                <span className="lc-summary">{a.summary}</span>
+                <span className="lc-summary" title={a.summary}>{meta?.labels?.[a.action_id] ?? a.summary}</span>
                 <span className="lc-route">{a.route ? (ROUTE_LABEL[a.route] ?? a.route) : "Not planned"}</span>
               </span>
               <span className="lc-right">

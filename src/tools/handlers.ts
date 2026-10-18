@@ -49,6 +49,8 @@ export interface LiveChainMeta {
   recovered: Record<string, number>;
   /** Message actions whose correction was sent and acknowledged; their rows are done (green) with no money. */
   corrected: string[];
+  /** Short row titles, e.g. "Hotel · Harborview Hotel · Nov 3 to Nov 6" (receipt summaries can be long). */
+  labels: Record<string, string>;
   /** The last few agent-to-agent lines for this chain, in plain English (from the demo feed). */
   protocol: Array<{ at: string; actor: string; text: string }>;
 }
@@ -63,7 +65,7 @@ function redoInstruction(intent: { task_email: string; constraints: { dates?: { 
   return `Rebook the ${list}${when}, using ${intent.task_email}.${told}`;
 }
 
-const merchantName = (p: Proxy, id: string) => p.deps.merchants.get(id)?.name ?? id;
+const merchantName = (p: Proxy, id: string) => p.deps.merchants?.get?.(id)?.name ?? id;
 
 export function createToolHandlers(getProxy: () => Proxy) {
   // Refunded amounts don't change once Stripe verified them, so each is fetched once.
@@ -299,7 +301,12 @@ export function createToolHandlers(getProxy: () => Proxy) {
         if (a) members.push(a);
       }
       const plan = intent ? logic.plan_undo(chain, members, intent.preferences, clock.now()) : [];
-      const routeOf = new Map(plan.map((s) => [s.action_id, s.route]));
+      // Settled actions drop out of a fresh plan; show the route each one actually took.
+      const routeOf = new Map<string, PlanStep["route"]>([
+        ...chain.steps.map((s) => [s.action_id, s.route] as const),
+        ...chain.plan.map((s) => [s.action_id, s.route] as const),
+        ...plan.map((s) => [s.action_id, s.route] as const),
+      ]);
       const next_action: NextAction =
         chain.state === "reversed" || chain.state === "redo_requested"
           ? "redo"
@@ -360,7 +367,13 @@ export function createToolHandlers(getProxy: () => Proxy) {
         .filter((e) => e.chain_id === chain.chain_id && (e.kind === "protocol_in" || e.kind === "protocol_out" || (e.kind === "stripe_refund" && e.data.action_id && members.some((a) => a.action_id === e.data.action_id && a.merchant === "hotel"))))
         .slice(-6)
         .map((e) => ({ at: e.at, actor: e.actor, text: e.text }));
-      const meta: LiveChainMeta = { server_now: now, windows, recovered, corrected, protocol };
+      const labels: LiveChainMeta["labels"] = {};
+      for (const a of members) {
+        const d = a.dates ? `${humanDate(a.dates.start)}${a.dates.end ? ` to ${humanDate(a.dates.end)}` : ""}` : "";
+        const what = a.category === "message" ? "Email to" : `${a.category[0]!.toUpperCase()}${a.category.slice(1)} ·`;
+        labels[a.action_id] = [`${what} ${merchantName(p, a.merchant)}`, d].filter(Boolean).join(" · ");
+      }
+      const meta: LiveChainMeta = { server_now: now, windows, recovered, corrected, labels, protocol };
       return withMeta(ok({
         chain_id: chain.chain_id,
         state: chain.state,
