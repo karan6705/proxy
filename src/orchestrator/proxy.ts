@@ -284,9 +284,11 @@ export function createProxy(deps: ProxyDeps): Proxy {
       const actions = await store.listActions(task_id);
       const { at_risk, total } = chainMoney(chain, actions);
       const left = chain.window_ends_at ? Date.parse(chain.window_ends_at) - clock.nowMs() : null;
+      const asked = intentChecks.get(task_id);
       await textHuman(chain.chain_id, "chain_opened", chainAlert({
         already: undoneByAgent(chain, actions),
         mismatch: mine[0],
+        meant: asked?.status === "confirmed_human" && asked.check.ambiguous !== undefined,
         affected: chain.action_ids.filter((id) => actions.find((a) => a.action_id === id && !["verified", "kept"].includes(a.state))).length,
         at_risk,
         total,
@@ -443,7 +445,10 @@ export function createProxy(deps: ProxyDeps): Proxy {
       if (answer.corrected) {
         await updateIntent(task_id, (i) => ({ ...i, constraints: { ...i.constraints, ...answer.corrected } }));
         intentChecks.set(task_id, { status: "confirmed_human", check: { ...entry.check, said: answer.said } });
-        await sayToHuman(task_id, `Got it: ${answer.said}. Your agent will use that.`);
+        // An agent that booked without waiting: what it booked is compared with the answer right away.
+        const booked = (await store.listActions(task_id)).length > 0;
+        await sayToHuman(task_id, booked ? `Got it: ${answer.said}. Your agent already booked, so I'm checking those bookings against that.` : `Got it: ${answer.said}. Your agent will use that.`);
+        if (booked) await alertChains(task_id);
       } else {
         intentChecks.set(task_id, { ...entry, status: "confirmed_agent" });
         await sayToHuman(task_id, `Okay, keeping ${entry.check.understood}.`);

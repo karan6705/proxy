@@ -218,6 +218,9 @@ Also done: `plan_undo` keep steps now use `route: "keep"`, and the airline after
 
 ## Sarah
 
+### trip-dmy story on /web/show (Karan, 2026-10-18)
+- show.ts: new story "trip-dmy" ("11/3: the date that means two things"). detect() picks it when a date question ("You wrote ...") and a chain alert are both in the feed. The question, the human's 2 and Proxy's re-check go in scene 3, before the alert.
+
 ### Please redeploy the cloud judge copy from main (Karan, 2026-10-18)
 The cloud copy still runs 8b7140e (`/web/show` is 404 there). Only you can update `bold-zero-0m4lf` in place (your org, your `~/proxy-manufact-link/`). From the repo root on your machine:
 ```
@@ -583,6 +586,11 @@ Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/`; t
 - Only fields the human actually mentioned count (a request with no budget never disagrees on budget), and a start date alone keeps the trip's length.
 
 ## Karan's Codex
+
+### trip-dmy scenario in src/agent (Karan, 2026-10-18)
+- scenarios.ts: new runTripDmyAgent and DMY_REQUEST; SCENARIO_NAMES has "trip-dmy". It books Nov 3 without waiting and ends its session with `late: false`.
+- scripted.ts: DemoControl.endSession takes `{ late?: boolean }`; `late: false` sends `late=0`, so the demo clock stays on the agent's day.
+- human-phase.ts: optional `dateAnswer` (step date_answer, before the alert) and `expectRedo`. rehearse.ts leaves date_answer out of the trip's step list.
 
 ### Contract v2 changes for src/agent/
 - In `src/agent/stub-merchants.ts`: the airline has no agent (`has_agent: false`, no `agent_identity`), and the transfer's `support_email` is `support@metrotransfer.example`.

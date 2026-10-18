@@ -116,7 +116,7 @@ export async function runRehearsal(options: RehearsalOptions = {}): Promise<Rehe
   }
 
   const reported = new Set(steps.map((item) => item.step));
-  for (const step of ["reset", "connect", ...SCRIPTED_DEMO_STEPS, ...(human ? HUMAN_PHASE_STEPS : [])] as const) {
+  for (const step of ["reset", "connect", ...SCRIPTED_DEMO_STEPS, ...(human ? HUMAN_PHASE_STEPS.filter((s) => s !== "date_answer") : [])] as const) {
     if (!reported.has(step)) report({ step, status: "FAIL", duration_ms: 0, error: "not run" });
   }
   const totalMs = Math.max(0, now() - totalStarted);

@@ -205,14 +205,15 @@ export function checkIntent(constraints: IntentConstraints, original_request: st
     const matches = (r: DateRange) => agent?.start === r.start && (!r.end || agent.end === r.end);
     const hit = readings.findIndex(matches);
     if (said.ambiguous && hit !== -1 && !budgetDiffers) {
-      // "3/11" and the agent took one reading: ask which one the human meant. Reply 1 is the reading the agent
-      // didn't take (as in the plain question, where 1 is the human's words), 2 is the agent's.
-      const choices = [1 - hit, hit].map((i) => ({ label: range(readings[i]), ...(i === hit ? {} : { corrected: { dates: withLength(readings[i]!, agent) } }) })) as [IntentChoice, IntentChoice];
+      // "3/11" and the agent took one reading: ask which one the human meant. The two readings go in calendar
+      // order, so reply 1 is always the earlier date and the question reads the same whichever one the agent took.
+      const order = [1 - hit, hit].sort((x, y) => readings[x]!.start.localeCompare(readings[y]!.start));
+      const choices = order.map((i) => ({ label: range(readings[i]), ...(i === hit ? {} : { corrected: { dates: withLength(readings[i]!, agent) } }) })) as [IntentChoice, IntentChoice];
       return {
         status: "disagrees",
         understood: range(agent),
         said: `${said.ambiguous.written} (${range(readings[0])} or ${range(readings[1])})`,
-        corrected: choices[0].corrected!,
+        corrected: choices.find((c) => c.corrected)!.corrected!,
         ambiguous: { written: said.ambiguous.written, agent_reading: range(readings[hit]), choices },
       };
     }

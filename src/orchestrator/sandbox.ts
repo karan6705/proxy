@@ -34,8 +34,8 @@ export interface SandboxLookup {
   chains(): Promise<Chain[]>;
 }
 
-/** The stories a sandbox can run: trip is try_proxy_demo's story; ambiguous, plan and store are /web/show's others. */
-export const SCENARIOS = ["trip", "ambiguous", "plan", "store"] as const;
+/** The stories a sandbox can run: trip is try_proxy_demo's story; trip-dmy, ambiguous, plan and store are /web/show's others. */
+export const SCENARIOS = ["trip", "trip-dmy", "ambiguous", "plan", "store"] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 export interface Sandboxes extends SandboxLookup {
@@ -172,6 +172,40 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
         `The (simulated) human replied 1, and the agent booked ${humanDate(d.start)} to ${humanDate(d.end ?? d.start)}. ` +
         (clean ? "Every confirmation matches. Caught before booking: $0 was at risk." : "The review still shows a mismatch; call review to see it.");
       return { task_id, chain_id: "", summary, finished: clean };
+    }
+
+    if (scenario === "trip-dmy") {
+      // The human writes 11/3 meaning 11 March; the agent reads Nov 3, logs it, and books everything for Nov 3 without
+      // waiting for Proxy's question. The (simulated) human replies 2 (Mar 11), Proxy finds every booking on the wrong
+      // date and alerts; UNDO ALL, the hotel negotiation, the options (1), refunds, the host correction and the redo follow.
+      // Booked on the agent's day, 9 days out, so the flight is still inside the 24-hour rule when Proxy reaches it.
+      const request = {
+        goal: "NYC trip for the conference on 11/3, under $1,500",
+        constraints: { dates: { start: "2026-11-03", end: "2026-11-06" }, budget_total: 150_000 },
+        original_request: "Book my NYC trip for the conference on 11/3, under $1,500.",
+        idempotency_key: "sandbox",
+      };
+      const logged = (await tools.log_intent(request)).structuredContent as LogIntentOutput & { ok: boolean };
+      if (!logged.ok || logged.next_action !== "wait_for_human") throw new Error("sandbox: the intent check did not ask");
+      // It doesn't wait: flight, host email, hotel and transfer, all for Nov 3, then it leaves.
+      await book(logged.task_email, "airline", "Flight SFO to JFK, Nov 3", 41_200, "flight", { start: "2026-11-03" });
+      await book(logged.task_email, "host", "Arrival email", 0, "message", { start: "2026-11-03" });
+      await book(logged.task_email, "hotel", "Hotel, 3 nights", 64_000, "hotel", { start: "2026-11-03", end: "2026-11-06" });
+      await book(logged.task_email, "transfer", "Airport transfer, Nov 3", 18_800, "transfer", { start: "2026-11-03" });
+      p.deps.sessions.end(task_id);
+      clock.advance(20_000);
+      await runtime.human.handleInbound({ from: DEMO_HUMAN_NUMBER, body: "2", via: "imessage" });
+      const chain = await biggestChain();
+      const { finished, recovered, total } = await undoAll(chain);
+      const d = (await runtime.store.getIntent(task_id))?.constraints.dates;
+      const summary =
+        SIMULATED +
+        `The human wrote "11/3" meaning 11 March; the agent read it as Nov 3 and booked the flight, hotel, transfer and host email for Nov 3 without waiting. ` +
+        `Proxy had texted: "You wrote 11/3. Your agent read it as Nov 3. Did you mean Nov 3 or Mar 11? Reply 1 or 2." The (simulated) human replied 2, so Proxy compared the bookings with Mar 11 and alerted: ` +
+        `${money(total)} at risk. The (simulated) human replied UNDO ALL. Proxy negotiated with the hotel's agent, texted the two offers, and the (simulated) human chose the 85% refund. ` +
+        `${money(recovered)} of ${money(total)} is back, confirmed on simulated payments, and the host corrected. ` +
+        (finished && d ? `The agent then rebooked for ${humanDate(d.start)} to ${humanDate(d.end ?? d.start)}.` : "The run did not finish in time; call get_chain to see where it stands.");
+      return { task_id, chain_id: chain.chain_id, summary, finished };
     }
 
     if (scenario === "plan") {
