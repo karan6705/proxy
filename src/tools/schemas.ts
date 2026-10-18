@@ -1,4 +1,4 @@
-// Zod schemas for the six tools. Each one is checked against src/types.ts with `satisfies`,
+// Zod schemas for the tools. Each one is checked against src/types.ts with `satisfies`,
 // so a contract change that isn't mirrored here fails the typecheck.
 import { z } from "zod";
 import type {
@@ -60,22 +60,22 @@ const actionState = z.enum([
 const route = z.enum(["reversal_protocol", "email_support", "self_serve", "correction", "stripe_dispute", "keep"]);
 
 const dateRange = z.object({
-  start: calendarDate,
-  end: calendarDate.optional(),
+  start: calendarDate.describe("First day, YYYY-MM-DD (check-in or departure)"),
+  end: calendarDate.optional().describe("Last day, YYYY-MM-DD (check-out or return). Omit for a single day"),
 }) satisfies z.ZodType<DateRange>;
 
 const constraints = z.object({
   dates: dateRange.optional().describe("Dates the human asked for"),
   budget_total: cents.optional().describe("Total budget for the task"),
-  destination: z.string().optional(),
+  destination: z.string().optional().describe("Where the trip or purchase is for, e.g. New York"),
   categories: z.array(category).optional().describe("Kinds of things the agent may buy"),
-  must_haves: z.array(z.string()).optional(),
+  must_haves: z.array(z.string()).optional().describe("Things every booking must have, in the human's words, e.g. \"refundable\""),
 }) satisfies z.ZodType<IntentConstraints>;
 
 const preferences = z.object({
-  no_store_credit: z.boolean(),
-  min_partial_refund_pct: z.number().min(0).max(100),
-  auto_undo: z.boolean(),
+  no_store_credit: z.boolean().describe("True: refuse store credit and ask for money back"),
+  min_partial_refund_pct: z.number().min(0).max(100).describe("Lowest partial refund Proxy may accept without asking, as a percent of the price"),
+  auto_undo: z.boolean().describe("True: Proxy undoes a mistake without waiting for the human's reply"),
 }) satisfies z.ZodType<Preferences>;
 
 const mismatchValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
@@ -99,7 +99,7 @@ const ok = z.literal(true);
 // --- log_intent ---
 export const logIntentInput = z.object({
   goal: z.string().min(1).describe('What the human asked for, in their words, e.g. "NYC trip for the Nov 13 conference, under $1,500"'),
-  constraints,
+  constraints: constraints.describe("The dates, budget and limits the human gave. Proxy compares every receipt with these"),
   preferences: preferences.partial().optional().describe("The human's rules for fixes. Omit to use defaults"),
   idempotency_key: z.string().min(1).describe("Unique per task. Retrying with the same key returns the same task"),
   original_request: z
@@ -119,7 +119,7 @@ export const logIntentOutput = z.object({
       said: z.string().optional(),
     })
     .optional()
-    .describe("disagrees: your dates or budget differ from the human's words and the human is being asked. Wait, then call log_intent again with the same idempotency_key"),
+    .describe("disagrees: your dates or budget differ from the human's words (or a date like 3/11 reads two ways) and the human is being asked. Wait, then call log_intent again with the same idempotency_key. absent: the words had no date or budget to check, so nothing was sent"),
   next_action: z.enum(["retry", "fix_now", "wait_for_human", "redo", "stop"]).optional(),
   constraints: constraints.optional().describe("The constraints to use, when the human's answer changed them"),
 }) satisfies z.ZodType<LogIntentOutput & { ok: true }>;
@@ -127,9 +127,9 @@ export const logIntentOutput = z.object({
 // --- reversibility ---
 export const reversibilityInput = z.object({
   merchant: z.string().describe("Merchant id, e.g. airline"),
-  category,
+  category: category.describe("What kind of action it is"),
   amount: cents,
-  dates: dateRange.optional(),
+  dates: dateRange.optional().describe("The dates of the booking, if it has any. Deadlines such as free cancellation depend on them"),
 }) satisfies z.ZodType<ReversibilityInput>;
 export const reversibilityOutput = z.object({
   ok,
@@ -142,7 +142,7 @@ export const reversibilityOutput = z.object({
 
 // --- review ---
 export const reviewInput = z.object({
-  task_id: taskId,
+  task_id: taskId.describe("The task_id log_intent returned"),
 }) satisfies z.ZodType<ReviewInput>;
 export const reviewOutput = z.object({
   ok,
@@ -190,7 +190,7 @@ const redoInstruction = z.object({
 }) satisfies z.ZodType<RedoInstruction>;
 
 export const getChainInput = z.object({
-  chain_id: z.string(),
+  chain_id: z.string().describe("A chain id from review.chain_ids, undo, list_chains or try_proxy_demo"),
 }) satisfies z.ZodType<GetChainInput>;
 export const getChainOutput = z.object({
   ok,
