@@ -13,8 +13,8 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 | Field | Required | Answer |
 |---|---|---|
 | Team name | yes | `Proxy` (confirm: the repo lists three people, Dhwanil Ranpura, Karan Raval and Sarah Khadder, and no separate team name) |
-| MCP server URL | yes | `<https://SLUG.run.mcp-use.com/mcp>`, from the deployed Manufact server. It must be a working HTTPS endpoint judges can connect to. A tunnel URL (`*.tunnel.mcp-use.run`) is not acceptable: it changes when the laptop restarts. |
-| Manufact organization ID | yes | `<ORG ID>`: the organization the server is deployed under. Get it with `npx mcp-use org list --json` while logged in as the person who deployed. Sarah's personal organization is `9833fb6a-873c-4b80-b5a6-16c3f30ba17c`; use that only if the server is deployed under it. If Karan deploys under his own, use his. |
+| MCP server URL | yes | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (deployed on Manufact Cloud, verified over MCP: six tools). It is a dry-run copy with an in-memory store, which is fine for judges to connect to. Do not use a tunnel URL: it changes when the laptop restarts. |
+| Manufact organization ID | yes | `9833fb6a-873c-4b80-b5a6-16c3f30ba17c`: the organization that owns the deployed server (Sarah Khadder's Projects, slug `org-3e8505eb-iovbr`). If the server is ever redeployed under a different organization, use that organization's ID instead. |
 | Demo video URL (YouTube/Loom/etc.) | yes | `<PUBLIC VIDEO LINK>`. It must show the server working in more than one MCP client (Claude Code, Codex, Cursor), and judges must be able to watch it without requesting access. Open the link in a private window before pasting. |
 | Setup instructions for judges | no | See the draft below. |
 | What was the biggest blocker while building your project? | no | See the draft below. |
@@ -24,11 +24,11 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 
 ### Setup instructions for judges (draft)
 
-> Connect any MCP client to `<MCP URL>` (streamable HTTP, no authentication). It exposes six tools: `log_intent`, `reversibility`, `review`, `undo`, `get_chain`, `list_chains`; a `mistakes` resource; and a live-chain view.
+> Connect any MCP client to `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (streamable HTTP, no authentication). It exposes six tools: `log_intent`, `reversibility`, `review`, `undo`, `get_chain`, `list_chains`; a `mistakes` resource; and a live-chain view.
 >
 > Try it: call `log_intent` with a goal and constraints (it returns a `task_email` unique to that task), book through that address, then call `review(task_id)`. Every error has `retryable` and `next_action`; follow `next_action`. `undo` only touches the agent's own free, full-refund actions; anything else waits for the human, who answers UNDO ALL, PICK or KEEP by text, so no tool lets the agent approve its own undo.
 >
-> To watch a full run without setting anything up, open `<MCP URL minus /mcp>/web/stage?fixture=1`. The merchants and their agents in our demo are our own mocks, the clock is simulated, and money is Stripe test mode. Clients shown in the video: `<list only the clients you actually recorded, for example Claude Code, Codex, Cursor>`.
+> To watch a full run without setting anything up, open `https://bold-zero-0m4lf.run.mcp-use.com/web/stage?fixture=1`. The merchants and their agents in our demo are our own mocks, the clock is simulated, and money is Stripe test mode. Clients shown in the video: `<list only the clients you actually recorded, for example Claude Code, Codex, Cursor>`.
 
 ### Builder feedback (drafts from what actually happened in this build; edit or delete anything you did not experience)
 
@@ -57,14 +57,14 @@ Do not say anything in the video or the form that this table does not support.
 | SMS | Not working outbound | The carrier dropped it with error 40002 after the API accepted it. Inbound `START` arrived. Do not claim SMS delivery. |
 | Phone call escalation | Not tested | Do not claim it |
 | "A refund only counts when Stripe shows it" | Verified in code and tests | Per Karan's orchestrator; confirm against a real Stripe test charge before saying it on camera |
-| Deployed on Manufact Cloud | **Not yet** | The server runs through a tunnel today. Deploy first, then check `<MCP URL>` with `src/inkbox/cutover-check.ts` |
+| Deployed on Manufact Cloud | Verified | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` answers `initialize` as "proxy" and `tools/list` returns six tools. It is a dry-run copy (no Inkbox, Stripe or Supabase keys), so the live email, iMessage and A2A parts are shown from the local server in the video, not from this URL. Say so if asked. |
 | Works in several MCP clients | Not yet shown | Record each client you name |
 
 ## Before you submit
 
-- [ ] The server is deployed and `<MCP URL>` answers `tools/list` with six tools. Note that the Manufact gateway answers `/health` itself, so a 200 there proves nothing; use `src/inkbox/cutover-check.ts` or a real MCP client.
-- [ ] The Inkbox webhooks point at the deployed URL (the cutover steps are in HANDOFF.md).
+- [x] The server is deployed and `https://bold-zero-0m4lf.run.mcp-use.com/mcp` answers `tools/list` with six tools (checked 2026-10-25). The Manufact gateway answers `/health` itself, so a 200 there proves nothing; use an MCP client.
+- [ ] Decide whether the Inkbox webhooks stay on Karan's tunnel (they are, and the deployed copy is dry-run) or move to a deployed server with real keys (cutover steps are in HANDOFF.md). For the submission the tunnel is fine.
 - [ ] The video is public, shows more than one MCP client, and the link works in a private window.
-- [ ] The organization ID belongs to the organization that owns the deployed server.
+- [x] The organization ID `9833fb6a-873c-4b80-b5a6-16c3f30ba17c` is the one that owns the deployed server.
 - [ ] Nothing in the text says more than the claims table allows. Merchants are mocks, the clock is simulated, Stripe is test mode.
 - [ ] Submitted before Sunday 10:00 AM PT.
