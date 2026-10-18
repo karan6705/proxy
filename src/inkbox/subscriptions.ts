@@ -14,13 +14,16 @@ export interface SyncOptions {
   proxyHandle?: string;
   /** Handles of task inboxes that should deliver email to /inkbox/inbound. */
   taskHandles: string[];
+  /** Report what would change without deleting or creating anything. */
+  dryRun?: boolean;
 }
 
 export interface SyncReport {
   handle: string;
   path: string;
   events: string[];
-  action: "created" | "replaced";
+  action: "created" | "replaced" | "would create" | "would replace";
+  url: string;
 }
 
 const pathOf = (url: string): string => {
@@ -37,13 +40,15 @@ async function replaceOurs(inkbox: InkboxSdk, identity: InkboxSdk, want: { path:
   const mine = ((existing.items ?? existing) as { id: string; url: string }[]).filter((s) => (INBOUND_PATHS as readonly string[]).includes(pathOf(s.url)));
   const removed = new Set<string>();
   for (const sub of mine) {
-    await inkbox.webhooks.subscriptions.delete(sub.id, { scope: "identity" });
+    if (!opts.dryRun) await inkbox.webhooks.subscriptions.delete(sub.id, { scope: "identity" });
     removed.add(pathOf(sub.url));
   }
   const report: SyncReport[] = [];
   for (const w of want) {
-    await inkbox.webhooks.subscriptions.create({ agentIdentityId: identity.id, url: `${base}${w.path}`, eventTypes: w.events, authToken: opts.token });
-    report.push({ handle: identity.agentHandle ?? identity.handle, path: w.path, events: w.events, action: removed.has(w.path) ? "replaced" : "created" });
+    const url = `${base}${w.path}`;
+    if (!opts.dryRun) await inkbox.webhooks.subscriptions.create({ agentIdentityId: identity.id, url, eventTypes: w.events, authToken: opts.token });
+    const was = removed.has(w.path);
+    report.push({ handle: identity.agentHandle ?? identity.handle, path: w.path, events: w.events, url, action: opts.dryRun ? (was ? "would replace" : "would create") : was ? "replaced" : "created" });
   }
   return report;
 }
@@ -75,4 +80,28 @@ export async function subscribeTaskInbox(inkbox: InkboxSdk, handle: string, env:
     log(`could not subscribe ${handle} to inbound email: ${(err as Error).message}`);
     return false;
   }
+}
+
+export interface ListedSubscription {
+  handle: string;
+  events: string[];
+  url: string;
+  /** Whether a bearer token is set on it. The token itself is never returned here. */
+  has_token: boolean;
+  status: string;
+}
+
+/** Every Inkbox subscription of ours (the three inbound paths), across all identities. No tokens are returned. */
+export async function listSubscriptions(inkbox: InkboxSdk): Promise<ListedSubscription[]> {
+  const out: ListedSubscription[] = [];
+  for (const i of await inkbox.listIdentities()) {
+    const handle = (i.agentHandle ?? i.handle) as string;
+    const identity = await inkbox.getIdentity(handle);
+    const page = await inkbox.webhooks.subscriptions.list({ agentIdentityId: identity.id, scope: "identity" });
+    for (const sub of (page.items ?? page) as { url: string; eventTypes?: string[]; authToken?: string | null; hasAuthToken?: boolean; status?: string }[]) {
+      if (!(INBOUND_PATHS as readonly string[]).includes(pathOf(sub.url))) continue;
+      out.push({ handle, events: sub.eventTypes ?? [], url: sub.url, has_token: Boolean(sub.hasAuthToken ?? sub.authToken), status: sub.status ?? "" });
+    }
+  }
+  return out;
 }
