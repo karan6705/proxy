@@ -30,6 +30,7 @@ import type {
 } from "../types.js";
 import { expectedRefund, refundOnce } from "./refunds.js";
 import { runSelfServeRoute } from "./routes/self-serve.js";
+import { chainSummary, correctionStep, deniedStep, noAnswerYet, refundedStep } from "./copy.js";
 
 /** What a support desk answers: whether it approved and the refund it agreed. */
 export interface SupportAnswer {
@@ -44,7 +45,8 @@ export interface UndoMerchants extends Pick<Merchants, "selfServeCancel" | "get"
 
 /** How Proxy's messages reach a merchant agent. Real mode: Inkbox. Loopback: the in-process mock agent answers. */
 export interface ProtocolTransport {
-  send(merchant: MerchantId, to_identity: string, message: ProxyProtocolMessage): Promise<void>;
+  /** `via: "email"` is the follow-up path when the agent hasn't answered: the same JSON by email. */
+  send(merchant: MerchantId, to_identity: string, message: ProxyProtocolMessage, via?: "default" | "email"): Promise<void>;
 }
 
 export interface UndoDeps {
@@ -59,7 +61,7 @@ export interface UndoDeps {
   /** Address support emails are sent from. */
   proxyEmail: string;
   isFrozen(): boolean;
-  textHuman(chain_id: ChainId, kind: "chain_opened" | "reminder" | "result" | "too_late", body: string): Promise<void>;
+  textHuman(chain_id: ChainId, kind: "chain_opened" | "reminder" | "progress" | "result" | "too_late", body: string): Promise<void>;
   askHumanAboutCounter(chain_id: ChainId, negotiation_id: string, body: string): Promise<void>;
   logEvent(row: { kind: "a2a" | "email_out"; chain_id?: ChainId | null; action_id?: string | null; outcome?: string | null; task_id?: string | null }): Promise<void>;
 }
@@ -73,12 +75,17 @@ export interface UndoExecutor {
   onProtocolMessage(message: MerchantProtocolMessage, realReceivedAt?: string): Promise<void>;
   /** Marks the chain's actions kept and closes it. */
   keep(chain_id: ChainId): Promise<void>;
+  /** After STOP is lifted: carries on with steps the STOP held back, on every chain still undoing. */
+  resume(): Promise<void>;
   /** Latest real-time ISO of a processed merchant message, for restarting the inbox. Null when none. */
   lastProcessedAt(): Promise<string | null>;
 }
 
+const DATE_OF = (intent: Intent) => intent.constraints.dates;
 const money = (c: Cents) => `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: c % 100 ? 2 : 0 })}`;
-const DONE_STATES = new Set<Action["state"]>(["verified", "accepted", "kept", "failed", "denied"]);
+const DONE_STATES = new Set<Action["state"]>(["verified", "accepted", "kept", "failed", "denied", "no_agent"]);
+/** Negotiation states in which Proxy is waiting on the merchant agent. */
+const WAITING = new Set<NegotiationState["state"]>(["requested", "countered", "pushed_back", "accepted"]);
 const IN_MARK = /\[in:([^|\]]+)\|[^\]]*\]$/;
 
 export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
@@ -149,6 +156,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     }
     await setState(action, "verified");
     await step(chain, action, route, "succeeded", `${note}; refunded ${money(agreed)}, verified in Stripe`, { stripe_ref: ref });
+    await deps.textHuman(chain.chain_id, "progress", refundedStep(action, r.refunded_amount));
     return "verified";
   }
 
@@ -157,22 +165,23 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     if (chain.state !== "undoing") return;
     const todo = actions.filter((a) => chain.plan.some((p) => p.action_id === a.action_id && p.option !== "keep"));
     if (todo.some((a) => !DONE_STATES.has(a.state))) return;
-    const bad = todo.filter((a) => a.state === "failed" || a.state === "denied");
-    const lines = actions.map((a) => `${a.summary}: ${a.state === "verified" ? `refunded ${money(expectedRefund(chain, a))}, verified in Stripe` : a.state === "accepted" ? "corrected" : a.state}`);
+    const bad = todo.filter((a) => a.state === "failed" || a.state === "denied" || a.state === "no_agent");
+    const summary = chainSummary(actions.map((a) => ({ action: a, refunded: a.state === "verified" ? expectedRefund(chain, a) : 0 })), DATE_OF(intent));
     if (bad.length) {
       await store.upsertChain({ ...chain, state: "partial" });
-      await deps.textHuman(chain_id, "result", `Proxy undid part of this. ${lines.join("; ")}. ${bad.length} still needs you.`);
+      await deps.textHuman(chain_id, "result", summary);
       return;
     }
     // The agent gets the corrected intent back through get_chain and rebooks (next_action "redo").
     await store.upsertChain({ ...chain, state: "redo_requested" });
-    await deps.textHuman(chain_id, "result", `Done. ${lines.join("; ")}. Your agent has the corrected plan (${intent.goal}) and will rebook.`);
+    await deps.textHuman(chain_id, "result", summary);
   }
 
   // --- routes ---
 
   async function runSelfServe(chain: Chain, action: Action) {
-    await runSelfServeRoute({ merchants, payments, store, clock }, chain, action);
+    const r = await runSelfServeRoute({ merchants, payments, store, clock }, chain, action);
+    if (r.action.state === "verified") await deps.textHuman(chain.chain_id, "progress", refundedStep(action, action.amount));
   }
 
   function requestFor(chain: Chain, intent: Intent, action: Action, state: NegotiationState): RequestReversal {
@@ -228,7 +237,58 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     negotiations.set(state.negotiation_id, { state, merchant: action.merchant, chain_id: chain.chain_id, action: updated });
     await step(chain, action, "reversal_protocol", "pending", "Asked the merchant agent to reverse the booking", { protocol_state: "requested", round: 1 });
     await deps.logEvent({ kind: "a2a", chain_id: chain.chain_id, action_id: action.action_id, outcome: "out:request_reversal" });
-    await deps.transport.send(action.merchant, agent, request);
+    await sendToAgent(state.negotiation_id, request);
+  }
+
+  // --- waiting on the merchant agent: follow up by email, then give up, never silently ---
+
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const lastSent = new Map<string, ProxyProtocolMessage>();
+  const followedUp = new Set<string>();
+
+  async function sendToAgent(negotiation_id: string, message: ProxyProtocolMessage, via: "default" | "email" = "default") {
+    const neg = negotiations.get(negotiation_id);
+    if (!neg) return;
+    lastSent.set(negotiation_id, message);
+    armTimer(negotiation_id);
+    await deps.transport.send(neg.merchant, merchants.get(neg.merchant)?.agent_identity ?? neg.merchant, message, via);
+  }
+
+  function armTimer(negotiation_id: string) {
+    clearTimeout(timers.get(negotiation_id));
+    const t = setTimeout(() => {
+      timers.delete(negotiation_id);
+      serial(negotiation_id, () => onSilence(negotiation_id)).catch((e) => console.error("[undo] follow-up failed:", e));
+    }, deps.params.MERCHANT_REPLY_TIMEOUT);
+    t.unref?.();
+    timers.set(negotiation_id, t);
+  }
+
+  async function onSilence(negotiation_id: string) {
+    const neg = negotiations.get(negotiation_id);
+    if (!neg || !WAITING.has(neg.state.state)) return;
+    const chain = await store.getChain(neg.chain_id);
+    if (!chain || chain.state !== "undoing") return; // closed, kept or expired meanwhile
+    const action = (await store.getAction(neg.action.action_id)) ?? neg.action;
+    const last = lastSent.get(negotiation_id);
+    if (!followedUp.has(negotiation_id) && last) {
+      followedUp.add(negotiation_id);
+      await step(chain, action, "reversal_protocol", "pending", "No answer from the merchant agent; following up by email", { protocol_state: neg.state.state, round: neg.state.round });
+      await deps.textHuman(chain.chain_id, "progress", noAnswerYet(action));
+      await deps.logEvent({ kind: "email_out", chain_id: chain.chain_id, action_id: action.action_id, outcome: `follow_up:${last.type}` });
+      await sendToAgent(negotiation_id, { ...last, sent_at: clock.now() } as ProxyProtocolMessage, "email");
+      return;
+    }
+    neg.state = { ...neg.state, state: "failed" };
+    await setState(action, "failed");
+    await step(chain, action, "reversal_protocol", "failed", "The merchant never answered, by agent or by email", { protocol_state: "failed" });
+    await deps.textHuman(chain.chain_id, "reminder", `The ${action.merchant} never answered. Next option: dispute the ${money(action.amount)} charge with your card, with the evidence Proxy collected. Reply KEEP to accept the loss.`);
+    await finishIfDone(chain.chain_id);
+  }
+
+  function stopWaiting(negotiation_id: string) {
+    clearTimeout(timers.get(negotiation_id));
+    timers.delete(negotiation_id);
   }
 
   async function runEmailSupport(chain: Chain, action: Action) {
@@ -283,6 +343,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     // A correction moves no money, so there is nothing for Stripe to show.
     await setState(action, "accepted");
     await step(chain, action, "correction", "succeeded", "Correction sent and acknowledged");
+    await deps.textHuman(chain.chain_id, "progress", correctionStep(action, dates));
   }
 
   async function runStep(chain: Chain, intent: Intent, action: Action, plan: PlanStep) {
@@ -312,6 +373,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   async function applyNegotiation(neg: { state: NegotiationState; merchant: MerchantId; chain_id: ChainId; action: Action }, message: MerchantProtocolMessage) {
     const { chain, intent } = await load(neg.chain_id);
     const action = (await store.getAction(neg.action.action_id)) ?? neg.action;
+    stopWaiting(neg.state.negotiation_id);
     const out = logic.negotiate_step(neg.state, message, intent.preferences) as ReturnType<Logic["negotiate_step"]> & { ignored_text?: { field: string; text: string }[] };
     // Untrusted merchant text is counted, never acted on or stored.
     if (out.ignored_text?.length) await deps.logEvent({ kind: "a2a", chain_id: chain.chain_id, action_id: action.action_id, outcome: `ignored_text:${out.ignored_text.length}` });
@@ -339,7 +401,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       const outgoing = { ...out.outgoing, sent_at: clock.now() } as ProxyProtocolMessage;
       await setState(action, next.state === "accepted" ? "accepted" : "countered");
       await deps.logEvent({ kind: "a2a", chain_id: chain.chain_id, action_id: action.action_id, outcome: `out:${outgoing.type}` });
-      if (!deps.isFrozen()) await deps.transport.send(neg.merchant, merchants.get(neg.merchant)?.agent_identity ?? neg.merchant, outgoing);
+      if (!deps.isFrozen()) await sendToAgent(neg.state.negotiation_id, outgoing);
       return;
     }
     if (next.state === "refund_pending") {
@@ -347,6 +409,8 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       if (!deps.isFrozen()) await refundAndVerify(chain, action, agreed, "reversal_protocol", `Merchant agreed ${money(agreed)}`);
     } else if (next.state === "denied") {
       await setState(action, "denied");
+      // The merchant's reason is untrusted text: never shown or acted on.
+      await deps.textHuman(chain.chain_id, "reminder", deniedStep(action, `Next option: dispute the charge with your card, with the evidence Proxy collected. Reply KEEP to accept the loss.`));
     } else if (next.state === "failed") {
       const credit = message.type === "accept" && message.refund_amount === 0;
       await setState(action, "failed");
@@ -413,12 +477,24 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
         await step(chain, action, "reversal_protocol", "pending", "The human accepted the merchant's offer", { protocol_state: "accepted", round });
         const msg: ProxyProtocolMessage = { type: "accept_counter", negotiation_id, chain_id, action_id: action.action_id, round, sent_at: clock.now() };
         await deps.logEvent({ kind: "a2a", chain_id, action_id: action.action_id, outcome: "out:accept_counter" });
-        await deps.transport.send(neg.merchant, merchants.get(neg.merchant)?.agent_identity ?? neg.merchant, msg);
+        await sendToAgent(negotiation_id, msg);
       });
     },
 
     onProtocolMessage(message, realReceivedAt) {
       return serial(message.negotiation_id, () => handleMerchantMessage(message, realReceivedAt));
+    },
+
+    async resume() {
+      for (const chain of await store.listChains()) {
+        if (chain.state !== "undoing") continue;
+        const { intent, actions } = await load(chain.chain_id);
+        for (const p of chain.plan) {
+          const action = actions.find((a) => a.action_id === p.action_id);
+          if (action && (action.state === "found" || action.state === "planned")) await runStep(chain, intent, action, p);
+        }
+        await finishIfDone(chain.chain_id);
+      }
     },
 
     async keep(chain_id) {
