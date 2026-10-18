@@ -47,10 +47,10 @@ export function textUndo(r: UndoOutput): string {
   return lines.join("\n");
 }
 
-export function textGetChain(r: GetChainOutput, recovered: Record<string, number> = {}, corrected: string[] = []): string {
+export function textGetChain(r: GetChainOutput, recovered: Record<string, number> = {}, corrected: string[] = [], via = "Stripe"): string {
   const total = r.actions.reduce((t, a) => t + a.amount, 0);
   const back = r.actions.reduce((t, a) => t + (a.stripe_verified ? (recovered[a.action_id] ?? 0) : 0), 0);
-  const lines = [`Chain ${r.chain_id}: ${r.state}. ${money(back)} of ${money(total)} recovered and confirmed in Stripe.`];
+  const lines = [`Chain ${r.chain_id}: ${r.state}. ${money(back)} of ${money(total)} recovered and confirmed in ${via}.`];
   for (const a of r.actions) {
     const mark = a.stripe_verified || corrected.includes(a.action_id) ? "[done]" : "[open]";
     const detail = a.stripe_verified ? `refunded ${money(recovered[a.action_id] ?? a.amount)}${(recovered[a.action_id] ?? a.amount) < a.amount ? ` of ${money(a.amount)}` : ""}, confirmed` : corrected.includes(a.action_id) ? "correction sent" : a.state;

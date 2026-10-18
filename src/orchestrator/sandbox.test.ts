@@ -30,7 +30,7 @@ describe("try_proxy_demo sandbox", () => {
       expect(view.structuredContent).toMatchObject({ ok: true, state: "redone", next_action: "stop" });
       const recovered = Object.values(("_meta" in view ? view._meta.recovered : {}) as Record<string, number>).reduce((t, n) => t + n, 0);
       expect(recovered).toBe(114_400);
-      expect(view.content[0]?.text).toContain("$1,144 of $1,240 recovered");
+      expect(view.content[0]?.text).toContain("$1,144 of $1,240 recovered and confirmed in Stripe (simulated).");
     }
     const listed = (await tools.list_chains({})).structuredContent;
     expect(listed.ok && listed.chains.map((c) => c.task_id).sort()).toEqual([a.task_id, b.task_id].sort());

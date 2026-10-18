@@ -4,13 +4,16 @@ import { MCPServer } from "mcp-use";
 import { z } from "zod";
 import { createSimulatedClock } from "./orchestrator/clock.js";
 import { DEFAULT_PARAMS } from "./orchestrator/params.js";
-import { createRuntime, startProtocolInbox, type Runtime } from "./orchestrator/runtime.js";
+import { createRuntime, isCloud, startProtocolInbox, type Runtime } from "./orchestrator/runtime.js";
+import { createSandboxes } from "./orchestrator/sandbox.js";
+import { BUILD_COMMIT } from "./build-info.js";
+import { execSync } from "node:child_process";
 import type { Action, HttpMethod, Preferences, RouteHandler, RouteRequest } from "./types.js";
 import { MISTAKES_RESOURCE_URI } from "./types.js";
 import { createToolHandlers, type LiveChainMeta } from "./tools/handlers.js";
 import { toStageFeed, type StageChainInput } from "./orchestrator/stage.js";
 import { actionLabel } from "./orchestrator/copy.js";
-import { advertise, handler } from "./tools/result.js";
+import { advertise, handler, ok } from "./tools/result.js";
 import {
   getChainInput,
   getChainOutput,
@@ -22,6 +25,8 @@ import {
   reversibilityOutput,
   reviewInput,
   reviewOutput,
+  tryProxyDemoInput,
+  tryProxyDemoOutput,
   undoInput,
   undoOutput,
 } from "./tools/schemas.js";
@@ -47,7 +52,12 @@ const server = new MCPServer({
 // Demo time starts at the seeded DEMO_NOW and runs at real speed, so idle sessions end on their own.
 const clock = createSimulatedClock(DEMO_NOW, 1);
 let runtime: Runtime = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES);
-const tools = createToolHandlers(() => runtime.proxy);
+// The cloud judge copy (PROXY_MODE=cloud) never reaches a real service. The sandbox (try_proxy_demo) is available there
+// and wherever demo routes are on: each run is its own isolated simulation.
+const cloud = isCloud(process.env);
+const sandboxEnabled = cloud || process.env.PROXY_DEMO_ROUTES === "1";
+const sandboxes = createSandboxes();
+const tools = createToolHandlers(() => runtime.proxy, sandboxEnabled ? sandboxes : undefined);
 
 const writeHints = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const readHints = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
@@ -149,6 +159,33 @@ export const listChains = server.tool(
   handler(listChainsInput, tools.list_chains, { toolName: "list_chains" }),
 );
 
+// A 7th tool, only where it is safe and useful: runs the whole story in a simulated sandbox.
+if (sandboxEnabled) {
+  server.tool(
+    {
+      name: "try_proxy_demo",
+      title: "Try the Proxy demo (simulated sandbox)",
+      description:
+        "Runs the whole Proxy story in a simulated sandbox and returns a chain you can inspect: an agent books a trip for Nov 3 instead of Nov 13, undoes its flight itself, " +
+        "Proxy alerts the (simulated) human, who replies UNDO ALL, Proxy negotiates with a hotel agent (store credit refused, then 85% accepted), gets a transfer refunded and a host corrected, and the agent rebooks Nov 13. " +
+        "Everything is simulated: no real money, messages or merchants, and each call is its own isolated run. It is the fastest way to see Proxy work. " +
+        "Next: call get_chain with the returned chain_id to see the finished chain; call list_chains to see every sandbox chain.",
+      inputSchema: advertise(tryProxyDemoInput),
+      outputSchema: tryProxyDemoOutput,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    handler(
+      tryProxyDemoInput,
+      async () => {
+        const r = await sandboxes.run();
+        const next_action = "call get_chain with this chain_id to see the result";
+        return ok({ task_id: r.task_id, chain_id: r.chain_id, summary: r.summary, finished: r.finished, next_action }, `${r.summary}\nchain_id: ${r.chain_id}\nNext: ${next_action}.`);
+      },
+      { toolName: "try_proxy_demo" },
+    ),
+  );
+}
+
 // A walkthrough an agent (or a person in a client) can pull up: how to use Proxy around a task.
 server.prompt(
   {
@@ -227,11 +264,42 @@ export function mountRoutes(handlers: RouteHandler[]): void {
   }
 }
 
+function commitSha(): string {
+  const fromEnv = process.env.PROXY_COMMIT?.trim();
+  if (fromEnv) return fromEnv.slice(0, 7);
+  if (BUILD_COMMIT !== "unknown") return BUILD_COMMIT;
+  try {
+    return execSync("git rev-parse --short=7 HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+const COMMIT = commitSha();
+
+function healthReport() {
+  const set = (name: string) => Boolean(process.env[name]?.trim());
+  const live = (configured: boolean) => (cloud ? "disabled (cloud mode)" : configured ? "OK" : "not configured");
+  return {
+    ok: true,
+    commit: COMMIT,
+    mode: cloud ? "cloud" : process.env.PROXY_DEMO_ROUTES === "1" ? "demo" : "live",
+    sandbox: sandboxEnabled ? "OK" : "off",
+    services: {
+      stripe: live(set("STRIPE_SECRET_KEY")),
+      inkbox: live(set("INKBOX_API_KEY")),
+      supabase: live(set("SUPABASE_URL") && set("SUPABASE_SERVICE_ROLE_KEY")),
+      anthropic: live(set("ANTHROPIC_API_KEY")),
+      inkbox_webhook_auth: live(set("INKBOX_WEBHOOK_TOKEN") || set("INKBOX_WEBHOOK_SECRET")),
+    },
+  };
+}
+
 mountRoutes([
   {
     method: "GET",
     path: "/health",
-    handle: async () => ({ status: 200, body: { ok: true } }),
+    // Which build is running, in which mode, and which services are configured (names and OK only, never values).
+    handle: async () => ({ status: 200, headers: { "cache-control": "no-store" }, body: healthReport() }),
   },
   {
     // Dhwanil's scoreboard slide, built from the newest eval result files on each request.
@@ -252,8 +320,9 @@ mountRoutes([
 
 // Sarah's webhooks: inbound email to task addresses (capture) and the human's texts and iMessages.
 // They delegate to the current runtime, which /demo/reset replaces.
+// In cloud mode the Inkbox webhooks and the mock merchants' endpoints are not mounted at all (404).
 mountRoutes(
-  runtime.routes.map((r) => ({
+  runtime.routes.filter((r) => !cloud || !(r.path.startsWith("/inkbox/") || r.path.startsWith("/merchants"))).map((r) => ({
     method: r.method,
     path: r.path,
     handle: (req: RouteRequest) => {
@@ -299,8 +368,10 @@ function parseBody<S extends z.ZodType>(schema: S, req: RouteRequest): z.output<
 
 const bad = (message: string) => ({ status: 400, body: { ok: false, message } });
 
-if (process.env.PROXY_DEMO_ROUTES === "1") {
-  mountRoutes([
+if (process.env.PROXY_DEMO_ROUTES === "1" || cloud) {
+  // In cloud mode only the read-only feed is mounted: /demo/reset and the rest are disabled (404), because
+  // try_proxy_demo runs isolated sandboxes instead.
+  const demoRoutes: RouteHandler[] = [
     {
       method: "POST",
       path: "/demo/reset",
@@ -380,10 +451,11 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
       method: "GET",
       path: "/demo/feed",
       handle: async (req) => {
-        const task_id = req.query.task_id || runtime.proxy.deps.demo?.current;
+        const task_id = req.query.task_id || runtime.proxy.deps.demo?.current || (cloud ? "sandbox_example" : undefined);
+        const p = sandboxes.forTask(task_id ?? "") ?? runtime.proxy;
         if (!task_id) return { status: 404, body: { ok: false, message: "No demo run yet. POST /demo/reset first." } };
-        const entries = runtime.proxy.feed.list(task_id);
-        const chainRow = (await runtime.store.listChains(task_id)).sort((a, b) => b.action_ids.length - a.action_ids.length)[0];
+        const entries = p.feed.list(task_id);
+        const chainRow = (await p.deps.store.listChains(task_id)).sort((a, b) => b.action_ids.length - a.action_ids.length)[0];
         let chain: StageChainInput | null = null;
         let labels: Record<string, string> = {};
         if (chainRow) {
@@ -393,23 +465,29 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
           if (view.structuredContent.ok) {
             const rows = [];
             for (const a of view.structuredContent.actions) {
-              const action = await runtime.store.getAction(a.action_id);
+              const action = await p.deps.store.getAction(a.action_id);
               if (action) rows.push({ action, label: labels[a.action_id] ?? a.summary, recovered: meta?.recovered[a.action_id] ?? 0, verified: a.stripe_verified });
             }
             chain = { chain_id: chainRow.chain_id, state: view.structuredContent.state, window_ends_at: chainRow.window_ends_at, rows };
           }
         }
-        const intent = await runtime.store.getIntent(task_id);
-        const actions = await runtime.store.listActions(task_id);
-        for (const a of actions) labels[a.action_id] ??= actionLabel(a, runtime.merchants.get(a.merchant)?.name ?? a.merchant);
+        const intent = await p.deps.store.getIntent(task_id);
+        const actions = await p.deps.store.listActions(task_id);
+        for (const a of actions) labels[a.action_id] ??= actionLabel(a, p.deps.merchants.get(a.merchant)?.name ?? a.merchant);
         // Wrong: anything compare flags now, and everything in the chain (refunded actions drop out of compare).
-        const flagged = [...(intent ? runtime.proxy.deps.logic.compare(intent, actions).map((m) => m.action_id) : []), ...(chainRow?.action_ids ?? [])];
-        const stage = toStageFeed(task_id, clock.now(), intent, entries, chain, labels, flagged, runtime.proxy.deps.paymentsName);
+        const flagged = [...(intent ? p.deps.logic.compare(intent, actions).map((m) => m.action_id) : []), ...(chainRow?.action_ids ?? [])];
+        const stage = toStageFeed(task_id, p.deps.clock.now(), intent, entries, chain, labels, flagged, p.deps.paymentsName);
         // `entries` is the full plain-English timeline; the rest is the StageFeed the stage page reads.
         return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true, ...stage, entries } };
       },
     },
-  ]);
+  ];
+  mountRoutes(cloud ? demoRoutes.filter((r) => r.path === "/demo/feed") : demoRoutes);
+}
+
+// The cloud judge copy starts with one finished example, so get_chain and list_chains have data right away (and after any restart).
+if (cloud) {
+  sandboxes.run("sandbox_example").catch((e) => console.error("[sandbox] could not seed the example:", e instanceof Error ? e.message : e));
 }
 
 // Merchant agents answer Proxy over Inkbox A2A or email; this polls for them (real Inkbox only).
