@@ -56,11 +56,11 @@ describe("merchant routes: shape", () => {
     expect(paths).not.toContain("/merchants/hotel/support");
   });
 
-  it("lists the six merchants", async () => {
+  it("lists the seven merchants", async () => {
     const { routes } = setup();
     const response = await call(routes, "GET", "/merchants");
     expect(response.status).toBe(200);
-    expect((response.body as { merchants: { merchant_id: string }[] }).merchants.map((m) => m.merchant_id)).toEqual(["airline", "hotel", "transfer", "host", "saas", "store"]);
+    expect((response.body as { merchants: { merchant_id: string }[] }).merchants.map((m) => m.merchant_id)).toEqual(["airline", "hotel", "transfer", "host", "saas", "store", "northwind"]);
   });
 });
 
