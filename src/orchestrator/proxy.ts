@@ -214,6 +214,9 @@ export function createProxy(deps: ProxyDeps): Proxy {
         // trace derives ids from the root. A late booked action can replace a message root, but callers
         // and alerts must keep referring to the chain id that was already published.
         chain_id: existing?.chain_id ?? t.chain_id,
+        // A booked root stays the root once settled (trace leaves refunded actions out, so it would pick the
+        // message next); only a message root gives way to a booked action.
+        root_action_id: existing && byId.get(existing.root_action_id)?.category !== "message" ? existing.root_action_id : t.root_action_id,
         // Actions that were already in the chain stay in it once settled (trace leaves refunded ones out),
         // so the live view keeps their green rows.
         action_ids: [...new Set([...(existing?.action_ids ?? []), ...t.action_ids])],

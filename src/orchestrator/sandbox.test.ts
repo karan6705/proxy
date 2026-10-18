@@ -34,6 +34,8 @@ describe("try_proxy_demo sandbox", () => {
     }
     const listed = (await tools.list_chains({})).structuredContent;
     expect(listed.ok && listed.chains.map((c) => c.task_id).sort()).toEqual([a.task_id, b.task_id].sort());
+    // The refunded flight stays the root; the arrival email never takes over.
+    expect(listed.ok && listed.chains.map((c) => c.root_summary)).toEqual(["Flight SFO to JFK, Nov 3", "Flight SFO to JFK, Nov 3"]);
   });
 
   it("a run never touches another run's state, texts or refunds", async () => {
