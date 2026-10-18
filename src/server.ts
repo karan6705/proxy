@@ -302,6 +302,13 @@ mountRoutes([
     handle: async () => ({ status: 200, headers: { "cache-control": "no-store" }, body: healthReport() }),
   },
   {
+    // The same report as /health. On Manufact Cloud the gateway answers /health itself ({"status":"healthy"}), so this is
+    // the route that shows which build, mode and services the deployed server really has.
+    method: "GET",
+    path: "/status",
+    handle: async () => ({ status: 200, headers: { "cache-control": "no-store" }, body: healthReport() }),
+  },
+  {
     // Dhwanil's scoreboard slide, built from the newest eval result files on each request.
     method: "GET",
     path: "/scoreboard",
