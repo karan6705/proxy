@@ -30,7 +30,7 @@ import type {
 } from "../types.js";
 import { expectedRefund, refundOnce } from "./refunds.js";
 import { runSelfServeRoute } from "./routes/self-serve.js";
-import { chainSummary, correctionStep, deniedStep, noAnswerYet, refundedStep } from "./copy.js";
+import { chainSummary, correctionStep, deniedStep, nextOption, noAnswerYet, refundedStep } from "./copy.js";
 
 /** What a support desk answers: whether it approved and the refund it agreed. */
 export interface SupportAnswer {
@@ -166,7 +166,14 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     const todo = actions.filter((a) => chain.plan.some((p) => p.action_id === a.action_id && p.option !== "keep"));
     if (todo.some((a) => !DONE_STATES.has(a.state))) return;
     const bad = todo.filter((a) => a.state === "failed" || a.state === "denied" || a.state === "no_agent");
-    const summary = chainSummary(actions.map((a) => ({ action: a, refunded: a.state === "verified" ? expectedRefund(chain, a) : 0 })), DATE_OF(intent));
+    const summary = chainSummary(
+      actions.map((a) => ({
+        action: a,
+        refunded: a.state === "verified" ? expectedRefund(chain, a) : 0,
+        next: nextOption(a, chain.plan.find((p) => p.action_id === a.action_id)),
+      })),
+      DATE_OF(intent),
+    );
     if (bad.length) {
       await store.upsertChain({ ...chain, state: "partial" });
       await deps.textHuman(chain_id, "result", summary);
@@ -442,7 +449,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
 
   return {
     async start(chain_id, picks) {
-      if (deps.isFrozen()) return;
+      // Under STOP the plan is still recorded; its steps wait for RESUME (see resume()).
       const { chain, intent, actions } = await load(chain_id);
       if (chain.state === "undoing" || chain.state === "reversed" || chain.state === "redo_requested" || chain.state === "redone") return;
       const chosen = picks ? new Set(picks.map((n) => chain.action_ids[n - 1]).filter((id): id is string => Boolean(id))) : null;
