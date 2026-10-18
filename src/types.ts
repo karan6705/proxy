@@ -597,6 +597,8 @@ export interface Params {
    * Stripe, between negotiation messages), so a viewer can follow it. 0 or unset everywhere else.
    */
   DEMO_PACE_MS?: number;
+  /** Demo only: undo one merchant at a time (the negotiation first) so each can be watched. On whenever DEMO_PACE_MS is. */
+  DEMO_SEQUENTIAL?: boolean;
   /** Simulated ms per real ms. */
   CLOCK_SCALE: number;
   /** The agent's session ends after this many ms without a tool call for the task, in ms. */
