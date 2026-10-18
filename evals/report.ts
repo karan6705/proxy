@@ -136,7 +136,7 @@ function latest<T>(prefix: string, dir: string): { data: T; file: string } | nul
 type Loaded<T> = { data: T; file: string } | null;
 
 /** The rerun of the misread tasks with the human's own words passed to log_intent (the intent check). */
-function intentSection(intent: Loaded<Layer2Results>, main: Loaded<Layer2Results>): string[] {
+function intentSection(intent: Loaded<Layer2Results>, main: Loaded<Layer2Results>, earlier: Loaded<Layer2Results>[] = []): string[] {
   if (!intent) {
     return [];
   }
@@ -151,7 +151,6 @@ function intentSection(intent: Loaded<Layer2Results>, main: Loaded<Layer2Results
   const beforeCaught = before.reduce((sum, task) => sum + task.proxy_caught, 0);
   const beforeMistakes = before.reduce((sum, task) => sum + task.proxy_mistakes, 0);
 
-  out.push("_Not part of the pitch numbers. It is kept here as a record, and stays out of them unless a rerun shows the check working._", "");
   out.push(
     `Raw log: [\`evals/results/${intent.file}\`](results/${intent.file}) (run \`${intent.data.run_id}\`). Model: \`${intent.data.model}\`. ${intent.data.summary.trials_per_task_arm} trials per task and arm, only the misread tasks (${tasks.map((task) => task.task_id).join(", ")}).`,
     "",
@@ -165,25 +164,34 @@ function intentSection(intent: Loaded<Layer2Results>, main: Loaded<Layer2Results
     out.push(`| ${task.task_id} | ${TASK_TITLES[task.task_id] ?? ""} | ${mine.length} | ${outOf(passed, mine.length)} | ${of("agrees")} / ${of("disagrees")} / ${of("absent")} | ${task.proxy_mistakes} / ${task.proxy_caught} |`);
   }
   out.push("");
+  const catches = (items: TaskCounts[]): string => outOf(items.reduce((sum, task) => sum + task.proxy_caught, 0), items.reduce((sum, task) => sum + task.proxy_mistakes, 0));
+  const perTask = tasks.map((task) => `${task.task_id} ${outOf(task.proxy_caught, task.proxy_mistakes)}`).join(", ");
+  const earlierLines = earlier.flatMap((item) => {
+    if (!item) {
+      return [];
+    }
+    const counts = layer2ByTask(item.data.episodes);
+    return [`- Earlier run, before Proxy read numeric dates: caught ${catches(counts)} ([\`evals/results/${item.file}\`](results/${item.file})).`];
+  });
   out.push(
-    `**Result: Proxy caught ${outOf(totalCaught, totalMistakes)} of the real mistakes with the human's words passed in** (the check disagreed in ${status("disagrees")} of ${proxy.length} episodes). ` +
-      (main ? `Without the words, the main run caught ${outOf(beforeCaught, beforeMistakes)} on the same two tasks. ` : "") +
-      "This is reported as it came out.",
+    `**Result: Proxy caught ${catches(tasks)} of the real mistakes with the human's words passed in** (${perTask}); the check disagreed in ${status("disagrees")} of ${proxy.length} Proxy episodes. ` +
+      (main ? `Without the words, the main run caught ${outOf(beforeCaught, beforeMistakes)} on the same two tasks.` : ""),
     "",
-    "**Why.** The check is the server's own deterministic parser (`checkIntent`, no model): it reads dates written with a month name or as ISO, and a budget, and compares them with what the agent logged. " +
-      "In C1 the human's words contain no date at all (the conference 'is on my calendar'), so there is nothing to compare. In C2 the date is written '3/11', which the parser does not read, so it says 'agrees'. " +
-      "The same check does catch a date written 'November 13' against a logged Nov 3 (tested in `tests/evals/live-intent.test.ts`), so the mechanism works where the human's words are readable. " +
-      "It does not cover a date that is only in a calendar, or one written as day/month digits.",
+    ...earlierLines,
+    ...(earlierLines.length > 0 ? [""] : []),
+    "**Why.** The check is the server's own deterministic parser (`checkIntent`, no model). It reads dates written with a month name, ISO dates and numeric dates, and a budget, and compares them with what the agent logged. " +
+      "A numeric date that reads two ways (\"3/11\" is 3 November or March 11) is treated as ambiguous: if the agent logged one reading, the human is asked which they meant. That is C2: the check disagreed every time, and the simulated human picked the reading the agent had not taken. " +
+      "In C1 the human's words contain no date at all (the conference 'is on my calendar'), so there is nothing to compare and the check says 'agrees'. It cannot catch what the human never wrote.",
     "",
     "**How it was measured.** Same tasks and agent as above. The agent is asked to pass the human's own words, copied exactly, as `original_request` in `log_intent`. " +
-      "`checkIntent` from `src/orchestrator/intent-words.ts` runs in process on what the agent logged. When it disagrees, the server would ask the human; here that answer is simulated as the human choosing their own words, and Proxy compares receipts with the corrected intent. " +
-      "A catch is therefore only as real as the parser, and the human's answer is not measured.",
+      "`checkIntent` from `src/orchestrator/intent-words.ts` runs in process on what the agent logged. When it disagrees, the server would ask the human; here that answer is simulated as the human choosing the reading they did not see the agent take, and Proxy compares receipts with the corrected intent. " +
+      "So a catch is only as real as the parser, and the human's answer is not measured. Some bookings may already be in the past (one run had the agent book March 2026): those are flagged but cannot be refunded.",
     "",
   );
   return out;
 }
 
-export function renderResults(layer1: Loaded<Layer1Results>, layer2: Loaded<Layer2Results>, intent: Loaded<Layer2Results> = null): string {
+export function renderResults(layer1: Loaded<Layer1Results>, layer2: Loaded<Layer2Results>, intent: Loaded<Layer2Results> = null, earlier: Loaded<Layer2Results>[] = []): string {
   const out: string[] = [];
   out.push("# Results", "");
   out.push("Generated by `npx tsx evals/report.ts` from the newest raw logs in `evals/results/`. Do not edit by hand: rerun the script.", "");
@@ -274,7 +282,7 @@ export function renderResults(layer1: Loaded<Layer1Results>, layer2: Loaded<Laye
     );
   }
 
-  out.push(...intentSection(intent, layer2));
+  out.push(...intentSection(intent, layer2, earlier));
 
   out.push("## What we do not claim", "");
   out.push(
@@ -287,8 +295,20 @@ export function renderResults(layer1: Loaded<Layer1Results>, layer2: Loaded<Laye
   return `${out.join("\n")}\n`;
 }
 
+/** Every file with this prefix, oldest first. */
+function allOf<T>(prefix: string, dir: string): { data: T; file: string }[] {
+  if (!existsSync(dir)) {
+    return [];
+  }
+  return readdirSync(dir)
+    .filter((name) => name.startsWith(prefix) && name.endsWith(".json"))
+    .sort()
+    .map((file) => ({ data: JSON.parse(readFileSync(join(dir, file), "utf8")) as T, file }));
+}
+
 export function renderLatestResults(dir: string = RESULTS_DIR): string {
-  return renderResults(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir), latest<Layer2Results>("intentcheck-", dir));
+  const reruns = allOf<Layer2Results>("intentcheck-", dir);
+  return renderResults(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir), reruns.at(-1) ?? null, reruns.slice(0, -1));
 }
 
 /**
@@ -325,10 +345,16 @@ export function renderPitchNumbers(layer1: Loaded<Layer1Results>, layer2: Loaded
       `| On comprehension errors (the agent misreads the request and logs the same misreading), Proxy caught ${outOf(total(comprehension, (task) => task.proxy_caught), total(comprehension, (task) => task.proxy_mistakes))}. Say this one yourself: it is the honest limit. | \`evals/results/${layer2.file}\` | The limit is S34 (the agent logs the wrong intent). |`,
     );
   }
-  const rerunTasks = intent ? layer2ByTask(intent.data.episodes) : [];
-  const intentRerun = intent
-    ? `The only rerun caught ${outOf(rerunTasks.reduce((sum, task) => sum + task.proxy_caught, 0), rerunTasks.reduce((sum, task) => sum + task.proxy_mistakes, 0))}`
-    : "No rerun has shown it working";
+  if (intent) {
+    const tasks = layer2ByTask(intent.data.episodes);
+    const total = (pick: (task: TaskCounts) => number): number => tasks.reduce((sum, task) => sum + pick(task), 0);
+    const caughtTasks = tasks.filter((task) => task.proxy_caught > 0);
+    const silentTasks = tasks.filter((task) => task.proxy_caught === 0 && task.proxy_mistakes > 0);
+    const part = (task: TaskCounts): string => `${task.task_id} ${outOf(task.proxy_caught, task.proxy_mistakes)}`;
+    out.push(
+      `| When the agent also passes the human's own words to \`log_intent\`, Proxy caught ${outOf(total((task) => task.proxy_caught), total((task) => task.proxy_mistakes))} of the real mistakes on the two misread tasks: ${caughtTasks.map(part).join(", ") || "none"}${silentTasks.length > 0 ? `; ${silentTasks.map(part).join(", ")} (the request had no date to compare)` : ""}. Without the words the main run caught 0 of 60 on the same tasks. | \`evals/results/${intent.file}\` | Only the case where the human wrote a date that reads two ways ('3/11') is caught, by asking the human; a request with no date is not. The human's answer is simulated, the check ran in process, 3 trials per arm, one small model. |`,
+    );
+  }
   out.push(
     "",
     "## Do not say",
@@ -340,7 +366,7 @@ export function renderPitchNumbers(layer1: Loaded<Layer1Results>, layer2: Loaded
     "- That the merchants, merchant agents, or the clock are real. They are our own mocks and a simulated clock; Stripe is test mode.",
     "- That Layer 1's naive column measures how often agents fail. It is a scripted assumption.",
     "- Time to alert, redo correctness, or token cost per saved mistake: not measured.",
-    `- That passing the human's own words to \`log_intent\` fixes a misread request. ${intentRerun}, so the intent check is not part of the pitch numbers until a new rerun shows otherwise.`,
+    "- That passing the human's own words fixes misread requests in general. It caught the ambiguous numeric date (asking the human which they meant), and nothing on the request that had no date.",
     "- That Proxy can catch a misreading when the request has no date. If the human never wrote a date (the conference 'is on my calendar'), there is nothing to compare the agent's dates with, so no check can catch it. Say it as a limit.",
     "",
   );

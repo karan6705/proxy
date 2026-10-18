@@ -116,10 +116,28 @@ describe("the intent check rerun and the pitch numbers", () => {
   it("reports the rerun count as it came out, with the reason and how it was measured", () => {
     expect(md).toContain("## Layer 2 rerun: the intent check from the human's own words");
     expect(md).toContain("**Result: Proxy caught 0 / 9 of the real mistakes with the human's words passed in**");
-    expect(md).toContain("the check disagreed in 0 of 3 episodes");
+    expect(md).toContain("the check disagreed in 0 of 3 Proxy episodes");
     expect(md).toContain("the human's answer is not measured");
     expect(md).toContain("(results/intentcheck-z.json)");
     expect(md).not.toMatch(/\d\s?%/);
+  });
+
+  it("reports a rerun that worked in one task only, with the before, and says which task had no date", () => {
+    const worked: Layer2Results = {
+      ...intentRun,
+      run_id: "intentcheck-2026-10-18T03-09-55-855Z",
+      episodes: [
+        episode("C1", "proxy", 3, { proxy: { caught: 0, false_alarms: [], agreed_refund_total: 0, intent_check: { status: "agrees", original_request_passed: true } } }),
+        episode("C2", "proxy", 3, { proxy: { caught: 3, false_alarms: [], agreed_refund_total: 0, intent_check: { status: "disagrees", original_request_passed: true } } }),
+      ],
+    };
+    const out = renderResults({ data: layer1, file: "a.json" }, { data: layer2, file: "b.json" }, { data: worked, file: "intentcheck-new.json" }, [{ data: intentRun, file: "intentcheck-old.json" }]);
+    expect(out).toContain("**Result: Proxy caught 3 / 6 of the real mistakes with the human's words passed in** (C1 0 / 3, C2 3 / 3)");
+    expect(out).toContain("Earlier run, before Proxy read numeric dates: caught 0 / 9 ([`evals/results/intentcheck-old.json`]");
+    const pitch = renderPitchNumbers(null, null, { data: worked, file: "intentcheck-new.json" });
+    expect(pitch).toContain("Proxy caught 3 / 6 of the real mistakes on the two misread tasks: C2 3 / 3; C1 0 / 3 (the request had no date to compare)");
+    expect(pitch).toContain("a request with no date is not");
+    expect(pitch).not.toMatch(/\d\s?%/);
   });
 
   it("leaves the section out when there is no rerun", () => {
@@ -130,14 +148,13 @@ describe("the intent check rerun and the pitch numbers", () => {
     const pitch = renderPitchNumbers({ data: layer1, file: "layer1-x.json" }, { data: layer2, file: "layer2-y.json" }, { data: intentRun, file: "intentcheck-z.json" });
     expect(pitch).toContain("`evals/results/layer1-x.json`");
     expect(pitch).toContain("`evals/results/layer2-y.json`");
-    // The intent check rerun is not part of the pitch numbers: it is only in the do-not-say list.
-    expect(pitch).not.toContain("intentcheck-z.json");
+    expect(pitch).toContain("`evals/results/intentcheck-z.json`");
     expect(pitch).toContain("Proxy caught 39 of 44 real mistakes; 5 are documented known misses");
     expect(pitch).toContain("never quote it as how often agents miss things");
     expect(pitch).toContain("## Do not say");
     expect(pitch).toContain("4.8 to 9.3 times");
     expect(pitch).toContain("UCP Checker");
-    expect(pitch).toContain("fixes a misread request. The only rerun caught 0 / 9");
+    expect(pitch).toContain("fixes misread requests in general");
     expect(pitch).toContain("when the request has no date");
     expect(pitch).toContain("there is nothing to compare the agent's dates with");
     expect(pitch).not.toMatch(/\d\s?%/);
