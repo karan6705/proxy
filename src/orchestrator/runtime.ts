@@ -181,13 +181,14 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
       }
       const agent = merchants.agent(merchant);
       if (!agent) throw new Error(`No merchant agent for ${merchant}`);
-      // The mock agent answers in the background, like a message arriving later.
-      setImmediate(() => {
+      // The mock agent answers in the background, like a message arriving later (paced in the demo).
+      const pace = demoOn ? Math.max(0, Number(env.DEMO_PACE_MS ?? process.env.DEMO_PACE_MS ?? 2500) || 0) * 0.8 : 0;
+      setTimeout(() => {
         agent
           .respond(message, clock.now())
           .then((answer) => proxyRef?.onProtocolMessage(answer))
           .catch((e) => console.error("[protocol] loopback answer failed:", e));
-      });
+      }, pace);
     },
   };
   const humanPhone = cloud ? "" : (env.HUMAN_PHONE?.trim() ?? "");
@@ -222,6 +223,8 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     params: {
       ...params,
       MERCHANT_REPLY_TIMEOUT: env.PROXY_AGENT_TIMEOUT_MS ? Number(env.PROXY_AGENT_TIMEOUT_MS) : demoOn ? 60_000 : params.MERCHANT_REPLY_TIMEOUT,
+      // Pacing for the screen, demo mode only (PROXY_DEMO_ROUTES=1): DEMO_PACE_MS, default 2.5 s. Never outside the demo.
+      DEMO_PACE_MS: demoOn ? Math.max(0, Number(env.DEMO_PACE_MS ?? process.env.DEMO_PACE_MS ?? 2500) || 0) : 0,
     },
     defaultPreferences,
     demo: env.PROXY_DEMO_ROUTES === "1" ? { identityTaskId: env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo", current: null } : null,

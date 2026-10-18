@@ -19,7 +19,9 @@ export type FeedKind =
   | "email_in"
   | "stripe_refund"
   | "chain"
-  | "redo";
+  | "redo"
+  /** Demo pacing: a visible "waiting for a reply…" or "verifying in Stripe…" before the next step lands. */
+  | "wait";
 
 export interface FeedEntry {
   /** Order of arrival, which is time order. */
