@@ -20,6 +20,12 @@
 
 ## Karan
 
+### QA pass on the live demo (2026-10-18)
+- `npm run demo:hotel` stays up until Ctrl+C, names any missing variable, logs each answer, and picks up requests from the last 30 minutes.
+- Undo steps run side by side. A merchant agent that is slow or hangs blocks nothing: after `MERCHANT_REPLY_TIMEOUT` (60 s in the demo, `PROXY_AGENT_TIMEOUT_MS`) Proxy texts "The hotel hasn't answered, following up by email" and resends the request by email. After a second timeout it tells the human, and the summary names the next option.
+- One text per confirmed step, then one summary. All texts come from `src/orchestrator/copy.ts`.
+- The 16 workflows are tests in `src/orchestrator/workflows.test.ts`.
+
 ### Status: UNDO ALL runs end to end (2026-10-17)
 - `src/orchestrator/undo.ts` runs a chain after UNDO ALL or PICK: plan from `plan_undo`, then self-serve (flight), Reversal Protocol (hotel: request, store-credit counter, push back, 85% counter, accept_counter, accept, refund, verify), support email (transfer), and a correction email (host). The chain ends `redo_requested`, and `get_chain` returns the redo instruction.
 - One text per chain, by iMessage (`HUMAN_ALERT_CHANNEL=sms` switches it), sent 1.5 s after the last late confirmation (`PROXY_ALERT_SETTLE_MS`). Without `HUMAN_PHONE`, the alert is recorded but not sent, and the `/web` page buttons reply as the human (demo only).
@@ -263,6 +269,19 @@ Full negotiation run between `proxy-agent` and `hotel-agent` on real Inkbox: req
 - `/web` is mounted from the runtime. Its buttons are on with `PROXY_DEMO_ROUTES=1`; without `HUMAN_PHONE` they act as a placeholder number that is never texted.
 - `INKBOX_PROXY_API_KEY` isn't in `.env` yet, so each start mints a key. Please send it.
 
+
+### From Karan: QA pass on the live demo (2026-10-18)
+Found in Karan's live run on port 3000, read from `/web/state`:
+1. **Replies went to an earlier run's chain.** `currentChain()` in human.ts picks the chain with the latest alert `sent_at`, across all chains, including terminal and expired ones. Each demo reset sets the simulated clock back, so the earlier run's alert (14:00:29) looked newer than the current run's (14:00:23). The UNDO ALL went to that older chain, which was already undoing, so nothing happened, but "Got it" was still sent.
+   - Fixed on my side: alert times now only move forward, a reset closes earlier runs' chains as `expired`, and the orchestrator re-points any reply in demo mode to the current run.
+   - Please: leave `expired` (and `kept`) chains out of the candidate pool, and have `POST /web/reply` use the `chain_id` it is given. Today it ignores it, so the button and a text can act on different chains.
+2. **Channel split.** The demo-page buttons go through `handleInbound` with `via: "sms"`, so the reply went by SMS from another number while the alert went by iMessage. The runtime now sends every message to the human on the alert channel (`HUMAN_ALERT_CHANNEL`, default iMessage), whatever `via` says. You may want `via` to come from the chain's last alert.
+3. **STOP, RESUME and correction texts.** `parseReply` treats STOP as a carrier opt-out (ignored) and "no, the 13th" as unknown. `src/orchestrator/human-front.ts` now handles STOP/PAUSE, RESUME/GO, correction texts and the YES/NO to "Just to check..." before your channel sees them. Move that into your parser whenever you like; the behavior to keep is in `src/orchestrator/workflows.test.ts` (tests 5 and 6).
+4. **The Supabase store can't update an intent.** `putIntent` with a new key POSTs a second row with the same `task_id`. A confirmed correction that changes the dates needs an update (e.g. `updateIntent(intent)`). Until then the undo still runs, and the intent keeps its dates.
+5. `createMerchantBridge` ignores everything older than its start by default, so a request Proxy sent before `npm run demo:hotel` started was never answered. The script now passes `since` (the last 30 minutes, or `HOTEL_AGENT_SINCE`).
+6. Proxy no longer uses `composeChainAlert`. Alerts and progress texts come from `src/orchestrator/copy.ts` (human dates, days past 48 hours, "$828 at risk of $1,240").
+7. The `/web` page marks a row verified when `state === "verified"`. A host correction is done with state `accepted` and no money; `get_chain` reports those in `_meta.corrected`.
+
 ## Dhwanil
 
 ### A2A transport ownership
@@ -305,6 +324,12 @@ Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/`; t
 - `keep` steps are marked kept. Stripe disputes aren't wired yet, so `route: "stripe_dispute"` on keep is fine as it is.
 - Added scripts: `npm run fixtures:demo`, `npm run evals:layer1`, and `npm run demo:hotel`, which runs Sarah's bridge as `hotel-agent` and answers through the server's `POST /merchants/hotel/agent`, so it uses the server's bookings.
 - `/demo/host-email` now books the message with your host mock (ref `MSG-...`), so the correction email can name it.
+
+
+### From Karan: QA pass on the live demo (2026-10-18)
+1. **Airline after the 24-hour window:** `plan_undo` returns `route: "email_support", option: "change", cost: 7500`, but the airline has no support desk, so the step can only fail (`no_agent`). Proxy now tells the human "change it with the airline for a $75 fee". Please route this to something Proxy can do (a self-serve change with a fee?), or to `keep` with the fee, and tell me which.
+2. **Hotel bookings live in the server's memory.** After a restart or a `/demo/reset` the hotel answers "Unknown booking reference" to an earlier run's request. That's fine for the demo, now that a reset closes earlier runs, but worth knowing.
+3. `negotiate_step` returns `ignored_text`, which isn't in the `Logic` type. The orchestrator reads it if present and counts it in the events log. Say if you want it added to the contract.
 
 ## Karan's Codex
 

@@ -146,8 +146,11 @@ export type AlertChannel = "sms" | "imessage" | "call";
 
 export interface Alert {
   channel: AlertChannel;
-  /** "chain_opened" is the one text per chain; "reminder" is escalation; "result" is the final text. */
-  kind: "chain_opened" | "reminder" | "result" | "too_late";
+  /**
+   * "chain_opened" is the one text per chain; "reminder" is escalation or a question; "progress" is one
+   * confirmed step; "result" is the final text.
+   */
+  kind: "chain_opened" | "reminder" | "progress" | "result" | "too_late";
   body: string;
   sent_at: Timestamp;
 }
@@ -568,6 +571,8 @@ export interface Params {
   FOLLOW_UP_EVERY: number;
   /** Max protocol duration, in ms. */
   PROTOCOL_DEADLINE: number;
+  /** Wait for a merchant agent's answer before following up by email, then giving up, in real ms. */
+  MERCHANT_REPLY_TIMEOUT: number;
   /** Simulated ms per real ms. */
   CLOCK_SCALE: number;
   /** The agent's session ends after this many ms without a tool call for the task, in ms. */

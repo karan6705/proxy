@@ -64,7 +64,8 @@ describe("self-serve route (airline 24-hour rule)", () => {
     expect(result.action.state).toBe("verified");
     expect(result.step).toMatchObject({ route: "self_serve", outcome: "succeeded", stripe_ref: "re_fake_1" });
     expect(result.step.at).toBe("2026-10-25T13:00:00.000Z");
-    expect(fake.refunds.get("refund:act_flight")?.amount).toBe(41200);
+    expect([...fake.refunds.values()].map((r) => r.amount)).toEqual([41200]);
+    expect([...fake.refunds.keys()][0]).toMatch(/^refund:act_flight:/);
     expect(mem.actions.get("act_flight")?.state).toBe("verified");
     expect(mem.steps).toHaveLength(1);
   });

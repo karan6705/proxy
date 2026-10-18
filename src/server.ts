@@ -264,7 +264,9 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
         runtime = createRuntime(clock, DEFAULT_PARAMS, preferences);
         // A fresh task id per run: the events table is append-only, so earlier runs stay as history.
         const task_id = await runtime.proxy.startDemoTask();
-        return { status: 200, body: { ok: true, clock: clock.now(), preferences, task_id } };
+        // Nothing from an earlier run is left waiting: its open chains close as expired.
+        const expired = await runtime.proxy.expireOtherDemoChains(task_id);
+        return { status: 200, body: { ok: true, clock: clock.now(), preferences, task_id, expired } };
       },
     },
     {
