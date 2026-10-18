@@ -460,6 +460,37 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     }
   }
 
+  /** Proxy's plan, for the feed: who it will contact for each step, and how, in the order it will go. */
+  function notePlan(chain: Chain, steps: PlanStep[], open: Action[]) {
+    const items = steps.flatMap((p) => {
+      const a = open.find((x) => x.action_id === p.action_id);
+      if (!a || p.option === "keep" || p.route === "keep") return [];
+      const name = nameOf(a.merchant);
+      const how =
+        p.route === "reversal_protocol" ? `negotiate with ${name}'s agent` :
+        p.route === "email_support" ? `email ${name} support for a refund` :
+        p.route === "self_serve" ? `cancel on ${name}'s site` :
+        p.route === "correction" ? `send ${name} the right dates` : p.route;
+      return [{ action_id: a.action_id, merchant: a.merchant, category: a.category, amount: a.amount, route: p.route, how }];
+    });
+    if (!items.length) return;
+    note(chain, "proxy", "plan", `Proxy's plan: ${items.map((i, n) => `${n + 1}. ${i.how}`).join("; ")}.`, { steps: JSON.stringify(items) });
+  }
+
+  /**
+   * Demo pacing: waits until a step is settled (done, failed, or waiting on the human's YES/NO) before the next starts.
+   * A negotiation is bounded by its own timers (a follow-up, then giving up), so this never waits much past them.
+   */
+  async function untilSettled(action_id: string) {
+    const until = Date.now() + 2.5 * deps.params.MERCHANT_REPLY_TIMEOUT;
+    while (Date.now() < until) {
+      const a = await store.getAction(action_id);
+      if (!a || (DONE_STATES.has(a.state) && !(a.state === "accepted" && a.amount > 0))) return;
+      if ([...negotiations.values()].some((n) => n.state.action_id === action_id && n.state.state === "human_decision")) return;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
   function stopWaiting(negotiation_id: string) {
     clearTimeout(timers.get(negotiation_id));
     timers.delete(negotiation_id);
@@ -652,13 +683,27 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       });
       if (!started) return; // a second UNDO ALL (or a double press) while this one runs
       armWatchdog(chain_id);
-      // Independent steps run side by side: a merchant agent that is slow to answer holds up nothing else.
-      await Promise.all(
-        plan.map(async (p) => {
+      const paced = deps.params.DEMO_SEQUENTIAL ?? (deps.params.DEMO_PACE_MS ?? 0) > 0;
+      // In the demo, one merchant at a time so each can be followed: the negotiation first, the correction last.
+      const ORDER: Record<string, number> = { reversal_protocol: 0, email_support: 1, self_serve: 2, correction: 3 };
+      const steps = paced ? [...plan].sort((a, b) => (ORDER[a.route] ?? 9) - (ORDER[b.route] ?? 9)) : plan;
+      notePlan(started, steps, open);
+      if (paced) {
+        for (const p of steps) {
           const action = open.find((a) => a.action_id === p.action_id);
-          if (action) await runStep(started, intent, action, p);
-        }),
-      );
+          if (!action) continue;
+          await runStep(started, intent, action, p);
+          await untilSettled(action.action_id);
+        }
+      } else {
+        // Independent steps run side by side: a merchant agent that is slow to answer holds up nothing else.
+        await Promise.all(
+          plan.map(async (p) => {
+            const action = open.find((a) => a.action_id === p.action_id);
+            if (action) await runStep(started, intent, action, p);
+          }),
+        );
+      }
       await finishIfDone(chain_id);
     },
 

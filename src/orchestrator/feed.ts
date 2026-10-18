@@ -21,7 +21,9 @@ export type FeedKind =
   | "chain"
   | "redo"
   /** Demo pacing: a visible "waiting for a reply…" or "verifying in Stripe…" before the next step lands. */
-  | "wait";
+  | "wait"
+  /** Proxy's plan for a chain after the human's reply: who it will contact, how, in what order. */
+  | "plan";
 
 export interface FeedEntry {
   /** Order of arrival, which is time order. */
