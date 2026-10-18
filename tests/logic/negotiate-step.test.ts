@@ -42,7 +42,7 @@ describe("negotiate_step: the demo, one step at a time", () => {
       type: "push_back",
       ...IDS,
       round: 2,
-      reason: expect.stringContaining("Store credit is not acceptable"),
+      reason: expect.stringContaining("does not accept store credit"),
     });
     expect(result.next_state).toMatchObject({
       state: "pushed_back",
