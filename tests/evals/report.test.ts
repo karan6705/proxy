@@ -85,6 +85,8 @@ describe("RESULTS.md", () => {
   it("says when Proxy ran over MCP", () => {
     const over = renderResults(null, { data: { ...layer2, mode: "mcp", mcp_url_host: "proxy.example" }, file: "layer2-z.json" });
     expect(over).toContain("over MCP against proxy.example");
+    expect(over).toContain("Actions whose refund Stripe shows");
+    expect(over).not.toContain("Refunds agreed by merchants | n/a");
     expect(over).toContain("No Layer 1 results yet");
   });
 

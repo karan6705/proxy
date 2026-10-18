@@ -2,6 +2,8 @@
 //   LIVE_TRIALS=3        trials per task and arm (default 3)
 //   LIVE_TASKS=L1,L2     only these tasks
 //   LIVE_EVAL_MODEL=...  the agent's model (default claude-haiku-4-5-20251001)
+//   LIVE_MCP_URL=...     run the Proxy half over MCP against this server (its /mcp URL, demo routes on) instead of in
+//                        process. The server's own capture, compare, orchestrator and Stripe verification are then used.
 //
 // For each task and arm the agent runs against the task's faulty environment. Then:
 //   truth       hand-written per task, not computed by compare: what was really wrong.
@@ -17,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import type { Arm } from "../../src/types.js";
 import type { RunResult, Scenario } from "../scenario.js";
 import { runScenario } from "../runner.js";
+import { runProxyOverMcp } from "./mcp.js";
 import type { SimBooking } from "../sim.js";
 import type { AgentRun } from "./agent.js";
 import { AGENT_MODEL, runAgent } from "./agent.js";
@@ -24,6 +27,7 @@ import { LIVE_TASKS, type LiveTask } from "./tasks.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TRIALS = Math.max(1, Number(process.env.LIVE_TRIALS ?? 3) || 3);
+const MCP_URL = process.env.LIVE_MCP_URL?.trim() || "";
 const ONLY = (process.env.LIVE_TASKS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
 
 interface Episode {
@@ -42,6 +46,11 @@ interface Episode {
     false_alarms: { action: string; field: string }[];
     outcomes: RunResult["outcomes"];
     agreed_refund_total: number;
+    /** Over MCP only: what the server's chain ended as, and how many actions Stripe shows as refunded. */
+    chain_state?: string | null;
+    stripe_verified_actions?: number;
+    chain_actions?: number;
+    server_steps?: string[];
   };
   /** Naive arm only: the agent said DONE although the truth has mistakes. */
   false_done_claim?: boolean;
@@ -84,8 +93,9 @@ async function episode(task: LiveTask, arm: Arm, trial: number): Promise<Episode
   if (bookings.length === 0) {
     return { ...base, proxy: { flagged: [], caught: 0, missed: truth, false_alarms: [], outcomes: {}, agreed_refund_total: 0 } };
   }
-  const result = await runScenario(liveScenario(task, agent, bookings, env.unseen()), "proxy");
-  const flagged = result.mismatches;
+  const over = MCP_URL ? await runProxyOverMcp({ taskId: task.id, trial, logged: agent.logged_intent, bookings }, { mcpUrl: MCP_URL }) : null;
+  const result = over ? null : await runScenario(liveScenario(task, agent, bookings, env.unseen()), "proxy");
+  const flagged = over ? over.flagged : (result?.mismatches ?? []);
   const key = (booking: string, field: string): string => `${booking}:${field}`;
   const truthKeys = new Set(truth.map((item) => key(item.booking, item.field)));
   const flaggedKeys = new Set(flagged.map((item) => key(item.action, item.field)));
@@ -96,8 +106,9 @@ async function episode(task: LiveTask, arm: Arm, trial: number): Promise<Episode
       caught: truth.filter((item) => flaggedKeys.has(key(item.booking, item.field))).length,
       missed: truth.filter((item) => !flaggedKeys.has(key(item.booking, item.field))),
       false_alarms: flagged.filter((item) => !truthKeys.has(key(item.action, item.field))),
-      outcomes: result.outcomes,
-      agreed_refund_total: result.agreed_refund_total,
+      outcomes: result?.outcomes ?? {},
+      agreed_refund_total: result?.agreed_refund_total ?? 0,
+      ...(over ? { chain_state: over.chain_state, stripe_verified_actions: over.stripe_verified_actions, chain_actions: over.chain_actions, server_steps: over.steps } : {}),
     },
   };
 }
@@ -153,6 +164,7 @@ async function main(): Promise<void> {
       caught: sum(proxy, (item) => item.proxy?.caught ?? 0),
       false_alarms: sum(proxy, (item) => item.proxy?.false_alarms.length ?? 0),
       refund_agreed: sum(proxy, (item) => item.proxy?.agreed_refund_total ?? 0),
+      ...(MCP_URL ? { stripe_verified_actions: sum(proxy, (item) => item.proxy?.stripe_verified_actions ?? 0) } : {}),
       tokens: tokens(proxy),
     },
   };
@@ -166,17 +178,21 @@ async function main(): Promise<void> {
   console.log(`  episodes with a real mistake   ${summary.proxy.episodes_with_real_mistakes}/${summary.proxy.episodes}`);
   console.log(`  mistakes caught                ${ratio(summary.proxy.caught, summary.proxy.mistakes)}`);
   console.log(`  false alarms                   ${summary.proxy.false_alarms}`);
-  console.log(`  refunds agreed                 ${dollars(summary.proxy.refund_agreed)}  (merchant-agreed, not Stripe-verified)`);
+  if (MCP_URL) {
+    console.log(`  refunds Stripe-verified        ${summary.proxy.stripe_verified_actions ?? 0} actions  (the server's own verification)`);
+  } else {
+    console.log(`  refunds agreed                 ${dollars(summary.proxy.refund_agreed)}  (merchant-agreed, not Stripe-verified)`);
+  }
   console.log(`  tokens (agent only)            ${summary.proxy.tokens}`);
   console.log(
-    "\nSmall samples from real runs: counts, not rates. The agent's mistakes come from a live model in a faulty environment; " +
-      "truth is hand-written per task. Proxy ran in process, not over MCP. Time to alert and Stripe verification are not measured here.",
+    `\nSmall samples from real runs: counts, not rates. The agent's mistakes come from a live model in a faulty environment; ` +
+      `truth is hand-written per task. Proxy ran ${MCP_URL ? "over MCP against a server" : "in process, not over MCP"}. Time to alert is not measured here.`,
   );
 
   const dir = join(HERE, "..", "results");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${runId}.json`);
-  writeFileSync(file, `${JSON.stringify({ run_id: runId, layer: "live-agent", model: AGENT_MODEL, summary, episodes }, null, 2)}\n`);
+  writeFileSync(file, `${JSON.stringify({ run_id: runId, layer: "live-agent", model: AGENT_MODEL, mode: MCP_URL ? "mcp" : "in_process", ...(MCP_URL ? { mcp_url_host: new URL(MCP_URL).host } : {}), summary, episodes }, null, 2)}\n`);
   console.log(`\nRaw log: ${file}`);
 }
 
