@@ -56,7 +56,7 @@ export async function runHumanPhase(options: HumanPhaseOptions): Promise<boolean
     const started = now();
     try {
       const { value, detail } = await run();
-      options.report(name, "PASS", now() - started, detail);
+      options.report(name, "PASS", now() - started, detail?.replace(/\n+/g, " / "));
       return value;
     } catch (e) {
       ok = false;

@@ -4,34 +4,31 @@
 //   MCP_URL=http://localhost:3000/mcp npm run demo:hotel
 // Needs INKBOX_API_KEY and INKBOX_HOTEL_AGENT_API_KEY (A2A rejects the admin key). Keys are never printed.
 import { createA2AAccess, createClient, createMerchantBridge } from "../src/inkbox/index.js";
-import type { MerchantProtocolMessage, ProxyProtocolMessage } from "../src/types.js";
-import { merchantLine, money } from "../src/orchestrator/copy.js";
-
-const tty = process.stdout.isTTY;
-const color = { in: tty ? "\x1b[36m" : "", out: tty ? "\x1b[32m" : "", dim: tty ? "\x1b[2m" : "", off: tty ? "\x1b[0m" : "" };
-const orderAmounts = new Map<string, number>();
-
-function proxyAsks(m: ProxyProtocolMessage): string {
-  if (m.type === "request_reversal") return `please cancel ${m.order.ref} and refund ${money(m.order.amount)} (${m.what_went_wrong})`;
-  if (m.type === "push_back") return "no store credit, per our human's preferences; asking for a refund";
-  if (m.type === "accept_counter") return "we accept your offer";
-  return "checking with our human";
-}
+import { colorEnabled, narrateExchange } from "../src/merchants/index.js";
+import { createRateLimitState, guardAccess, schedulePolls, throttledLog } from "../src/orchestrator/poll-guard.js";
+import type { MerchantProtocolMessage } from "../src/types.js";
 
 const env = process.env;
 const base = new URL(env.MCP_URL ?? "http://localhost:3000/mcp");
 const agentUrl = new URL("/merchants/hotel/agent", base);
 const proxyHandle = env.INKBOX_PROXY_HANDLE?.trim() || "proxy-agent";
 
+if (env.INKBOX_DRY_RUN === "1") {
+  console.error("demo:hotel polls real Inkbox, so it doesn't run with INKBOX_DRY_RUN=1 (in dry-run the server's mock hotel answers in-process).");
+  process.exit(1);
+}
 const missing = ["INKBOX_API_KEY", "INKBOX_HOTEL_AGENT_API_KEY"].filter((name) => !env[name]?.trim());
 if (missing.length) {
   console.error(`demo:hotel needs ${missing.join(" and ")} in .env (A2A rejects the admin key, so the hotel needs its own).`);
   process.exit(1);
 }
 
+// Inkbox allows 600 requests a minute per key: poll at most every 3 s and back off on 429.
+const limit = createRateLimitState();
+const log = throttledLog((line) => console.log(`[hotel-agent] ${line}`));
 const clock = { now: () => new Date().toISOString(), nowMs: () => Date.now(), mode: "real" as const };
 const bridge = createMerchantBridge({
-  access: createA2AAccess({ admin: createClient, handle: "hotel-agent", apiKey: env.INKBOX_HOTEL_AGENT_API_KEY?.trim() || undefined }),
+  access: guardAccess(createA2AAccess({ admin: createClient, handle: "hotel-agent", apiKey: env.INKBOX_HOTEL_AGENT_API_KEY?.trim() || undefined }), limit),
   agent: {
     merchant_id: "hotel",
     async respond(message) {
@@ -41,12 +38,8 @@ const bridge = createMerchantBridge({
         throw new Error(`hotel agent route answered ${res.status}`);
       }
       const answer = (await res.json()) as MerchantProtocolMessage;
-      const time = new Date().toTimeString().slice(0, 8);
-      const amount = message.type === "request_reversal" ? message.order.amount : (orderAmounts.get(message.negotiation_id) ?? 0);
-      if (message.type === "request_reversal") orderAmounts.set(message.negotiation_id, message.order.amount);
-      // The same plain-English lines as the stage page, so both agents' sides can be shown side by side.
-      console.log(`${time}  ${color.dim}round ${message.round}${color.off}  ${color.in}Proxy  ${color.off}${proxyAsks(message)}`);
-      console.log(`${time}  ${color.dim}round ${answer.round}${color.off}  ${color.out}Hotel  ${color.off}${merchantLine("Harborview Hotel agent", answer, amount).replace(/^Harborview Hotel agent: /, "")}`);
+      // Dhwanil's speaker-labelled lines ("Proxy: ...", "Hotel: ..."), the same story as the stage page.
+      for (const line of narrateExchange(message, answer, { color: colorEnabled(), style: "speakers", merchant: "Hotel" })) console.log(line);
       return answer;
     },
   },
@@ -56,15 +49,15 @@ const bridge = createMerchantBridge({
   since: env.HOTEL_AGENT_SINCE?.trim() || new Date(Date.now() - 30 * 60_000).toISOString(),
   proxyHandle,
   proxyEmail: `${proxyHandle}@inkboxmail.com`,
-  log: (line) => console.log(`[hotel-agent] ${line}`),
+  log: (line) => (/rate limit|429/i.test(line) ? undefined : log(line)),
 });
-bridge.start();
+const schedule = schedulePolls({ pollOnce: () => bridge.pollOnce(), state: limit, log });
 console.log(`Harborview Hotel agent (hotel-agent) is listening for Proxy on Inkbox A2A and email. Answers come from ${agentUrl.origin}. Ctrl+C to stop.`);
 
-// The bridge's poll timer doesn't hold the process open on its own, so keep it alive until Ctrl+C.
+// The poll timer doesn't hold the process open on its own, so keep it alive until Ctrl+C.
 const keepAlive = setInterval(() => {}, 60_000);
 const stop = () => {
-  bridge.stop();
+  schedule.stop();
   clearInterval(keepAlive);
   console.log("hotel-agent bridge stopped");
   process.exit(0);

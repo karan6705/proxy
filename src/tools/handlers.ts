@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { expectedRefund } from "../orchestrator/refunds.js";
 import { actionLabel, humanDate, money, payments } from "../orchestrator/copy.js";
+import { checkIntent } from "../orchestrator/intent-words.js";
 import { checkSelfUndo } from "../orchestrator/self-undo.js";
 import { runSelfServeRoute } from "../orchestrator/routes/self-serve.js";
 import type { Proxy } from "../orchestrator/proxy.js";
@@ -65,6 +66,16 @@ function redoInstruction(intent: { task_email: string; constraints: { dates?: { 
   return `Rebook the ${list}${when}, using ${intent.task_email}.${told}`;
 }
 
+/** Where the human's answer about the intent stands, for a repeated log_intent with the same key. */
+async function intentStatus(p: Proxy, task_id: string) {
+  const entry = p.intentCheckFor?.(task_id);
+  if (!entry) return {};
+  const intent_check = { status: entry.status, understood: entry.check.understood, said: entry.check.said };
+  if (entry.status === "disagrees") return { intent_check, next_action: "wait_for_human" as const };
+  const intent = await p.deps.store.getIntent(task_id);
+  return { intent_check, ...(intent ? { constraints: intent.constraints } : {}) };
+}
+
 const merchantName = (p: Proxy, id: string) => p.deps.merchants?.get?.(id)?.name ?? id;
 
 export function createToolHandlers(getProxy: () => Proxy) {
@@ -112,7 +123,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
           return fail("idempotency_conflict", "This idempotency_key was already used with a different intent. Use a new key for a new task.", false, "fix_now");
         }
         sessions.touch(existing.task_id);
-        return ok({ task_id: existing.task_id, task_email: existing.task_email });
+        return ok({ task_id: existing.task_id, task_email: existing.task_email, ...(await intentStatus(p, existing.task_id)) });
       }
       // Each task gets its own Inkbox identity. A demo run gets a fresh task id but reuses the demo identity.
       const task_id = runId ?? taskIdFor(input.idempotency_key);
@@ -129,7 +140,9 @@ export function createToolHandlers(getProxy: () => Proxy) {
       try {
         // Sarah's Inkbox client gets or creates the identity task_<id> -> task-<id>@...
         ({ task_email } = await inkbox.createTaskAddress(identityTask));
-      } catch {
+      } catch (e) {
+        // The agent gets the safe message; the real cause goes to the server log (never a key: the SDK's errors don't carry one).
+        console.error(`[log_intent] createTaskAddress(${identityTask}) failed:`, e instanceof Error ? `${e.name}: ${e.message}` : e);
         return fail("upstream_unavailable", "Could not create the task email address. Retry shortly.", true, "retry");
       }
       const intent: Intent = { task_id, task_email, goal: input.goal, constraints: input.constraints, preferences, created_at: clock.now() };
@@ -145,7 +158,13 @@ export function createToolHandlers(getProxy: () => Proxy) {
         text: `Agent started a task: ${input.goal}${d ? ` (${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""})` : ""}.`,
         data: { goal: input.goal, start: d?.start ?? null, end: d?.end ?? null, budget_total: input.constraints.budget_total ?? null },
       });
-      return ok({ task_id, task_email });
+      // The human's own words, if given: a disagreement is put to the human; agreement sends nothing.
+      const check = checkIntent(input.constraints, input.original_request, Number(clock.now().slice(0, 4)));
+      if (check.status === "disagrees") {
+        await p.askAboutIntent(task_id, check);
+        return ok({ task_id, task_email, intent_check: { status: check.status, understood: check.understood, said: check.said }, next_action: "wait_for_human" as const });
+      }
+      return ok({ task_id, task_email, ...(input.original_request !== undefined ? { intent_check: { status: check.status } } : {}) });
     },
 
     async reversibility(input: ReversibilityInput) {

@@ -49,6 +49,11 @@ export function frontHumanChannel(deps: FrontDeps): HumanChannel {
       return { status: "replied", reason: "resumed" };
     }
 
+    // "1" or "2" answers an open question about the intent ("Your agent understood X. You said Y.").
+    if (/^[12]$/.test(text) && (await proxy.answerIntent(text === "1" ? 1 : 2))) {
+      return { status: "replied", reason: "intent_answered" };
+    }
+
     const chain = await proxy.mostRecentlyAlertedOpenChain();
     if (chain && proxy.pendingCorrections.has(chain.chain_id) && (word === "YES" || word === "Y" || word === "NO" || word === "N")) {
       await proxy.confirmCorrection(chain.chain_id, word.startsWith("Y"));
