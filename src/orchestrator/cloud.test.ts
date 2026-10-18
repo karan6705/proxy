@@ -59,7 +59,7 @@ describe("plain text for every tool", () => {
     expect(none.content[0]?.text).toMatch(/^No open chains\. Next:/);
 
     const undone = await tools.undo({ action_ids: ["nope"], reason: "test" });
-    expect(undone.content[0]?.text).toMatch(/^Nothing was undone by you\./);
+    expect(undone.content[0]?.text).toMatch(/^Error \(not_found\): No action nope\. Use the action ids in review\.fixable_now.+Next: fix now\.$/);
 
     const err = await tools.get_chain({ chain_id: "chain_nope" });
     expect(err.content[0]?.text).toMatch(/^Error \(not_found\): No chain chain_nope\. .+Don't retry the same call\. Next: fix now\.$/);

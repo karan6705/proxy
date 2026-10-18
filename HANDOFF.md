@@ -20,6 +20,12 @@
 
 ## Karan
 
+### Readiness and the intent check (2026-10-17)
+- Tag `demo-v2` is on main at 51feb13 (`demo-v1` unchanged).
+- Every tool parameter has a description; `src/tools/schemas.test.ts` fails if one is added without.
+- `undo` with an unknown action id returns `not_found` (`next_action: "fix_now"`, "call review(task_id), then undo with those ids") and undoes nothing.
+- Intent check: numeric and day-only dates, the ambiguous "3/11" question, and "nothing checkable" (see the note under Dhwanil).
+
 ### Cloud judge copy: PROXY_MODE=cloud, try_proxy_demo, /health (2026-10-18)
 - **Set on the deployed server:** `PROXY_MODE=cloud` and `PROXY_DEMO_ROUTES=1` (the second makes `try_proxy_demo` available; cloud mode makes it safe). Keep `INKBOX_DRY_RUN=1` too; no keys are needed, and none have any effect in cloud mode.
 - **Cloud mode:** in-memory store, simulated payments ("Stripe (simulated)" in every text), a stand-in Inkbox that sends nothing, no model calls, no human number. The Inkbox webhook routes, the mock merchants' endpoints, `/web/reply` and every mutating `/demo/*` route (including `/demo/reset`) return 404; `/demo/feed`, `/web/stage`, `/web/state`, `/scoreboard` and `/health` work. No poller starts.
@@ -29,7 +35,7 @@
 - Every tool now answers in plain English first (with the next step) and the JSON second, so clients without structured output or MCP Apps still get the answer.
 
 ### Public mirror for judges: karan6705/proxy (2026-10-18)
-- The team repo (karan6705/tripwire) stays private and is never rewritten. Judges get **https://github.com/karan6705/proxy**: the same history, `main` only (plus the `demo-v1` tag once it exists), with three phone numbers replaced everywhere in history by fictional ones (the two Inkbox lines and Karan's personal number, which were in early HANDOFF.md and test commits). Commit dates, authors and messages are unchanged.
+- The team repo (karan6705/tripwire) stays private and is never rewritten. Judges get **https://github.com/karan6705/proxy**: the same history, `main` only (plus the `demo-v1` and `demo-v2` tags), with three phone numbers replaced everywhere in history by fictional ones (the two Inkbox lines and Karan's personal number, which were in early HANDOFF.md and test commits). Commit dates, authors and messages are unchanged.
 - **Refresh it right before submitting:** `scripts/publish-mirror.sh` (needs `git filter-repo` and `gh`). It clones main fresh into a temp folder, redacts, runs `scripts/secret-scan.py` on the result (no push unless it is clean), checks dates, authors and messages, then force-pushes to the mirror only. `scripts/publish-mirror.sh --dry-run` does everything but the push.
 - `python3 -I scripts/secret-scan.py <repo>` scans every ref's history for keys, tokens and real-looking phone numbers (with `HUMAN_PHONE` in the environment, that number too) and prints commit, file and kind only, never a value.
 - Never put a real phone number in a file, test or log. Use 555 numbers (`+15555550100`), as the tests do.
@@ -438,6 +444,12 @@ Found in Karan's live run on port 3000, read from `/web/state`:
 - The phone alert now uses your multi-line layout (the mistake, what the agent already undid, a blank line, the numbers, the window, a blank line, the choice). The tests no longer pin your "Got it" acknowledgement's wording, beyond `/^Got it/` in the rehearsal and test 1's check that it arrives before any progress text, so you can switch it to two lines.
 
 ## Dhwanil
+
+### From Karan: numeric dates in the intent check are on main (2026-10-17)
+- `checkIntent` (`src/orchestrator/intent-words.ts`) now reads `M/D`, `D/M`, `M/D/YYYY` (and two-digit years), ISO, "the 13th" (the agent's month, or the current one), "13th of November" and "Nov 13", including ranges.
+- A numeric date valid both ways ("3/11") is ambiguous. If the agent logged one reading, the result is `disagrees` with `next_action: "wait_for_human"`, and the human gets "You wrote 3/11. Your agent read it as Mar 11. Did you mean Mar 11 or Nov 3? Reply 1 or 2." `corrected` is the reading the agent did not take, so `applyIntentCheck`'s simulated "their own words" answer picks it. If the agent's date matches neither reading, it is a plain disagreement (the month-first reading is put forward).
+- Words with no date or budget (C1 has "Budget $1,500" but no date, so it still checks the budget and agrees) return `{ status: "absent", checkable: false }` and nothing is sent.
+- **I changed your `tests/evals/live-intent.test.ts`** (one-off, approved by Karan, in PR #27) so main stays green: C2 with a logged Mar 11 2027 is now `disagrees`, `said: "3/11 (Mar 11 or Nov 3)"`, and the corrected intent is `2027-11-03` to `2027-11-06`. C1 stays `agrees`. Nothing else in your area was touched. The `evals/report.ts` line saying the parser reads only month names and ISO is out of date too. Rerunning the intent-check eval would give the real number.
 
 ### A2A transport ownership
 Sarah owns A2A transport in both directions: inbound Proxy requests route to Dhwanil's hotel agent, and hotel replies route back to the orchestrator. If Inkbox inbound A2A does not work, use email between `proxy-agent` and `hotel-agent` with a structured JSON body. The protocol state machine is unchanged.
