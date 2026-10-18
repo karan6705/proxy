@@ -31,7 +31,7 @@ import type {
 import { expectedRefund, refundOnce } from "./refunds.js";
 import { humanDate, type AlreadyUndone } from "./copy.js";
 import { runSelfServeRoute } from "./routes/self-serve.js";
-import { chainSummary, correctionStep, deniedStep, merchantLine, merchantSaid, nextOption, noAnswerYet, proxyLine, proxyWhy, pushBackKind, refundedStep, type ProxyLineContext } from "./copy.js";
+import { chainSummary, correctionStep, deniedStep, merchantLine, merchantSaid, nextOption, noAnswerYet, proxyLine, proxyWhy, pushBackKind, refundedStep, stillWorking, type ProxyLineContext } from "./copy.js";
 import { MAX_ROUNDS } from "../logic/negotiate-step.js";
 import type { FeedActor, FeedEntry } from "./feed.js";
 
@@ -402,6 +402,45 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     await finishIfDone(chain.chain_id);
   }
 
+  /**
+   * The last line of defence: no chain sits silently. The protocol's own timers normally settle every step first;
+   * if a chain is still undoing after 3 merchant timeouts anyway, the human gets a text saying what Proxy is still
+   * waiting on, and after 5 every open step that isn't waiting on the human is marked failed, so the chain finishes
+   * and its summary names the next option.
+   */
+  function armWatchdog(chain_id: ChainId) {
+    const unit = deps.params.MERCHANT_REPLY_TIMEOUT;
+    const check = async (final: boolean) => {
+      const chain = await store.getChain(chain_id);
+      if (!chain || chain.state !== "undoing" || deps.isFrozen()) return;
+      const { actions } = await load(chain_id);
+      const askedHuman = new Set([...negotiations.values()].filter((n) => n.chain_id === chain_id && n.state.state === "human_decision").map((n) => n.state.action_id));
+      const settled = (a: Action) => DONE_STATES.has(a.state) && !(a.state === "accepted" && a.amount > 0);
+      const open = actions.filter((a) => chain.plan.some((p) => p.action_id === a.action_id && p.option !== "keep") && !settled(a) && !askedHuman.has(a.action_id));
+      if (!open.length) return;
+      if (!final) {
+        await deps.textHuman(chain_id, "reminder", stillWorking(open));
+        return;
+      }
+      for (const a of open) {
+        for (const n of negotiations.values()) {
+          if (n.state.action_id === a.action_id) {
+            n.state = { ...n.state, state: "failed" };
+            stopWaiting(n.state.negotiation_id);
+          }
+        }
+        await setState(a, "failed");
+        const route = chain.plan.find((p) => p.action_id === a.action_id)?.route ?? "reversal_protocol";
+        await step(chain, a, route, "failed", "No progress in time; stopped so the summary can name the next option");
+      }
+      await finishIfDone(chain_id);
+    };
+    for (const [times, final] of [[3, false], [5, true]] as const) {
+      const t = setTimeout(() => check(final).catch((e) => console.error("[undo] watchdog failed:", e)), times * unit);
+      t.unref?.();
+    }
+  }
+
   function stopWaiting(negotiation_id: string) {
     clearTimeout(timers.get(negotiation_id));
     timers.delete(negotiation_id);
@@ -591,6 +630,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
         return store.upsertChain({ ...latest, state: "undoing", plan });
       });
       if (!started) return; // a second UNDO ALL (or a double press) while this one runs
+      armWatchdog(chain_id);
       // Independent steps run side by side: a merchant agent that is slow to answer holds up nothing else.
       await Promise.all(
         plan.map(async (p) => {

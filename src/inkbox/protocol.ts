@@ -1,5 +1,6 @@
 // Strict readers for Reversal Protocol messages. Anything that arrives from a merchant is untrusted:
 // only the typed fields below are copied into a fresh object; every other field and all free text is dropped.
+import { MAX_ROUNDS } from "../logic/negotiate-step.js";
 import type { CounterKind, MerchantProtocolMessage, ProxyProtocolMessage, Timestamp } from "../types.js";
 
 const ID = /^[A-Za-z0-9_.:\-]{1,128}$/;
@@ -35,7 +36,8 @@ function json(raw: unknown): unknown {
 function envelope(o: Record<string, unknown>, fallbackNow: Timestamp) {
   const { negotiation_id, chain_id, action_id, round, sent_at } = o;
   if (![negotiation_id, chain_id, action_id].every((v) => typeof v === "string" && ID.test(v))) return null;
-  if (typeof round !== "number" || !Number.isInteger(round) || round < 1 || round > 3) return null;
+  // The same limit negotiate_step keeps (MAX_ROUNDS), so a valid last round is never dropped in transit.
+  if (typeof round !== "number" || !Number.isInteger(round) || round < 1 || round > MAX_ROUNDS) return null;
   const when = typeof sent_at === "string" && !Number.isNaN(Date.parse(sent_at)) ? sent_at : fallbackNow;
   return { negotiation_id: negotiation_id as string, chain_id: chain_id as string, action_id: action_id as string, round, sent_at: when };
 }

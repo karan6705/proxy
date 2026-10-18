@@ -37,6 +37,7 @@ export function createProtocolInbox(opts: ProtocolInboxOptions) {
   async function deliver(raw: unknown, via: "a2a" | "email"): Promise<boolean> {
     const msg = parseMerchantMessage(raw, opts.clock.now());
     if (!msg) {
+      log(`dropped an invalid merchant answer (${via})`);
       await record(`dropped:invalid:${via}`);
       return false;
     }
