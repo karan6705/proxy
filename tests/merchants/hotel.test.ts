@@ -244,3 +244,48 @@ describe("hotel agent: other behaviors and refusals", () => {
     }
   });
 });
+
+describe("the hotel agent's persona lines", () => {
+  async function run(options: HotelAgentOptions = {}) {
+    const fake = createFakeDeps();
+    const merchants = createMerchants(fake.deps, { hotel: options });
+    const { ref } = await merchants.book({
+      merchant_id: "hotel",
+      task_id: "task_nyc",
+      task_email: "task-nyc@proxy.example",
+      item: "Harborview Hotel, 3 nights",
+      dates: { start: "2026-11-03", end: "2026-11-06" },
+      amount: 64000,
+      booked_at: "2026-10-17T11:00:00.000Z",
+    });
+    const agent = merchants.agent("hotel");
+    if (!agent) {
+      throw new Error("the hotel should have an agent");
+    }
+    return { agent, ref };
+  }
+  const lineOf = (reply: unknown): string => String((reply as { message?: unknown }).message ?? "");
+
+  it("says what it is doing in plain words, next to the typed fields", async () => {
+    const { agent, ref } = await run();
+    const ids = { negotiation_id: "neg_1", chain_id: "chain_act_flight", action_id: "act_hotel", sent_at: DEMO_NOW };
+    const request = requestReversal(ref, "hotel", 64000);
+    const first = await agent.respond(request, DEMO_NOW);
+    expect(first).toMatchObject({ type: "counter", kind: "store_credit", amount: 64000 });
+    expect(lineOf(first)).toBe("Rate is non-refundable. We can offer store credit of $640.00.");
+
+    const second = await agent.respond({ ...ids, round: 2, type: "push_back", reason: "no store credit" }, DEMO_NOW);
+    expect(second).toMatchObject({ type: "counter", kind: "partial_refund", amount: 54400 });
+    expect(lineOf(second)).toBe("As a one-time goodwill exception we can refund 85%, $544.00.");
+
+    const third = await agent.respond({ ...ids, round: 3, type: "accept_counter" }, DEMO_NOW);
+    expect(third).toMatchObject({ type: "accept", refund_amount: 54400 });
+    expect(lineOf(third)).toBe("Agreed: refunding $544.00.");
+  });
+
+  it("says so when it approves a full refund", async () => {
+    const { agent, ref } = await run({ behavior: "accept_full" });
+    const reply = await agent.respond(requestReversal(ref, "hotel", 64000), DEMO_NOW);
+    expect(lineOf(reply)).toBe("Full refund of $640.00 approved.");
+  });
+});

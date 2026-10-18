@@ -5,6 +5,7 @@ import { createHttpMerchants } from "./http-merchants.js";
 import { createOfflineDemoControl, createOfflineToolClient } from "./offline.js";
 import { createDemoPayments, createMockAgentPayments, type AgentPayments } from "./payments.js";
 import { resetDemo } from "./reset.js";
+import { HUMAN_PHASE_STEPS, runHumanPhase } from "./human-phase.js";
 import {
   createDemoClock,
   createHttpDemoControl,
@@ -15,12 +16,13 @@ import {
   type ScriptedStepResult,
 } from "./scripted.js";
 
+// The whole story, agent and human parts, has to fit the video.
 export const DEMO_TIME_LIMIT_MS = 3 * 60_000;
 
 export interface RehearsalResult {
   passed: boolean;
   total_ms: number;
-  steps: Array<ScriptedStepResult | { step: "reset" | "connect"; status: "PASS" | "FAIL"; duration_ms: number; error?: string }>;
+  steps: Array<ScriptedStepResult | { step: string; status: "PASS" | "FAIL"; duration_ms: number; error?: string }>;
 }
 
 export interface RehearsalOptions {
@@ -34,6 +36,10 @@ export interface RehearsalOptions {
   connect?: () => Promise<ToolClient>;
   now?: () => number;
   write?: (line: string) => void;
+  /** After the agent leaves: alert, UNDO ALL, hotel refund, summary and redo. Default: on for online runs. */
+  human?: boolean;
+  /** Delay before the human part replies UNDO ALL (the offline recording waits 5 s, like a person reading). */
+  replyDelayMs?: number;
 }
 
 type SetupStep = RehearsalResult["steps"][number];
@@ -95,8 +101,22 @@ export async function runRehearsal(options: RehearsalOptions = {}): Promise<Rehe
     await client?.close().catch(() => undefined);
   }
 
+  const human = options.human ?? (!offline && !options.client);
+  if (human && failure === undefined) {
+    const passed = await runHumanPhase({
+      mcpUrl,
+      now,
+      ...(options.replyDelayMs ? { replyDelayMs: options.replyDelayMs } : {}),
+      report: (step, status, duration_ms, detail) => {
+        steps.push({ step, status, duration_ms, ...(status === "FAIL" && detail ? { error: detail } : {}) });
+        write(`${status} ${step} ${Math.round(duration_ms)}ms${detail ? ` — ${detail}` : ""}`);
+      },
+    });
+    if (!passed) failure = new Error("human phase failed");
+  }
+
   const reported = new Set(steps.map((item) => item.step));
-  for (const step of ["reset", "connect", ...SCRIPTED_DEMO_STEPS] as const) {
+  for (const step of ["reset", "connect", ...SCRIPTED_DEMO_STEPS, ...(human ? HUMAN_PHASE_STEPS : [])] as const) {
     if (!reported.has(step)) report({ step, status: "FAIL", duration_ms: 0, error: "not run" });
   }
   const totalMs = Math.max(0, now() - totalStarted);

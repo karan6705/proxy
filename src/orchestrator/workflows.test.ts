@@ -9,6 +9,7 @@ import { DEFAULT_PARAMS } from "./params.js";
 import { createRuntime, type Runtime, type RuntimeOverrides } from "./runtime.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
 import type { ProtocolTransport } from "./undo.js";
+import { toStageFeed } from "./stage.js";
 
 const START = "2026-10-25T10:00:00.000Z";
 const HUMAN = "+15550001111";
@@ -24,7 +25,7 @@ let task_id: string;
 
 function build(extraEnv: Record<string, string> = {}, overrides: RuntimeOverrides = {}) {
   rt = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, {
-    env: { HUMAN_PHONE: HUMAN, PROXY_ALERT_SETTLE_MS: "0", PROXY_DEMO_ROUTES: "1", INKBOX_WEBHOOK_TOKEN: TOKEN, ...extraEnv },
+    env: { HUMAN_PHONE: HUMAN, PROXY_ALERT_SETTLE_MS: "0", PROXY_DEMO_ROUTES: "1", INKBOX_WEBHOOK_TOKEN: TOKEN, PROXY_DEMO_REDO: "0", ...extraEnv },
     store,
     inkbox,
     ...overrides,
@@ -387,5 +388,71 @@ describe("QA workflows", () => {
     const meta = (await tools.get_chain({ chain_id: c.chain_id })) as { _meta: { recovered: Record<string, number>; corrected: string[] } };
     expect(meta._meta.recovered).toEqual({ [c.flight.action_id]: 41_200, [c.hotel.action_id]: 54_400, [c.transfer.action_id]: 18_800 });
     expect(meta._meta.corrected).toEqual([c.host.action_id]);
+  });
+
+  it("17. The demo story end to end: the feed, the agent's own flight refund in the texts, and the redo for Nov 13", async () => {
+    build({ PROXY_DEMO_REDO: "1", PROXY_DEMO_REDO_GAP_MS: "0" });
+    await logIntent();
+    const flight = await booked("airline", "Flight SFO to JFK, Nov 3", 41_200, "flight", { start: "2026-11-03" });
+    await booked("host", "Arrival email", 0, "message", { start: "2026-11-03" });
+    await tools.review({ task_id });
+    await tools.undo({ action_ids: [flight.action_id], reason: "wrong date" });
+    rt.proxy.deps.sessions.end(task_id);
+    const hotel = await booked("hotel", "Hotel, 3 nights from Nov 3", 64_000, "hotel", { start: "2026-11-03", end: "2026-11-06" });
+    await booked("transfer", "Airport transfer, Nov 3", 18_800, "transfer", { start: "2026-11-03" });
+    await rt.proxy.alertChains(task_id);
+    const [chain] = await rt.store.listChains(task_id);
+    expect(texts()[0]?.body).toMatch(/^Your agent used the wrong dates \(Nov 3, not Nov 13\)\. Flight already refunded by your agent \(\$412\)\. 3 more things affected, \$828 at risk of \$1,240\. Reversible for /);
+
+    await imessageIn("UNDO ALL");
+    await settle(async () => (await chainState(chain!.chain_id)) === "redone", 4000);
+    const bodies = texts().map((t) => t.body);
+    expect(bodies).toContain("All done. $1,144 of $1,240 back, confirmed in Stripe (flight $412 refunded by your agent). Host told the right dates. Your agent will rebook for Nov 13.");
+    expect(bodies.at(-1)).toBe("Rebooked for Nov 13 to Nov 16: flight $412, hotel $640, transfer $188. Each confirmation matches what you asked for.");
+    const rebooked = (await rt.store.listActions(task_id)).filter((a) => a.dates?.start === "2026-11-13");
+    expect(rebooked.map((a) => a.category).sort()).toEqual(["flight", "hotel", "transfer"]);
+    expect(rebooked.find((a) => a.category === "hotel")?.dates).toEqual({ start: "2026-11-13", end: "2026-11-16" });
+
+    const feed = rt.proxy.feed.list(task_id);
+    const lines = feed.map((e) => `${e.actor}|${e.kind}|${e.text}`);
+    const order = [
+      "agent|intent|Agent started a task: NYC trip for the Nov 13 conference, under $1,500 (Nov 13 to Nov 16).",
+      "proxy|mismatch|Proxy: the flight with Skyline Demo Air has the wrong dates (Nov 3, not Nov 13).",
+      "agent|self_undo|Agent undid its own flight with Skyline Demo Air (free under the airline's 24-hour rule).",
+      "human|text_in|Human: UNDO ALL",
+      "proxy|protocol_out|Proxy: our agent booked this hotel for the wrong dates (Nov 3, not Nov 13). Please cancel it and refund $640.",
+      "hotel_agent|protocol_in|Harborview Hotel agent: we can offer store credit of $640.",
+      "proxy|protocol_out|Proxy: our human doesn't accept store credit; requesting a refund.",
+      "hotel_agent|protocol_in|Harborview Hotel agent: we can refund 85%, $544.",
+      "proxy|protocol_out|Proxy: we accept the $544 refund.",
+      "hotel_agent|protocol_in|Harborview Hotel agent: confirmed, refunding $544.",
+      "stripe|stripe_refund|Stripe: $544 refunded on the Harborview Hotel charge, confirmed.",
+    ];
+    let at = -1;
+    for (const line of order) {
+      const i = lines.findIndex((l, n) => n > at && l === line);
+      expect(i, line).toBeGreaterThan(at);
+      at = i;
+    }
+    expect(lines).toContain("agent|redo|Agent rebooked the hotel with Harborview Hotel for Nov 13 to Nov 16, $640. Confirmation reached the task inbox.");
+    expect(lines).toContain("agent|booking|Agent booked the hotel with Harborview Hotel for Nov 3 to Nov 6, $640. Confirmation reached the task inbox.");
+    expect(lines.some((l) => l.startsWith("transfer_support|email_in|Metro Transfer Co. support: refund approved, $188."))).toBe(true);
+    // Nothing that looks like a phone number or key.
+    expect(JSON.stringify(feed)).not.toMatch(/\+1555|sk_test|Bearer/);
+    void hotel;
+
+    // The same story as the stage page reads it.
+    const stage = toStageFeed(task_id, clock.now(), await rt.store.getIntent(task_id), feed, null, {});
+    const hotelTalk = stage.conversations.find((c) => c.with === "hotel")!;
+    expect(hotelTalk.name).toBe("Harborview Hotel agent");
+    expect(hotelTalk.entries.map((e) => `${e.from}:${e.kind}`)).toEqual([
+      "proxy:request", "merchant:counter", "proxy:push_back", "merchant:counter", "proxy:accept_counter", "merchant:accept", "stripe:stripe",
+    ]);
+    expect(hotelTalk.entries[1]!.text).toBe("We can offer store credit of $640.");
+    expect(stage.conversations.map((c) => c.with)).toEqual(["hotel", "transfer", "host"]);
+    expect(stage.human[0]).toMatchObject({ direction: "out", channel: "imessage" });
+    expect(stage.human.find((h) => h.direction === "in")?.text).toBe("UNDO ALL");
+    expect(stage.bookings.filter((b) => b.wrong).map((b) => b.category).sort()).toEqual(["flight", "message"]);
+    expect(stage.task).toMatchObject({ goal: "NYC trip for the Nov 13 conference, under $1,500", intended_dates: { start: "2026-11-13", end: "2026-11-16" } });
   });
 });
