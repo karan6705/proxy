@@ -105,7 +105,15 @@ export function createProxy(deps: ProxyDeps): Proxy {
   const { store, logic, clock } = deps;
   let frozen = false;
   let humanChannel: HumanChannelLink | null = null;
+  // One writer at a time per chain (alerts, plan, state); steps go to their own table.
+  const chainQueues = new Map<ChainId, Promise<unknown>>();
+  function lockChain<T>(chain_id: ChainId, fn: () => Promise<T>): Promise<T> {
+    const run = (chainQueues.get(chain_id) ?? Promise.resolve()).then(fn, fn);
+    chainQueues.set(chain_id, run.catch(() => undefined));
+    return run;
+  }
   const undo = createUndoExecutor({
+    lockChain,
     store,
     logic,
     inkbox: deps.inkbox,
@@ -204,13 +212,27 @@ export function createProxy(deps: ProxyDeps): Proxy {
     } else {
       await logEvent({ kind: channel === "imessage" ? "imessage_out" : "sms_out", chain_id, task_id: chain.task_id, outcome: `${kind}:not_sent_no_human_number` });
     }
-    const alert: Alert = { channel, kind, body, sent_at: clock.now() };
-    const latest = (await store.getChain(chain_id)) ?? chain;
-    await store.upsertChain({
-      ...latest,
-      alerts: [...latest.alerts, alert],
-      state: latest.state === "detected" && kind === "chain_opened" ? "alerted" : latest.state,
+    await lockChain(chain_id, async () => {
+      const alert: Alert = { channel, kind, body, sent_at: await alertTime() };
+      const latest = (await store.getChain(chain_id)) ?? chain;
+      await store.upsertChain({
+        ...latest,
+        alerts: [...latest.alerts, alert],
+        state: latest.state === "detected" && kind === "chain_opened" ? "alerted" : latest.state,
+      });
     });
+  }
+
+  // Alert times only move forward. A demo reset sets the simulated clock back, and replies go to the chain
+  // with the latest alert, so a new run's alert must never look older than an earlier run's.
+  let lastAlertMs: number | null = null;
+  async function alertTime(): Promise<string> {
+    if (lastAlertMs === null) {
+      lastAlertMs = 0;
+      for (const c of await store.listChains()) for (const a of c.alerts) lastAlertMs = Math.max(lastAlertMs, Date.parse(a.sent_at));
+    }
+    lastAlertMs = Math.max(clock.nowMs(), lastAlertMs + 1);
+    return new Date(lastAlertMs).toISOString();
   }
 
   const alertTimers = new Map<TaskId, ReturnType<typeof setTimeout>>();
@@ -344,7 +366,9 @@ export function createProxy(deps: ProxyDeps): Proxy {
       let reply = incoming;
       if (reply.kind !== "stop") {
         const named = await store.getChain(reply.chain_id);
-        if (!named || !OPEN_STATES.has(named.state)) {
+        // In the demo, a reply always belongs to the current run, never to a chain left from an earlier one.
+        const otherRun = Boolean(deps.demo?.current && named && named.task_id !== deps.demo.current);
+        if (!named || !OPEN_STATES.has(named.state) || otherRun) {
           const current = await mostRecentlyAlertedOpenChain();
           if (current) reply = { ...reply, chain_id: current.chain_id };
         }
