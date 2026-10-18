@@ -181,8 +181,14 @@ describe("tools wired to the orchestrator", () => {
     const r = (await tools.review({ task_id })).structuredContent;
     expect(r).toMatchObject({ ok: true, fixable_now: ["act_flight"] });
 
-    const u = (await tools.undo({ action_ids: ["act_flight", "act_unknown"], reason: "wrong date" })).structuredContent;
-    expect(u).toMatchObject({ ok: true, accepted: ["act_flight"], requires_human: ["act_unknown"] });
+    // An unknown id is an error that names it, and nothing is undone.
+    const bad = await tools.undo({ action_ids: ["act_flight", "act_unknown"], reason: "wrong date" });
+    expect(bad.structuredContent).toEqual({ ok: false, code: "not_found", message: expect.stringContaining("act_unknown"), retryable: false, next_action: "fix_now" });
+    expect(bad.content[0]?.text).toContain("call review(task_id)");
+    expect((await rt.store.getAction("act_flight"))?.state).not.toBe("verified");
+
+    const u = (await tools.undo({ action_ids: ["act_flight"], reason: "wrong date" })).structuredContent;
+    expect(u).toMatchObject({ ok: true, accepted: ["act_flight"], requires_human: [] });
     expect((await rt.store.getAction("act_flight"))?.state).toBe("verified");
     expect((await rt.store.getChain(await chainIdFor(task_id)))?.state).toBe("reversed");
 

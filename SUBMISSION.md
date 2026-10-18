@@ -13,7 +13,7 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 | Field | Required | Answer |
 |---|---|---|
 | Team name | yes | `Proxy` |
-| MCP server URL | yes | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (deployed on Manufact Cloud, verified over MCP: six tools). It is a dry-run copy with an in-memory store, which is fine for judges to connect to. Do not use a tunnel URL: it changes when the laptop restarts. |
+| MCP server URL | yes | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (deployed on Manufact Cloud, verified over MCP: seven tools, commit `51feb13`). It runs in cloud mode, a dry-run sandbox: in-memory store, simulated payments and messages, no keys. That is fine for judges to connect to. Do not use a tunnel URL: it changes when the laptop restarts. |
 | Manufact organization ID | yes | `9833fb6a-873c-4b80-b5a6-16c3f30ba17c`: the organization that owns the deployed server (Sarah Khadder's Projects, slug `org-3e8505eb-iovbr`). If the server is ever redeployed under a different organization, use that organization's ID instead. |
 | Demo video URL (YouTube/Loom/etc.) | yes | `<PUBLIC VIDEO LINK>`. It must show the server working in more than one MCP client (Claude Code, Codex, Cursor), and judges must be able to watch it without requesting access. Open the link in a private window before pasting. |
 | Setup instructions for judges | no | See the draft below. Source code (public): https://github.com/karan6705/proxy |
@@ -82,6 +82,7 @@ Do not say anything in the video, the form or at the live demo that this table d
 
 - [x] The server is deployed and answers `tools/list` over MCP (checked, and re-checked after a test redeploy).
 - [x] Redeployed from `main` at `51feb13` with `PROXY_MODE=cloud`, `PROXY_DEMO_ROUTES=1`, `INKBOX_DRY_RUN=1` and no keys; seven tools, `sandbox_example`, `try_proxy_demo` at $1,144 of $1,240, and the Inkbox webhook routes returning 404 are all verified (`src/inkbox/cloud-verify.ts --health /status`). Redeploy if `main` changes again.
+- [ ] Decide whether the Inkbox webhooks stay on Karan's tunnel (they are, and the deployed copy is cloud mode with no real services) or move to a deployed server with real keys (cutover steps are in HANDOFF.md). For the submission the tunnel is fine.
 - [ ] Run Manufact's dashboard checklist (Publish, Checklist, Run; $0.10, private) and note the score here.
 - [ ] The demo video is public, shows more than one MCP client, and the link works in a private window.
 - [ ] Nothing in the text says more than the claims table allows. Merchants are mocks, the clock is simulated, the cloud copy is a dry-run sandbox, SMS and calls are scoped as the table says.
