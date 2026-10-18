@@ -20,6 +20,11 @@
 
 ## Karan
 
+### Demo clarity and pacing (2026-10-18)
+- `DEMO_PACE_MS` (demo mode only, `PROXY_DEMO_ROUTES=1`; default 2500, 0 in tests and in sandboxes): visible pauses with "waiting for a reply…" and "verifying in Stripe…" lines around each support email, refund and host correction, and about 2 s between hotel negotiation messages. Outside demo mode nothing is slowed. Set `DEMO_PACE_MS=1000` to speed up or `4000` to slow down.
+- The alert now reads "Your agent already fixed the flight ($412). 3 more things need you." Every refund text says who did it and how ("Proxy negotiated with the hotel's agent. Hotel refunded, $544 of $640, confirmed in Stripe."), and so does every refund row and receipt on /web/show. The agent's own flight undo is its own message in "Your agent".
+- Before the human replies, only the agent's own self-undo happens (tested in workflow 17).
+
 ### Readiness and the intent check (2026-10-17)
 - Tag `demo-v2` is on main at 51feb13 (`demo-v1` unchanged).
 - Every tool parameter has a description; `src/tools/schemas.test.ts` fails if one is added without.
@@ -198,6 +203,7 @@ Also done: `plan_undo` keep steps now use `route: "keep"`, and the airline after
 ## Sarah
 
 ### From Karan's agent: /web/show, the presentation page (2026-10-17, while you were offline)
+- **Live bug fix (2026-10-17):** `src/inkbox/protocol.ts` capped `round` at 3 in both parsers, so the new round-4 `accept_counter` was dropped by the hotel's bridge as an invalid request (silently: `demo:hotel` gives the bridge no store). The cap is now `MAX_ROUNDS` from `src/logic/negotiate-step.ts`. `bridge.ts` and `inbox.ts` now also log every dropped message. New `src/inkbox/protocol-e2e.test.ts` runs the full negotiation through `createInkbox().sendProtocolMessage`, `createMerchantBridge` and `createProtocolInbox` over an in-memory Inkbox; `protocol.test.ts` now rejects round 5 instead of 4.
 - `src/inkbox/protocol.ts`: `parseMerchantMessage` keeps the merchant's one-line `message` (cleaned, one line, at most 200 characters) next to the typed fields, so the show page can display the hotel's own words on a live run. It is display only: `negotiate_step` never reads it (it is reported as ignored text), and it is never texted to the human. Test in `src/inkbox/protocol.test.ts`.
 - `src/capture/capture.ts`: the sender map now knows Acme Cloud (`acmecloud.example` -> `saas`, and `saas` as a category fallback), so the plan story's receipt is the `saas` merchant and its undo emails billing instead of falling back to a card dispute.
 - New in your folder: `src/web/show.ts` (the page) and `src/web/show.test.ts`; `src/web/routes.ts` serves `GET /web/show` and `POST /web/reply` also takes `{kind: "choice", choice: 1 | 2}` (it answers Proxy's intent question exactly like a "1" or "2" text). `/web/stage` is unchanged and stays the fallback.

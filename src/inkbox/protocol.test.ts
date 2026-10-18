@@ -41,7 +41,8 @@ describe("parseMerchantMessage", () => {
     [{ ...env, type: "accept" }],
     [{ ...env, type: "counter", kind: "gift_card", amount: 100 }],
     [{ ...env, type: "request_reversal", refund_amount: 1 }],
-    [{ ...env, round: 4, type: "deny", reason: "x" }],
+    // Round 4 is the last valid round (MAX_ROUNDS); one past it is rejected.
+    [{ ...env, round: 5, type: "deny", reason: "x" }],
     [{ ...env, round: 0, type: "deny", reason: "x" }],
     [{ ...env, chain_id: "../etc/passwd ", type: "deny", reason: "x" }],
     [{ type: "accept", refund_amount: 1 }],
@@ -49,6 +50,11 @@ describe("parseMerchantMessage", () => {
     [null],
     [42],
   ])("rejects %j", (raw) => expect(parseMerchantMessage(raw)).toBeNull());
+
+  it("accepts round 4, the protocol's last round, in both directions", () => {
+    expect(parseMerchantMessage({ ...env, round: 4, type: "accept", refund_amount: 54400 })).toMatchObject({ round: 4, type: "accept" });
+    expect(parseProxyMessage({ ...env, round: 4, type: "accept_counter" })).toMatchObject({ round: 4, type: "accept_counter" });
+  });
 
   it("reads JSON followed by the footer Inkbox appends to email bodies", () => {
     const body = JSON.stringify({ ...env, type: "accept", refund_amount: 5 }) + "\n\nSent via Inkbox (https://inkbox.ai)";
