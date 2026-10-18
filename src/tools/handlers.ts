@@ -2,6 +2,7 @@
 // orchestrator. Each returns ok(...) or fail(...), so every error follows the error contract.
 import { createHash } from "node:crypto";
 import { expectedRefund } from "../orchestrator/refunds.js";
+import { humanDate } from "../orchestrator/copy.js";
 import { checkSelfUndo } from "../orchestrator/self-undo.js";
 import { runSelfServeRoute } from "../orchestrator/routes/self-serve.js";
 import type { Proxy } from "../orchestrator/proxy.js";
@@ -48,6 +49,16 @@ export interface LiveChainMeta {
   recovered: Record<string, number>;
   /** Message actions whose correction was sent and acknowledged; their rows are done (green) with no money. */
   corrected: string[];
+}
+
+/** "Rebook the flight, hotel and transfer for Nov 13 to Nov 16, using <task email>. The host already has the right dates." */
+function redoInstruction(intent: { task_email: string; constraints: { dates?: { start: string; end?: string } } }, members: Action[]): string {
+  const booked = [...new Set(members.filter((a) => a.category !== "message").map((a) => a.category))];
+  const list = booked.length > 1 ? `${booked.slice(0, -1).join(", ")} and ${booked.at(-1)}` : (booked[0] ?? "booking");
+  const d = intent.constraints.dates;
+  const when = d ? ` for ${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""}` : "";
+  const told = members.some((a) => a.category === "message") ? " Messages were already corrected; don't resend them." : "";
+  return `Rebook the ${list}${when}, using ${intent.task_email}.${told}`;
 }
 
 export function createToolHandlers(getProxy: () => Proxy) {
@@ -266,8 +277,8 @@ export function createToolHandlers(getProxy: () => Proxy) {
               task_id: intent.task_id,
               task_email: intent.task_email,
               corrected_intent: { goal: intent.goal, constraints: intent.constraints },
-              instruction: `Rebook ${members.map((a) => a.category).join(", ")} to match the intent, using ${intent.task_email}.`,
-              redo_categories: [...new Set(members.map((a) => a.category))],
+              instruction: redoInstruction(intent, members),
+              redo_categories: [...new Set(members.filter((a) => a.category !== "message").map((a) => a.category))],
             }
           : undefined;
       const now = clock.now();
