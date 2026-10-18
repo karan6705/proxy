@@ -98,7 +98,7 @@ const SHORT_TITLES: Record<string, string> = {
 };
 
 /** Per task counts for the live agent, plus the execution versus comprehension split. */
-function taskBlock(results: Layer2Results): string {
+function taskBlock(results: Layer2Results, intent: Layer2Results | null = null): string {
   const tasks = layer2ByTask(results.episodes ?? []);
   if (tasks.length === 0) {
     return "";
@@ -118,7 +118,12 @@ function taskBlock(results: Layer2Results): string {
       ? `<p class="nalist"><b>Execution errors</b> (retry, default, substitute, fallback): Proxy caught ${total(execution, (task) => task.proxy_caught)} / ${total(execution, (task) => task.proxy_mistakes)}. ` +
         `<b>Comprehension errors</b> (agent misreads the request, then logs the same misreading): ${total(comprehension, (task) => task.proxy_caught)} / ${total(comprehension, (task) => task.proxy_mistakes)}.</p>`
       : "";
-  return `<table class="tasks"><thead><tr><th>Per task</th><th>Naive false “done”</th><th class="proxy">Proxy caught / real</th></tr></thead><tbody>${rows}</tbody></table>${split}`;
+  const rerunTasks = intent ? layer2ByTask(intent.episodes ?? []) : [];
+  const rerun =
+    intent && rerunTasks.length > 0
+      ? `<p class="nalist"><b>Rerun, human's words passed to log_intent:</b> caught ${total(rerunTasks, (task) => task.proxy_caught)} / ${total(rerunTasks, (task) => task.proxy_mistakes)} (${rerunTasks.map((task) => `${task.task_id} ${task.proxy_caught} / ${task.proxy_mistakes}`).join(", ")}). A request with no date cannot be checked.</p>`
+      : "";
+  return `<table class="tasks"><thead><tr><th>Per task</th><th>Naive false “done”</th><th class="proxy">Proxy caught / real</th></tr></thead><tbody>${rows}</tbody></table>${split}${rerun}`;
 }
 
 function table(rows: Row[], naiveLabel: string, na: string, showNa = true): string {
@@ -160,12 +165,12 @@ thead th:not(:first-child){white-space:nowrap;padding-left:calc(var(--u)*1)}
 .empty{color:var(--muted);font-size:calc(var(--u)*1.3);margin:auto}
 `;
 
-export function renderScoreboard(layer1: Layer1Results | null, layer2: Layer2Results | null): string {
+export function renderScoreboard(layer1: Layer1Results | null, layer2: Layer2Results | null, intent: Layer2Results | null = null): string {
   const first = layer1
     ? `<h2>Scripted scenarios</h2><div class="tag">${escapeHtml(layer1.summaries[0]?.scenarios ?? 0)} scenarios · Layer 1 · scripted · ${escapeHtml(runDate(layer1.run_id))}</div>${table(layer1Rows(layer1), "Naive (scripted)", notMeasured(layer1))}`
     : `<h2>Scripted scenarios</h2><p class="empty">No Layer 1 results yet. Run: npx tsx evals/run.ts</p>`;
   const second = layer2
-    ? `<h2>Live agent</h2><div class="tag">${escapeHtml(layer2.model)} · ${escapeHtml(layer2.summary.trials_per_task_arm)} trials per task and arm · Layer 2 · live · ${escapeHtml(runDate(layer2.run_id))}</div>${table(layer2Rows(layer2), "Naive (self-check)", layer2.mode === "mcp" ? "time to alert · redo correctness" : "time to alert · Stripe-verified money · redo correctness", false)}${layer2Footer(layer2)}${taskBlock(layer2)}`
+    ? `<h2>Live agent</h2><div class="tag">${escapeHtml(layer2.model)} · ${escapeHtml(layer2.summary.trials_per_task_arm)} trials per task and arm · Layer 2 · live · ${escapeHtml(runDate(layer2.run_id))}</div>${table(layer2Rows(layer2), "Naive (self-check)", layer2.mode === "mcp" ? "time to alert · redo correctness" : "time to alert · Stripe-verified money · redo correctness", false)}${layer2Footer(layer2)}${taskBlock(layer2, intent)}`
     : `<h2>Live agent</h2><p class="empty">No Layer 2 results yet. Run: npx tsx --env-file=.env evals/live/run.ts</p>`;
   const caveat = layer2?.mode === "mcp" ? `${CAVEAT} Layer 2 Proxy ran over MCP against a server.` : `${CAVEAT} Layer 2 Proxy ran in process, not over MCP.`;
   return `<!doctype html>
@@ -190,7 +195,7 @@ function latest<T>(prefix: string, dir: string): T | null {
 
 /** The page built from the newest Layer 1 and Layer 2 result files. */
 export function renderLatestScoreboard(dir: string = RESULTS_DIR): string {
-  return renderScoreboard(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir));
+  return renderScoreboard(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir), latest<Layer2Results>("intentcheck-", dir));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
