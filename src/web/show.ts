@@ -313,6 +313,7 @@ footer .hint{color:var(--faint)}
   var LIVE=!SCENARIO&&!TASK;
   var STORIES={
     trip:{title:"The wrong-date trip",blurb:"The agent books NYC for Nov 3, not Nov 13, says it's done and leaves. Proxy catches it and gets the money back.",scenes:["The ask","The agent says done","Proxy spots the mistake","The phone buzzes","The human replies","The agents negotiate","You choose the offer","The money comes back","Rebooked for Nov 13"],talk:6,choose:7,money:8,redo:9},
+    "trip-dmy":{title:"11/3: the date that means two things",blurb:"The human writes 11/3 meaning 11 March. The agent books Nov 3 without waiting; Proxy asks, hears Mar 11, and undoes it all.",scenes:["The ask","The agent books Nov 3","Proxy asks: Nov 3 or Mar 11?","The phone buzzes","The human replies","The agents negotiate","You choose the offer","The money comes back","Rebooked for Mar 11"],talk:6,choose:7,money:8,redo:9},
     ambiguous:{title:"The date that reads two ways",blurb:"The human writes 3/11. Proxy asks which date they meant before anything is booked.",scenes:["The ask","The agent reads 3/11","Proxy asks before booking","The human taps 1","Booked the right dates"],talk:0},
     store:{title:"The wrong charger",blurb:"The agent orders a USB-A 20W charger, not USB-C 65W. Proxy returns it like a person would: chat, form, label, refund.",scenes:["The ask","The agent says ordered","Proxy spots the wrong item","The phone buzzes","The human replies","The support chat","The return form","The return label","The drop-off scan","The money comes back","The right charger"],talk:6,each:[7]},
     plan:{title:"The annual plan",blurb:"The agent signs up for the annual plan instead of monthly. Proxy cancels it, gets the refund, and the agent re-subscribes monthly.",scenes:["The ask","The agent says done","Proxy spots the annual plan","The phone buzzes","The human replies","Proxy cancels with billing","The money comes back","Re-subscribed monthly"],talk:6,money:7,redo:8}
@@ -344,7 +345,9 @@ footer .hint{color:var(--faint)}
     var es=f.entries||[];
     if(es.some(function(e){return e.data&&e.data.category==="saas"}))return "plan";
     if(es.some(function(e){return e.data&&e.data.category==="store"}))return "store";
-    if(es.some(function(e){return e.kind==="text_out"&&/^You wrote /.test(e.text)}))return "ambiguous";
+    var askedDate=es.some(function(e){return e.kind==="text_out"&&/^You wrote /.test(e.text)});
+    if(askedDate&&es.some(function(e){return e.data&&e.data.alert==="chain_opened"}))return "trip-dmy";
+    if(askedDate)return "ambiguous";
     return "trip";
   }
 
@@ -383,6 +386,11 @@ footer .hint{color:var(--faint)}
     var S=STORIES[story], MONEY=S.money||7, REDO=S.redo||8, CHOOSE=S.choose||S.talk;
     // After the human's choice, everything (the accept, the refunds, the other merchants) is the money coming back.
     var afterChoice=ctx.decision&&e.seq>ctx.decision;
+    if(story==="trip-dmy"){
+      // The date question, the human's answer and Proxy's re-check come before the alert.
+      if(k==="text_out"&&/^You wrote |^Got it: .*already booked/.test(e.text))return 3;
+      if(k==="text_in"&&e.seq===ctx.firstIn)return 3;
+    }
     if(k==="intent")return 1;
     if(k==="wait")return 0; // live pacing lines; a presenter paces the story themselves
     if(k==="booking"||k==="message"||k==="self_undo")return 2;

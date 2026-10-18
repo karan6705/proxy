@@ -38,8 +38,9 @@ export function atRisk(atRiskCents: Cents, totalCents: Cents): string {
 }
 
 /** What went wrong, from the first mismatch: "used the wrong dates (Nov 3, not Nov 13)". */
-export function whatWentWrong(mismatch: Mismatch | undefined): string {
+export function whatWentWrong(mismatch: Mismatch | undefined, meant = false): string {
   if (!mismatch) return "made a mistake";
+  if (meant && mismatch.field === "dates") return `booked ${humanDate(mismatch.actual)}, but you meant ${humanDate(mismatch.expected)}`;
   if (mismatch.field === "term") return `signed up for the ${String(mismatch.actual)} plan, not ${String(mismatch.expected)}`;
   if (mismatch.field === "item") return `ordered the wrong item (${String(mismatch.actual)}, not ${String(mismatch.expected)})`;
   const field = mismatch.field === "dates" ? "dates" : mismatch.field;
@@ -55,6 +56,8 @@ export interface AlreadyUndone {
 export interface AlertCopy {
   already?: AlreadyUndone[];
   mismatch: Mismatch | undefined;
+  /** The human just answered which date they meant: the alert says so ("booked Nov 3, but you meant Mar 11"). */
+  meant?: boolean;
   affected: number;
   at_risk: Cents;
   total: Cents;
@@ -75,7 +78,7 @@ export function chainAlert(a: AlertCopy): string {
   const already = fixed.length ? `\nYour agent already fixed ${fixed.join(" and ")}. ${a.affected === 1 ? "1 more thing needs" : `${a.affected} more things need`} you.` : "";
   const numbers = fixed.length ? atRisk(a.at_risk, a.total) : `${things} affected · ${atRisk(a.at_risk, a.total)}`;
   const body = (what: string) => `Your agent ${what}.${already}\n\n${numbers}\n${window}\n\nReply UNDO ALL, PICK or KEEP.`;
-  const text = body(whatWentWrong(a.mismatch));
+  const text = body(whatWentWrong(a.mismatch, a.meant));
   return text.length <= 320 ? text : body("made a mistake");
 }
 
