@@ -23,6 +23,8 @@ export interface HumanPhaseOptions {
   fetchImpl?: typeof fetch;
   report(step: HumanPhaseStep, status: "PASS" | "FAIL", duration_ms: number, detail?: string): void;
   now?: () => number;
+  /** Wait this long after the alert before the (fake) human replies UNDO ALL. */
+  replyDelayMs?: number;
   /** Per step. The hotel step allows for a slow agent and the email follow-up. */
   timeouts?: Partial<Record<HumanPhaseStep, number>>;
 }
@@ -71,6 +73,7 @@ export async function runHumanPhase(options: HumanPhaseOptions): Promise<boolean
     return { value: f.chain.chain_id, detail: alert.text };
   });
   await step("undo_all", async () => {
+    if (options.replyDelayMs) await new Promise((r) => setTimeout(r, options.replyDelayMs));
     const res = await fetchImpl(url("/web/reply"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chain_id, kind: "undo_all" }) });
     if (!res.ok) throw new Error(`/web/reply answered ${res.status}`);
     const got = await waitFor("undo_all", (f) => f.entries.find((e) => e.kind === "text_out" && /^Got it/.test(e.text)));

@@ -2,6 +2,7 @@
 import type { StageBooking, StageConversation, StageConversationEntry, StageEntryKind, StageFeed, StageHumanEntry, StageRow } from "../web/stage-feed.js";
 import type { Action, Intent, Timestamp } from "../types.js";
 import type { FeedEntry } from "./feed.js";
+import { payments } from "./copy.js";
 
 export interface StageChainInput {
   chain_id: string;
@@ -76,7 +77,7 @@ export function toStageFeed(
     } else if (e.kind === "email_in") {
       add(merchant, { at: e.at, from: "merchant", kind: "reply", text: bubbleText(e.text) });
     } else if (e.kind === "stripe_refund") {
-      add(merchant, { at: e.at, from: "stripe", kind: "stripe", text: `Refund confirmed in Stripe · $${Math.round(Number(e.data.amount) / 100).toLocaleString("en-US")}` });
+      add(merchant, { at: e.at, from: "stripe", kind: "stripe", text: `Refund confirmed in ${payments()} · $${Math.round(Number(e.data.amount) / 100).toLocaleString("en-US")}` });
     }
   }
   const order = ["hotel", "transfer", "host"];
