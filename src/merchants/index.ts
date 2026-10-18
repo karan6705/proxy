@@ -28,6 +28,7 @@ import { createTransfer } from "./transfer.js";
 
 export type { MerchantDeps, MerchantEmail, SupportEmail, SupportReply } from "./deps.js";
 export type { HotelAgentOptions, HotelBehavior } from "./hotel.js";
+export { colorEnabled, formatLine, narrateExchange, narrateFromProxy, narrateSupport, narrateToProxy, oneLine } from "./narrate.js";
 export { MerchantError } from "./orders.js";
 export type { MerchantOrder } from "./orders.js";
 export { createFakeDeps } from "./fakes.js";
