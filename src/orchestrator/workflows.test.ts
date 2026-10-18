@@ -44,6 +44,7 @@ async function logIntent() {
 }
 
 beforeEach(async () => {
+  answeredOffers = 0;
   clock = createSimulatedClock(START);
   inkbox = createStandInInkbox();
   store = createMemoryStore();
@@ -83,9 +84,20 @@ async function demoChain() {
   return { chain_id: chain!.chain_id, host, flight, hotel, transfer };
 }
 
-const settle = async (check: () => Promise<boolean>, ms = 2000) => {
+/**
+ * Waits for `check`. Proxy asks before accepting any merchant offer, so by default the human answers each new options
+ * question with 1 (Proxy's recommendation), as in the demo; `choose: null` leaves questions for the test to answer.
+ */
+let answeredOffers = 0;
+const settle = async (check: () => Promise<boolean>, ms = 2000, opts: { choose?: string | null } = {}) => {
   const until = Date.now() + ms;
+  const choose = opts.choose === undefined ? "1" : opts.choose;
   while (Date.now() < until) {
+    const asked = texts().filter((t) => /best offer:/.test(t.body) && !/^Still waiting/.test(t.body)).length;
+    if (choose && asked > answeredOffers) {
+      answeredOffers = asked;
+      await imessageIn(choose);
+    }
     if (await check()) return;
     await new Promise((r) => setTimeout(r, 5));
   }

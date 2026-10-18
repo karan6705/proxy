@@ -55,8 +55,15 @@ beforeEach(async () => {
   task_id = r.task_id;
 });
 
+/** Waits for `check`; Proxy asks before accepting any merchant offer, and the human answers 1 (its recommendation). */
 const settle = async (check: () => Promise<boolean>) => {
+  let answered = 0;
   for (let i = 0; i < 200; i++) {
+    const asked = rt.proxy.feed.list(task_id).filter((e) => e.kind === "options").length;
+    if (asked > answered) {
+      answered = asked;
+      await rt.human.handleInbound({ from: "+14155550100", body: "1", via: "imessage" });
+    }
     if (await check()) return;
     await new Promise((r) => setTimeout(r, 5));
   }

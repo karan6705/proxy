@@ -2,7 +2,7 @@
 // the one alert, UNDO ALL from the demo page, the hotel negotiated and refunded, the chain finished, and the
 // redo for the right dates. Each step reads GET /demo/feed and reports PASS or FAIL.
 
-export const HUMAN_PHASE_STEPS = ["alert", "undo_all", "hotel_refund", "all_done", "redone"] as const;
+export const HUMAN_PHASE_STEPS = ["alert", "undo_all", "hotel_options", "hotel_refund", "all_done", "redone"] as const;
 export type HumanPhaseStep = (typeof HUMAN_PHASE_STEPS)[number];
 
 interface FeedEntry {
@@ -29,7 +29,7 @@ export interface HumanPhaseOptions {
   timeouts?: Partial<Record<HumanPhaseStep, number>>;
 }
 
-const DEFAULT_TIMEOUTS: Record<HumanPhaseStep, number> = { alert: 20_000, undo_all: 10_000, hotel_refund: 150_000, all_done: 60_000, redone: 60_000 };
+const DEFAULT_TIMEOUTS: Record<HumanPhaseStep, number> = { alert: 20_000, undo_all: 10_000, hotel_options: 150_000, hotel_refund: 150_000, all_done: 60_000, redone: 60_000 };
 
 export async function runHumanPhase(options: HumanPhaseOptions): Promise<boolean> {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -78,6 +78,13 @@ export async function runHumanPhase(options: HumanPhaseOptions): Promise<boolean
     if (!res.ok) throw new Error(`/web/reply answered ${res.status}`);
     const got = await waitFor("undo_all", (f) => f.entries.find((e) => e.kind === "text_out" && /^Got it/.test(e.text)));
     return { value: true, detail: got.text };
+  });
+  await step("hotel_options", async () => {
+    // Proxy asks before accepting any merchant offer; the (fake) human taps 1, the recommended refund.
+    const asked = await waitFor("hotel_options", (f) => f.entries.find((e) => e.kind === "text_out" && /best offer:/.test(e.text)));
+    const res = await fetchImpl(url("/web/reply"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "choice", choice: 1 }) });
+    if (!res.ok) throw new Error(`/web/reply answered ${res.status}`);
+    return { value: true, detail: asked.text };
   });
   await step("hotel_refund", async () => {
     const e = await waitFor("hotel_refund", (f) => f.entries.find((x) => x.kind === "stripe_refund" && /Hotel/.test(x.text)));

@@ -26,6 +26,8 @@ describe("/web/show", () => {
     const reply = route(routes, "POST", "/web/reply");
     expect((await reply.handle(req(JSON.stringify({ kind: "choice", choice: 1 })))).status).toBe(200);
     expect(handleInbound).toHaveBeenCalledWith({ from: HUMAN, body: "1", via: "sms" });
-    expect((await reply.handle(req(JSON.stringify({ kind: "choice", choice: 3 })))).status).toBe(400);
+    expect((await reply.handle(req(JSON.stringify({ kind: "choice", choice: 10 })))).status).toBe(400);
+    expect((await reply.handle(req(JSON.stringify({ kind: "keep_pushing" })))).status).toBe(200);
+    expect(handleInbound).toHaveBeenLastCalledWith({ from: HUMAN, body: "KEEP PUSHING", via: "sms" });
   });
 });

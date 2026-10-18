@@ -77,7 +77,13 @@ export function parseProxyMessage(raw: unknown, now: Timestamp = new Date().toIS
   if (!isObj(o)) return null;
   const env = envelope(o, now);
   if (!env) return null;
-  if (o.type === "accept_counter") return { ...env, type: "accept_counter" };
+  if (o.type === "accept_counter") {
+    // Optionally names the offer accepted (a typed kind and amount); anything else about it is dropped.
+    const c = isObj(o.counter) ? o.counter : null;
+    const kind = c ? COUNTER_KINDS.find((k) => k === c.kind) : undefined;
+    const amount = c ? cents(c.amount) : null;
+    return { ...env, type: "accept_counter", ...(kind && amount !== null ? { counter: { kind, amount } } : {}) };
+  }
   if (o.type === "push_back") return { ...env, type: "push_back", reason: clean(o.reason) };
   if (o.type === "request_reversal") {
     const order = o.order;

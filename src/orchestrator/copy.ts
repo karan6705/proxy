@@ -133,6 +133,8 @@ export interface SummaryLine {
   next?: string;
   /** Kept by the plan (fixing it costs more than it recovers), not by the human: still listed as open. */
   still_open?: boolean;
+  /** Store credit the human chose for this action instead of money back. */
+  credit?: Cents;
 }
 
 /**
@@ -147,11 +149,13 @@ export function chainSummary(
   via: string = DEFAULT_PAYMENTS_NAME,
 ): string {
   const back = lines.reduce((s, l) => s + (l.action.state === "verified" ? l.refunded : 0), 0);
+  // Store credit the human chose is shown as credit, never as money back.
+  const credit = lines.reduce((s, l) => s + (l.credit ?? 0), 0);
   const total = lines.reduce((s, l) => s + l.action.amount, 0);
   const open = lines.filter((l) => l.still_open || !["verified", "accepted", "kept"].includes(l.action.state));
   const corrected = lines.filter((l) => l.action.state === "accepted" && l.action.amount === 0).map((l) => noun(l.action));
   const byAgent = already.length ? ` (${already.map((d) => `${noun(d.action).toLowerCase()} ${money(d.amount)} refunded by your agent`).join(", ")})` : "";
-  const parts = [`${money(back)} of ${money(total)} back, confirmed in ${via}${byAgent}.`];
+  const parts = [`${money(back)} of ${money(total)} back, confirmed in ${via}${byAgent}${credit ? `, plus ${money(credit)} as store credit` : ""}.`];
   if (corrected.length) parts.push(`${corrected.join(", ")} told the right dates.`);
   if (open.length) {
     parts.unshift("Partly done.");
@@ -164,6 +168,40 @@ export function chainSummary(
   }
   if (untouched.length) parts.push(`Left as is: ${untouched.map(noun).join(", ")}.`);
   return parts.join(" ");
+}
+
+/** One of a merchant's offers, as a line in Proxy's options text. */
+export function optionLabel(o: { kind: string; amount: Cents }, orderAmount: Cents, merchantName: string): string {
+  if (o.kind === "store_credit") return `${money(o.amount)} store credit at ${merchantName}`;
+  if (o.kind === "partial_refund") return o.amount >= orderAmount ? `Full refund, ${money(o.amount)}, to your card` : `Refund ${money(o.amount)} (${pct(o.amount, orderAmount)}%) to your card`;
+  return `Change the booking instead (${money(o.amount)})`;
+}
+
+/**
+ * The question Proxy asks before accepting any merchant offer: every distinct offer, numbered, and its recommendation
+ * from the human's rules. "Harborview Hotel's best offer: 1) Refund $544 (85%) to your card 2) $640 store credit ...
+ * Your rules prefer refunds, so I recommend 1. Reply 1 or 2."
+ */
+export function offerOptionsText(
+  merchantName: string,
+  options: { kind: string; amount: Cents }[],
+  orderAmount: Cents,
+  recommended: number | null,
+  prefs: { no_store_credit: boolean; min_partial_refund_pct: number },
+  canPush: boolean,
+): string {
+  const lines = options.map((o, i) => `${i + 1}) ${optionLabel(o, orderAmount, merchantName)}`).join("\n");
+  const rec = recommended === null ? null : options[recommended];
+  const why = !rec
+    ? `None of these meets your rules (${prefs.no_store_credit ? "no store credit, " : ""}at least ${prefs.min_partial_refund_pct}% back).`
+    : rec.kind === "store_credit"
+      ? `Your rules allow store credit, so I recommend ${recommended! + 1}.`
+      : prefs.no_store_credit
+        ? `Your rules prefer refunds, so I recommend ${recommended! + 1}.`
+        : `It meets your ${prefs.min_partial_refund_pct}% minimum, so I recommend ${recommended! + 1}.`;
+  const nums = options.map((_, i) => String(i + 1));
+  const pick = nums.length === 1 ? "Reply 1" : `Reply ${nums.slice(0, -1).join(", ")} or ${nums.at(-1)}`;
+  return `${merchantName}'s best offer:\n${lines}\n${why} ${pick}${canPush ? ", or KEEP PUSHING" : ""}.`;
 }
 
 /** What the human can still do about an action Proxy couldn't fix, from its plan step. */
@@ -231,6 +269,8 @@ export interface ProxyLineContext {
   timeLeftMs?: number | null;
   /** The dates the agent will rebook, e.g. "Nov 13 to Nov 16", for the anchor. */
   rebook?: string;
+  /** This push back is the human's KEEP PUSHING. */
+  byHuman?: boolean;
 }
 
 /** Which of its decisions a push back is: the store-credit rule, the anchor for the full amount, or a low offer. */
@@ -250,6 +290,7 @@ export function proxyLine(m: ProxyProtocolMessage, ctx: ProxyLineContext): strin
     return `Proxy: our agent booked ${ctx.summary}${why}, and we caught it within hours. Please cancel ${ctx.ref ?? "it"} and refund the full ${money(ctx.amount)}. Attached: the original request, your receipt and the timeline.`;
   }
   if (m.type === "push_back") {
+    if (ctx.byHuman) return `Proxy: our customer asked us to push once more. Can you do better than ${ctx.lastCounter ? money(ctx.lastCounter.amount) : "that"}?`;
     const kind = pushBackKind(ctx);
     if (kind === "store_credit") return `Proxy: we can't take store credit; our human's rule is money back to the card. The error was our agent's, caught within hours. Please refund the ${money(ctx.amount)}.`;
     if (kind === "anchor") return `Proxy: thank you. We're rebooking with you${ctx.rebook ? ` for ${ctx.rebook}` : ""}, so we're asking for the full ${money(ctx.amount)} back on this booking.`;
@@ -268,14 +309,16 @@ export function proxyWhy(m: ProxyProtocolMessage, ctx: ProxyLineContext): string
   const offerPct = ctx.lastCounter ? pct(ctx.lastCounter.amount, ctx.amount) : 0;
   if (m.type === "request_reversal") return `Asked for the full ${money(ctx.amount)} first, with the evidence${left}`;
   if (m.type === "push_back") {
+    if (ctx.byHuman) return "Pushed once more: you replied KEEP PUSHING";
     const kind = pushBackKind(ctx);
     if (kind === "store_credit") return "Declined: you don't accept store credit";
     if (kind === "anchor") return `Asked once for the full amount: ${offerPct}% already meets your ${ctx.minPct}% minimum, and there is a round left${left}`;
     return `Declined: ${offerPct}% is below your ${ctx.minPct}% minimum`;
   }
+  // Proxy accepts only what the human chose from its options.
   if (m.type === "accept_counter") {
-    if (ctx.lastCounter?.kind === "store_credit") return "Accepted: you allow store credit";
-    return `Accepted: ${offerPct}% meets your ${ctx.minPct}% minimum${left}`;
+    if (ctx.lastCounter?.kind === "store_credit") return "Accepted: you chose the store credit";
+    return `Accepted: you chose it; ${offerPct}% meets your ${ctx.minPct}% minimum${left}`;
   }
   return "The human decides this one";
 }

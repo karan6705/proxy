@@ -237,6 +237,8 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
       MERCHANT_REPLY_TIMEOUT: env.PROXY_AGENT_TIMEOUT_MS ? Number(env.PROXY_AGENT_TIMEOUT_MS) : demoOn ? 60_000 : params.MERCHANT_REPLY_TIMEOUT,
       // Pacing for the screen, demo mode only (PROXY_DEMO_ROUTES=1): DEMO_PACE_MS, default 2.5 s. Never outside the demo.
       DEMO_PACE_MS: demoOn ? Math.max(0, Number(env.DEMO_PACE_MS ?? process.env.DEMO_PACE_MS ?? 2500) || 0) : 0,
+      // Proxy reminds the human once if they haven't chosen between a merchant's offers (short in the demo).
+      COUNTER_REMIND_MS: env.PROXY_COUNTER_REMIND_MS ? Number(env.PROXY_COUNTER_REMIND_MS) : demoOn ? 60_000 : 30 * 60_000,
       DEMO_SEQUENTIAL: demoOn && (env.PROXY_DEMO_SEQUENTIAL === "1" || Math.max(0, Number(env.DEMO_PACE_MS ?? process.env.DEMO_PACE_MS ?? 2500) || 0) > 0),
     },
     defaultPreferences,
@@ -266,7 +268,9 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     if (!intent) return;
     const old = (await Promise.all(chain.action_ids.map((id) => store.getAction(id)))).filter((a): a is Action => a !== null);
     const seen = new Set<string>();
-    const todo = old.filter((a) => a.category !== "message" && a.state === "verified" && !seen.has(a.category) && seen.add(a.category));
+    // Refunded bookings, and one the human kept as store credit (rebooked with that credit), are booked again.
+    const credited = new Set(chain.plan.filter((p) => (p.credit_amount ?? 0) > 0).map((p) => p.action_id));
+    const todo = old.filter((a) => a.category !== "message" && (a.state === "verified" || (a.state === "kept" && credited.has(a.action_id))) && !seen.has(a.category) && seen.add(a.category));
     const run = async () => {
       for (const a of todo) {
         await new Promise((r) => setTimeout(r, Number(env.PROXY_DEMO_REDO_GAP_MS ?? 1500)));
