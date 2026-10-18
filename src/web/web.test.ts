@@ -5,7 +5,7 @@ import type { Chain, Clock, HumanReply } from "../types.js";
 import { createWebRoutes } from "./index.js";
 import { PAGE_HTML } from "./page.js";
 import { STAGE_HTML } from "./stage.js";
-import { FIXTURE_STEPS, fixtureFeed } from "./stage-feed.js";
+import { fixtureFeed, fixtureSteps } from "./stage-feed.js";
 
 const now = "2026-11-01T10:00:00.000Z";
 const clock: Clock = { mode: "simulated", now: () => now, nowMs: () => Date.parse(now) };
@@ -106,14 +106,15 @@ describe("current run only", () => {
 });
 
 describe("stage page", () => {
-  it("is served, dark and 16:9, and writes feed text only with textContent", async () => {
+  it("is served, flexible, stacks below 1100px, and writes feed text only with textContent", async () => {
     const { call } = await setup();
     const res = await call("GET", "/web/stage");
     expect(res.status).toBe(200);
     expect(String(res.body)).toContain("<title>Proxy stage</title>");
-    expect(STAGE_HTML).toContain("100vh*16/9");
+    expect(STAGE_HTML).toContain("font-size:clamp(12px,min(100vw/110,100vh/63.5),22px)");
+    expect(STAGE_HTML).toContain("@media (max-width:1099px)");
     expect(STAGE_HTML).not.toMatch(/innerHTML|insertAdjacentHTML|document\.write|outerHTML/);
-    for (const label of ["The mistake", "Proxy", "Agent to agent", "Recovered"]) expect(STAGE_HTML).toContain(label);
+    for (const label of ["The mistake", "Proxy", "Agent to agent", "Recovered", "Booked by the agent", "Rebooked for", "Refunded by your agent", "Mistake detected", "Human alerted", "Human replied", "Negotiating", "Refunds confirmed"]) expect(STAGE_HTML).toContain(label);
   });
 
   it("ships a script that parses", () => {
@@ -123,26 +124,57 @@ describe("stage page", () => {
 
   it("serves a fixture that only ever adds to the story, and ends fully recovered", async () => {
     const { call } = await setup();
-    let prev = fixtureFeed(0);
-    for (let n = 1; n <= FIXTURE_STEPS.length; n += 1) {
-      const f = fixtureFeed(n);
-      expect(f.bookings.length).toBeGreaterThanOrEqual(prev.bookings.length);
-      expect(f.human.length).toBeGreaterThanOrEqual(prev.human.length);
-      expect((f.chain?.recovered ?? 0)).toBeGreaterThanOrEqual(prev.chain?.recovered ?? 0);
-      expect(f.conversations.flatMap((c) => c.entries).length).toBeGreaterThanOrEqual(prev.conversations.flatMap((c) => c.entries).length);
-      prev = f;
+    for (const long of [false, true]) {
+      const steps = fixtureSteps(long);
+      let prev = fixtureFeed(0, long);
+      for (let n = 1; n <= steps.length; n += 1) {
+        const f = fixtureFeed(n, long);
+        expect(f.bookings.length).toBeGreaterThanOrEqual(prev.bookings.length);
+        expect(f.human.length).toBeGreaterThanOrEqual(prev.human.length);
+        expect(f.chain?.recovered ?? 0).toBeGreaterThanOrEqual(prev.chain?.recovered ?? 0);
+        for (const c of prev.conversations) {
+          const now = f.conversations.find((x) => x.with === c.with)!;
+          expect(now.entries.slice(0, c.entries.length)).toEqual(c.entries);
+        }
+        prev = f;
+      }
+      const all = prev.conversations.flatMap((c) => c.entries.map((e) => e.text));
+      expect(all.some((t) => /store credit/i.test(t))).toBe(true);
+      expect(all.some((t) => /85%/.test(t))).toBe(true);
+      expect(all).toContain("Refund confirmed in Stripe · $544");
+      expect(prev.human.map((h) => h.text).join(" ")).toContain("UNDO ALL");
+      expect(prev.chain!.rows.every((r) => r.verified || r.amount === 0)).toBe(true);
+      expect(prev.chain!.recovered).toBe(long ? 289400 : 114400);
+      expect(prev.chain!.total).toBe(long ? 299000 : 124000);
     }
-    expect(prev.chain).toMatchObject({ total: 124000, recovered: 41200 + 54400 + 18800, state: "reversed" });
-    expect(prev.chain!.rows.every((r) => r.verified || r.amount === 0)).toBe(true);
-    expect(prev.human.map((h) => h.text).join(" ")).toContain("UNDO ALL");
-    const texts = prev.conversations.flatMap((c) => c.entries.map((e) => e.text));
-    expect(texts.some((t) => /store credit/i.test(t))).toBe(true);
-    expect(texts.some((t) => /85%/.test(t))).toBe(true);
-    expect(texts).toContain("Refund confirmed in Stripe · $544");
     const res = (await call("GET", "/web/stage-fixture", "", {}, { step: "7" })).body as any;
     expect(res.step).toBe(7);
-    expect(res.chain.recovered).toBe(41200);
     expect((await call("GET", "/web/stage-fixture", "", {}, { step: "abc" })).status).toBe(400);
+    expect(((await call("GET", "/web/stage-fixture", "", {}, { step: "99", long: "1" })).body as any).steps).toBe(fixtureSteps(true).length);
+  });
+
+  it("the agent's own refund is flagged, and the redo is separate from the mistakes", () => {
+    const end = fixtureFeed(fixtureSteps().length);
+    expect(end.chain!.rows.find((r) => r.id === "flight")).toMatchObject({ by_agent: true, verified: true, refunded: 41200 });
+    expect(end.chain!.rows.find((r) => r.id === "hotel")).toMatchObject({ refunded: 54400, amount: 64000 });
+    expect(end.chain!.rows.find((r) => r.id === "hotel")).not.toHaveProperty("by_agent");
+    const redo = end.bookings.filter((b) => b.rebooked);
+    expect(redo).toHaveLength(3);
+    expect(redo.every((b) => b.wrong === false && b.dates!.start === "2026-11-13")).toBe(true);
+    expect(end.chain!.rows.map((r) => r.id)).toEqual(["flight", "hotel", "transfer", "host"]);
+  });
+
+  it("each thread starts with Proxy's request and keeps every message in order, receipts inside their own thread", () => {
+    const end = fixtureFeed(fixtureSteps().length);
+    const hotel = end.conversations.find((c) => c.with === "hotel")!;
+    const transfer = end.conversations.find((c) => c.with === "transfer")!;
+    expect(hotel.name).toBe("Harborview Hotel agent");
+    expect(transfer.name).toBe("Metro Transfer support");
+    expect(hotel.entries.map((e) => e.kind)).toEqual(["request", "counter", "push_back", "counter", "accept_counter", "accept", "stripe"]);
+    expect(hotel.entries[0].text).toMatch(/^Our agent booked this hotel for the wrong dates/);
+    expect(transfer.entries.map((e) => e.kind)).toEqual(["email", "reply", "stripe"]);
+    expect(hotel.entries.at(-1)!.text).toBe("Refund confirmed in Stripe · $544");
+    expect(transfer.entries.at(-1)!.text).toBe("Refund confirmed in Stripe · $188");
   });
 
   it("the fixture's wrong dates are the ones the page highlights", () => {
