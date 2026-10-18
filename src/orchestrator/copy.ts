@@ -193,21 +193,77 @@ export function merchantLine(who: string, m: MerchantProtocolMessage, orderAmoun
   return `${who}: we can move the booking to other dates instead.`;
 }
 
-/** One of Proxy's protocol messages as one line. `lastCounter` explains a push back. */
-export function proxyLine(
-  m: ProxyProtocolMessage,
-  ctx: { summary: string; amount: Cents; lastCounter: { kind: string; amount: Cents } | null; minPct: number; mismatch?: Mismatch },
-): string {
+/** What Proxy knows when it writes one of its protocol messages. Typed state only: never merchant text. */
+export interface ProxyLineContext {
+  summary: string;
+  amount: Cents;
+  /** The merchant's offer Proxy is answering (its last counter). */
+  lastCounter: { kind: string; amount: Cents } | null;
+  minPct: number;
+  mismatch?: Mismatch;
+  /** The booking reference, e.g. HTL-F1KEY5. */
+  ref?: string;
+  /** The human's rule against store credit. */
+  noStoreCredit?: boolean;
+  /** Ms until the booking's window closes on Proxy's clock; null when unknown. */
+  timeLeftMs?: number | null;
+  /** The dates the agent will rebook, e.g. "Nov 13 to Nov 16", for the anchor. */
+  rebook?: string;
+}
+
+/** Which of its decisions a push back is: the store-credit rule, the anchor for the full amount, or a low offer. */
+export function pushBackKind(ctx: Pick<ProxyLineContext, "lastCounter" | "minPct" | "amount">): "store_credit" | "anchor" | "below_minimum" {
+  if (ctx.lastCounter?.kind === "store_credit") return "store_credit";
+  return ctx.lastCounter && ctx.lastCounter.amount * 100 >= ctx.minPct * ctx.amount ? "anchor" : "below_minimum";
+}
+
+/** One of Proxy's protocol messages as one line, the way it says it to the merchant. */
+export function proxyLine(m: ProxyProtocolMessage, ctx: ProxyLineContext): string {
+  const offerPct = ctx.lastCounter ? pct(ctx.lastCounter.amount, ctx.amount) : 0;
   if (m.type === "request_reversal") {
     const why = ctx.mismatch ? ` for the wrong ${ctx.mismatch.field} (${humanDate(ctx.mismatch.actual)}, not ${humanDate(ctx.mismatch.expected)})` : " by mistake";
-    return `Proxy: our agent booked ${ctx.summary}${why}. Please cancel it and refund ${money(ctx.amount)}.`;
+    return `Proxy: our agent booked ${ctx.summary}${why}, and we caught it within hours. Please cancel ${ctx.ref ?? "it"} and refund the full ${money(ctx.amount)}. Attached: the original request, your receipt and the timeline.`;
   }
   if (m.type === "push_back") {
-    if (ctx.lastCounter?.kind === "store_credit") return "Proxy: our human doesn't accept store credit; requesting a refund.";
-    return `Proxy: that's below our human's minimum of ${ctx.minPct}%; requesting a better refund.`;
+    const kind = pushBackKind(ctx);
+    if (kind === "store_credit") return `Proxy: we can't take store credit; our human's rule is money back to the card. The error was our agent's, caught within hours. Please refund the ${money(ctx.amount)}.`;
+    if (kind === "anchor") return `Proxy: thank you. We're rebooking with you${ctx.rebook ? ` for ${ctx.rebook}` : ""}, so we're asking for the full ${money(ctx.amount)} back on this booking.`;
+    return `Proxy: ${offerPct}% is below our human's minimum of ${ctx.minPct}%. Please improve the offer.`;
   }
-  if (m.type === "accept_counter") return `Proxy: we accept${ctx.lastCounter ? ` the ${money(ctx.lastCounter.amount)} ${ctx.lastCounter.kind === "store_credit" ? "store credit" : "refund"}` : " your offer"}.`;
+  if (m.type === "accept_counter") {
+    if (ctx.lastCounter?.kind === "store_credit") return `Proxy: we accept the ${money(ctx.lastCounter.amount)} store credit.`;
+    return `Proxy: accepted. We'll take the ${ctx.lastCounter ? money(ctx.lastCounter.amount) : "offered"} refund.`;
+  }
   return "Proxy: checking with our human.";
+}
+
+/** Why Proxy made the decision its message carries, in the human's terms: "Declined: you don't accept store credit". */
+export function proxyWhy(m: ProxyProtocolMessage, ctx: ProxyLineContext): string {
+  const left = ctx.timeLeftMs === null || ctx.timeLeftMs === undefined ? "" : ctx.timeLeftMs > 0 ? `; ${timeLeft(ctx.timeLeftMs)} left` : "; the window has closed";
+  const offerPct = ctx.lastCounter ? pct(ctx.lastCounter.amount, ctx.amount) : 0;
+  if (m.type === "request_reversal") return `Asked for the full ${money(ctx.amount)} first, with the evidence${left}`;
+  if (m.type === "push_back") {
+    const kind = pushBackKind(ctx);
+    if (kind === "store_credit") return "Declined: you don't accept store credit";
+    if (kind === "anchor") return `Asked once for the full amount: ${offerPct}% already meets your ${ctx.minPct}% minimum, and there is a round left${left}`;
+    return `Declined: ${offerPct}% is below your ${ctx.minPct}% minimum`;
+  }
+  if (m.type === "accept_counter") {
+    if (ctx.lastCounter?.kind === "store_credit") return "Accepted: you allow store credit";
+    return `Accepted: ${offerPct}% meets your ${ctx.minPct}% minimum${left}`;
+  }
+  return "The human decides this one";
+}
+
+/**
+ * A merchant agent's own one-line message, for display only: plain text, one line, at most 200 characters. It is
+ * never acted on and never sent to the human; the typed fields (merchantLine) are what Proxy reads.
+ */
+export function merchantSaid(m: MerchantProtocolMessage): string | null {
+  const raw = (m as unknown as { message?: unknown }).message;
+  if (typeof raw !== "string") return null;
+  const line = raw.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+  return line || null;
 }
 
 /** A short title for an action, e.g. "Hotel · Harborview Hotel · Nov 3 to Nov 6" or "Email to Alex Rivera (host) · Nov 3". */
