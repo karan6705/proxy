@@ -23,9 +23,11 @@ export interface ReturnFlowDeps {
   getAction(action_id: string): Promise<Action | null>;
   getChain(chain_id: ChainId): Promise<Chain | null>;
   textHuman(chain_id: ChainId, kind: "progress", body: string): Promise<void>;
-  refundAndVerify(chain: Chain, action: Action, agreed: Cents, route: Step["route"], note: string): Promise<Action["state"]>;
+  refundAndVerify(chain: Chain, action: Action, agreed: Cents, route: Step["route"], note: string, how?: string): Promise<Action["state"]>;
   finishIfDone(chain_id: ChainId): Promise<void>;
   isFrozen(): boolean;
+  /** Demo pacing (DEMO_PACE_MS x factor; nothing outside demo mode), so the form fills one field at a time. */
+  pace(chain: Pick<Chain, "task_id" | "chain_id">, factor: number): Promise<void>;
 }
 
 interface Pending {
@@ -54,7 +56,13 @@ export function createReturnFlow(deps: ReturnFlowDeps): ReturnFlow {
 
       await deps.setState(action, "requested");
       await deps.step(chain, action, "reversal_protocol", "pending", `${name} sends refunds through its return form; filling it in`);
-      deps.note(chain, "proxy", "form_field", `Proxy opened ${name}'s return form (${form.url}).`, { ...base, field: "_open", index: 0 });
+      deps.note(chain, "proxy", "form_field", `Proxy opened ${name}'s return form (${form.url}).`, {
+        ...base,
+        field: "_open",
+        index: 0,
+        // The empty form as the page draws it: labels and kinds, in order ("Order number:text|Resolution:choice").
+        fields: form.fields.map((f) => `${f.label}:${f.kind}`).join("|"),
+      });
 
       // Proxy's own record of the order fills every field. A refund is the only resolution Proxy asks for.
       const wanted: Record<ReturnFieldId, string> = {
@@ -66,6 +74,7 @@ export function createReturnFlow(deps: ReturnFlowDeps): ReturnFlow {
       };
       const values: Partial<Record<ReturnFieldId, string>> = {};
       for (const [i, field] of form.fields.entries()) {
+        await deps.pace(chain, 0.4);
         const value = wanted[field.id];
         values[field.id] = value;
         const shown = field.kind === "choice" ? (field.options?.find((o) => o.id === value)?.label ?? value) : value;
@@ -79,6 +88,7 @@ export function createReturnFlow(deps: ReturnFlowDeps): ReturnFlow {
         });
       }
 
+      await deps.pace(chain, 0.4);
       const result = portal.submit(values, deps.clock.now());
       deps.note(chain, "proxy", "form_field", "Proxy submitted the return form.", { ...base, field: "_submit", index: form.fields.length + 1 });
       if (!result.ok) {
@@ -88,6 +98,7 @@ export function createReturnFlow(deps: ReturnFlowDeps): ReturnFlow {
         return true;
       }
 
+      await deps.pace(chain, 0.6);
       const label = result.label;
       const qr = qrSvgPath(label.qr_payload);
       pending.set(label.rma, { chain_id: chain.chain_id, action_id: action.action_id, merchant: action.merchant });
@@ -132,7 +143,7 @@ export function createReturnFlow(deps: ReturnFlowDeps): ReturnFlow {
         amount: receipt.refund_amount,
         return_received: true,
       });
-      await deps.refundAndVerify(chain, action, receipt.refund_amount, "reversal_protocol", `${name} received the return`);
+      await deps.refundAndVerify(chain, action, receipt.refund_amount, "reversal_protocol", `${name} received the return`, `Proxy returned it through ${name}'s return form`);
       await deps.finishIfDone(chain.chain_id);
     },
   };

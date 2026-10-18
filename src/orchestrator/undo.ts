@@ -197,7 +197,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   }
 
   /** Refunds the agreed amount once and records whether Stripe shows it. Returns the action's new state. */
-  async function refundAndVerify(chain: Chain, action: Action, agreed: Cents, route: Step["route"], note: string): Promise<Action["state"]> {
+  async function refundAndVerify(chain: Chain, action: Action, agreed: Cents, route: Step["route"], note: string, howDone?: string): Promise<Action["state"]> {
     await savePlanRefund(chain.chain_id, action.action_id, agreed);
     await pace(chain, 0.6, { text: `Refund of ${money(agreed)} issued; verifying it in ${paymentsName}…`, merchant: action.merchant, action_id: action.action_id });
     const r = await refundOnce(payments, action, agreed);
@@ -214,7 +214,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     }
     await setState(action, "verified");
     await step(chain, action, route, "succeeded", `${note}; refunded ${money(agreed)}, verified in Stripe`, { stripe_ref: ref });
-    const how = howUndone(action, route, nameOf(action.merchant));
+    const how = howDone ?? howUndone(action, route, nameOf(action.merchant));
     stripeNote(chain, action, r.refunded_amount, ref, how);
     await deps.textHuman(chain.chain_id, "progress", refundedStep(action, r.refunded_amount, paymentsName, how));
     return "verified";
@@ -277,6 +277,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     refundAndVerify,
     finishIfDone,
     isFrozen: () => deps.isFrozen(),
+    pace: (chain, factor) => pace(chain, factor),
   });
 
   // --- routes ---
