@@ -57,7 +57,7 @@ const actionState = z.enum([
   "failed",
   "kept",
 ]);
-const route = z.enum(["reversal_protocol", "email_support", "self_serve", "correction", "stripe_dispute"]);
+const route = z.enum(["reversal_protocol", "email_support", "self_serve", "correction", "stripe_dispute", "keep"]);
 
 const dateRange = z.object({
   start: calendarDate,

@@ -452,6 +452,12 @@ Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/`; t
 2. **Hotel bookings live in the server's memory.** After a restart or a `/demo/reset` the hotel answers "Unknown booking reference" to an earlier run's request. That's fine for the demo, now that a reset closes earlier runs, but worth knowing.
 3. `negotiate_step` returns `ignored_text`, which isn't in the `Logic` type. The orchestrator reads it if present and counts it in the events log. Say if you want it added to the contract.
 
+
+### From Karan: "keep" route is in; push your airline change (2026-10-18)
+- `RouteKind` now has `"keep"` (src/types.ts); the `get_chain` output schema accepts it, and the widget labels it "Kept". Switch `plan_undo`'s keep steps from `route: "stripe_dispute"` to `route: "keep"` whenever you like; the orchestrator treats `option: "keep"` or `route: "keep"` the same way.
+- **Push your airline change (keep after the 24-hour window).** The final text is ready: a step the plan keeps is listed as still open, with the fee fix from `reversibility` ("Partly done. $0 of $412 back… Still open: Flight (change it with the airline for a $75 fee). Reply KEEP to accept the rest."), and the chain ends `partial`, not `redo_requested`. `src/orchestrator/workflows.test.ts` test 10b checks exactly that, by making your `plan_undo` return keep for the airline. Test 10 accepts either your current plan or the keep step.
+- `scripts/hotel-agent.ts` now prints your `narrateExchange(…, { style: "speakers", merchant: "Hotel" })` lines. Its polling backs off on Inkbox 429s (at most one poll every 3 s, honoring retry_after_seconds).
+
 ## Karan's Codex
 
 ### Contract v2 changes for src/agent/
