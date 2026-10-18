@@ -315,47 +315,11 @@ Found in Karan's live run on port 3000, read from `/web/state`:
 
 
 ### From Karan: the demo feed for the stage page (GET /demo/feed)
-Demo routes only (`PROXY_DEMO_ROUTES=1`). `GET /demo/feed` returns the current run; `?task_id=task_demo_N` returns another. Poll it about once a second. It never contains keys, tokens or phone numbers: the human is always "Human", and merchant free text (a deny reason) is never included.
-
-```json
-{
-  "ok": true,
-  "task_id": "task_demo_1",
-  "now": "2026-11-01T20:19:17.000Z",
-  "chain": {
-    "chain_id": "chain_act_task_demo_1_trf-h3o7vz",
-    "state": "redone",
-    "total": 124000,
-    "recovered": 114400,
-    "window_ends_at": "2026-11-02T00:00:00.000Z",
-    "actions": [
-      { "action_id": "act_…", "summary": "…", "category": "hotel", "amount": 64000, "state": "verified",
-        "done": true, "recovered": 54400, "window_ends_at": "2026-11-02T00:00:00.000Z" }
-    ]
-  },
-  "entries": [
-    { "seq": 20, "at": "2026-11-01T20:19:16.700Z", "task_id": "task_demo_1", "chain_id": "chain_…",
-      "actor": "hotel_agent", "kind": "protocol_in",
-      "text": "Harborview Hotel agent: we can offer store credit of $640.",
-      "data": { "type": "counter", "round": 1, "negotiation_id": "neg_…", "kind": "store_credit", "amount": 64000 } }
-  ]
-}
-```
-- `chain` is null until the run has a chain. Amounts are in cents. `chain.recovered` counts only refunds Stripe confirmed. `done` is true for a Stripe-confirmed refund or a sent correction.
-- `entries` are oldest first, in arrival order (`seq`). `at` is on the demo clock, which jumps forward when the agent's session ends (the late confirmations), so use `seq` for order.
-- `actor`: `agent`, `proxy`, `human`, `hotel_agent`, `transfer_support`, `host`, `airline`, `stripe`.
-- `kind` and its `data`:
-  - `intent`: goal, start, end, budget_total.
-  - `booking`, `redo` (a rebooking after the reversal), `message`: action_id, merchant, category, amount, start, end, ref.
-  - `mismatch`: action_id, field, expected, actual.
-  - `self_undo`: action_id, amount.
-  - `text_out` (Proxy to the human): channel, and alert (`chain_opened`, `progress`, `reminder` or `result`; absent on replies). `text_in` (the human): via.
-  - `protocol_out` / `protocol_in`: type, round, negotiation_id. Out also has via (`default` or `email`) and to. In also has kind (for a counter) and amount (cents).
-  - `email_out` / `email_in`: support and correction emails and the desks' answers (approved, amount).
-  - `stripe_refund`: action_id, amount, of (the booking amount), refund_id.
-  - `chain`: state (e.g. `redone`).
-- For the three columns: left = `agent` entries plus `mismatch`; middle = `chain`, plus `text_out`/`text_in` for the phone; right = `protocol_out`/`protocol_in`, plus the hotel's `stripe_refund`.
-- `text` is ready to show as is.
+- `GET /demo/feed` (demo routes only) now returns your `StageFeed` from `src/web/stage-feed.ts`, built from the live run, plus one extra field, `entries`: the full plain-English timeline (`seq`, `at`, `actor`, `kind`, `text`, `data`). No keys, tokens or phone numbers.
+- Checked on port 3001: `/web/stage` shows all three columns from the live feed, and counts up to "$1,144 of $1,240". Conversations come back in the order hotel, transfer, host; the host one holds the correction and its reply.
+- `bookings` includes the rebookings after the redo (`wrong: false`, Nov 13). `wrong` is true for everything in the chain.
+- `verified` is true only for Stripe-confirmed refunds; the host row is `state: "accepted"`, `verified: false`, which your page already shows as "Corrected".
+- In `npm run demo:offline-stage` payments are simulated, and Proxy's texts say "Stripe (simulated)". Your channel's reply "Got it. … confirmed in Stripe." still says Stripe there; could it say "confirmed" only, or take the wording from Proxy?
 
 ## Dhwanil
 
