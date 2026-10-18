@@ -144,6 +144,38 @@ export const listChains = server.tool(
   handler(listChainsInput, tools.list_chains, { toolName: "list_chains" }),
 );
 
+// A walkthrough an agent (or a person in a client) can pull up: how to use Proxy around a task.
+server.prompt(
+  {
+    name: "undo_my_agents_mistake",
+    title: "Undo my agent's mistake",
+    description: "Walks an agent through Proxy for one task: log the intent first, review before saying done, then follow the undo chain until it is reversed and redone.",
+    schema: z.object({
+      task: z.string().optional().describe("What the human asked for, e.g. \"Book my NYC trip for the Nov 13 conference, under $1,500\""),
+    }),
+  },
+  async ({ task }) => ({
+    description: "Use Proxy, the undo layer, around a task that books, buys or emails someone.",
+    messages: [
+      {
+        role: "user" as const,
+        content: {
+          type: "text" as const,
+          text: [
+            `You are doing this task for a human${task ? `: ${task}` : ""}. Use the Proxy tools around it:`,
+            "1. Before acting, call log_intent with the goal, the hard constraints (dates, budget, must-haves) and an idempotency_key. Use the task_email it returns as the contact email for every booking, signup and message.",
+            "2. If you are unsure a purchase matches the intent, call reversibility first.",
+            "3. Before you tell the human you are done, call review(task_id). If status is clean, you are done.",
+            "4. If status is chain_open, call undo with the ids in fixable_now. Anything in requires_human goes to the human by text; do not try to fix it yourself.",
+            "5. Call get_chain(chain_id) and follow next_action: wait_for_human means the human is deciding; redo means rebook exactly what redo says, using the task email.",
+            "6. Call list_chains if a late confirmation might have opened a new chain. Never claim money is back unless get_chain shows it confirmed in Stripe.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
 server.resource(
   {
     name: "mistakes",

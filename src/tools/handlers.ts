@@ -123,7 +123,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
         }
       }
       if (demo && (await store.getIntent(task_id))) {
-        return fail("upstream_unavailable", `Demo run ${task_id} already has a task. Reset the demo (POST /demo/reset) first.`, false, "stop");
+        return fail("upstream_unavailable", `Demo run ${task_id} already has a task. Ask the operator to reset the demo (POST /demo/reset), then call log_intent again.`, false, "stop");
       }
       let task_email: string;
       try {
