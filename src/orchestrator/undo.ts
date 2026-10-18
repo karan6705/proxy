@@ -61,6 +61,8 @@ export interface UndoDeps {
   /** Address support emails are sent from. */
   proxyEmail: string;
   isFrozen(): boolean;
+  /** Runs fn alone for this chain, so concurrent steps don't overwrite each other's chain updates. */
+  lockChain<T>(chain_id: ChainId, fn: () => Promise<T>): Promise<T>;
   textHuman(chain_id: ChainId, kind: "chain_opened" | "reminder" | "progress" | "result" | "too_late", body: string): Promise<void>;
   askHumanAboutCounter(chain_id: ChainId, negotiation_id: string, body: string): Promise<void>;
   logEvent(row: { kind: "a2a" | "email_out"; chain_id?: ChainId | null; action_id?: string | null; outcome?: string | null; task_id?: string | null }): Promise<void>;
@@ -131,12 +133,14 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   }
 
   async function savePlanRefund(chain_id: ChainId, action_id: string, refund_amount: Cents) {
-    const chain = await store.getChain(chain_id);
-    if (!chain) return;
-    const plan = chain.plan.some((p) => p.action_id === action_id)
-      ? chain.plan.map((p) => (p.action_id === action_id ? { ...p, refund_amount } : p))
-      : [...chain.plan, { action_id, route: "reversal_protocol" as const, option: "cancel" as const, cost: 0, deadline: null, refund_amount }];
-    await store.upsertChain({ ...chain, plan });
+    await deps.lockChain(chain_id, async () => {
+      const chain = await store.getChain(chain_id);
+      if (!chain) return;
+      const plan = chain.plan.some((p) => p.action_id === action_id)
+        ? chain.plan.map((p) => (p.action_id === action_id ? { ...p, refund_amount } : p))
+        : [...chain.plan, { action_id, route: "reversal_protocol" as const, option: "cancel" as const, cost: 0, deadline: null, refund_amount }];
+      await store.upsertChain({ ...chain, plan });
+    });
   }
 
   /** Refunds the agreed amount once and records whether Stripe shows it. Returns the action's new state. */
@@ -161,30 +165,29 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   }
 
   async function finishIfDone(chain_id: ChainId) {
-    const { chain, intent, actions } = await load(chain_id);
-    if (chain.state !== "undoing") return;
-    const todo = actions.filter((a) => chain.plan.some((p) => p.action_id === a.action_id && p.option !== "keep"));
-    // "accepted" is done only for a correction (no money); for a refund it means the counter is agreed but
-    // the money hasn't moved yet.
-    const done = (a: Action) => DONE_STATES.has(a.state) && !(a.state === "accepted" && a.amount > 0);
-    if (todo.some((a) => !done(a))) return;
-    const bad = todo.filter((a) => a.state === "failed" || a.state === "denied" || a.state === "no_agent");
-    const summary = chainSummary(
-      actions.map((a) => ({
-        action: a,
-        refunded: a.state === "verified" ? expectedRefund(chain, a) : 0,
-        next: nextOption(a, chain.plan.find((p) => p.action_id === a.action_id)),
-      })),
-      DATE_OF(intent),
-    );
-    if (bad.length) {
-      await store.upsertChain({ ...chain, state: "partial" });
-      await deps.textHuman(chain_id, "result", summary);
-      return;
-    }
-    // The agent gets the corrected intent back through get_chain and rebooks (next_action "redo").
-    await store.upsertChain({ ...chain, state: "redo_requested" });
-    await deps.textHuman(chain_id, "result", summary);
+    // Decide and record the outcome under the lock, so two steps finishing together send one summary.
+    const outcome = await deps.lockChain(chain_id, async () => {
+      const { chain, intent, actions } = await load(chain_id);
+      if (chain.state !== "undoing") return null;
+      const todo = actions.filter((a) => chain.plan.some((p) => p.action_id === a.action_id && p.option !== "keep"));
+      // "accepted" is done only for a correction (no money); for a refund it means the counter is agreed but
+      // the money hasn't moved yet.
+      const done = (a: Action) => DONE_STATES.has(a.state) && !(a.state === "accepted" && a.amount > 0);
+      if (todo.some((a) => !done(a))) return null;
+      const bad = todo.filter((a) => a.state === "failed" || a.state === "denied" || a.state === "no_agent");
+      const summary = chainSummary(
+        actions.map((a) => ({
+          action: a,
+          refunded: a.state === "verified" ? expectedRefund(chain, a) : 0,
+          next: nextOption(a, chain.plan.find((p) => p.action_id === a.action_id)),
+        })),
+        DATE_OF(intent),
+      );
+      // Partial: some items need the human. Otherwise the agent gets the corrected intent through get_chain (redo).
+      await store.upsertChain({ ...chain, state: bad.length ? "partial" : "redo_requested" });
+      return summary;
+    });
+    if (outcome) await deps.textHuman(chain_id, "result", outcome);
   }
 
   // --- routes ---
@@ -261,7 +264,11 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     if (!neg) return;
     lastSent.set(negotiation_id, message);
     armTimer(negotiation_id);
-    await deps.transport.send(neg.merchant, merchants.get(neg.merchant)?.agent_identity ?? neg.merchant, message, via);
+    // Never awaited: a merchant agent that is slow or hangs must not hold up the other steps. The timer
+    // above follows up if no answer comes.
+    deps.transport
+      .send(neg.merchant, merchants.get(neg.merchant)?.agent_identity ?? neg.merchant, message, via)
+      .catch((e) => console.error(`[undo] sending ${message.type} to ${neg.merchant} failed:`, e instanceof Error ? e.name : e));
   }
 
   function armTimer(negotiation_id: string) {
@@ -459,12 +466,19 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       const open = actions.filter((a) => !["verified", "kept"].includes(a.state) && (!chosen || chosen.has(a.action_id)));
       // plan_undo needs every action in the chain and skips the settled ones itself; PICK narrows it afterwards.
       const plan = logic.plan_undo(chain, actions, intent.preferences, clock.now()).filter((p) => open.some((a) => a.action_id === p.action_id));
-      await store.upsertChain({ ...chain, state: "undoing", plan });
-      const fresh = (await store.getChain(chain_id))!;
-      for (const p of plan) {
-        const action = open.find((a) => a.action_id === p.action_id);
-        if (action) await runStep(fresh, intent, action, p);
-      }
+      const started = await deps.lockChain(chain_id, async () => {
+        const latest = (await store.getChain(chain_id))!;
+        if (["undoing", "reversed", "redo_requested", "redone"].includes(latest.state)) return null;
+        return store.upsertChain({ ...latest, state: "undoing", plan });
+      });
+      if (!started) return; // a second UNDO ALL (or a double press) while this one runs
+      // Independent steps run side by side: a merchant agent that is slow to answer holds up nothing else.
+      await Promise.all(
+        plan.map(async (p) => {
+          const action = open.find((a) => a.action_id === p.action_id);
+          if (action) await runStep(started, intent, action, p);
+        }),
+      );
       await finishIfDone(chain_id);
     },
 
@@ -510,7 +524,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     async keep(chain_id) {
       const { chain, actions } = await load(chain_id);
       for (const a of actions) if (a.state !== "verified") await setState(a, "kept");
-      await store.upsertChain({ ...chain, state: "kept" });
+      await deps.lockChain(chain_id, async () => store.upsertChain({ ...((await store.getChain(chain_id)) ?? chain), state: "kept" }));
     },
 
     async lastProcessedAt() {
