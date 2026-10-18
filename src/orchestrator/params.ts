@@ -10,6 +10,7 @@ export const DEFAULT_PARAMS: Params = {
   AUTO_UNDO_AT: 0.9, // placeholder until agreed
   FOLLOW_UP_EVERY: 30 * MINUTE, // placeholder until agreed
   PROTOCOL_DEADLINE: 60 * MINUTE, // placeholder until agreed
+  MERCHANT_REPLY_TIMEOUT: 10 * MINUTE, // the demo uses 60 s; placeholder until agreed
   CLOCK_SCALE: 0, // manual simulated clock; placeholder until agreed
   SESSION_IDLE_MS: 5 * MINUTE, // placeholder until agreed
   // From the demo: "no store credit, partial refunds over 80% are fine".
