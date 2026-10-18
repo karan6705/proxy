@@ -34,6 +34,8 @@ import { runSelfServeRoute } from "./routes/self-serve.js";
 import { chainSummary, correctionStep, deniedStep, merchantLine, merchantSaid, nextOption, noAnswerYet, howUndone, proxyLine, proxyWhy, pushBackKind, refundedStep, stillWorking, type ProxyLineContext } from "./copy.js";
 import { MAX_ROUNDS } from "../logic/negotiate-step.js";
 import type { FeedActor, FeedEntry } from "./feed.js";
+import type { CarrierScan, ReturnsPortal } from "../merchants/deps.js";
+import { createReturnFlow } from "./return-flow.js";
 
 /** What a support desk answers: whether it approved and the refund it agreed. */
 export interface SupportAnswer {
@@ -44,6 +46,8 @@ export interface SupportAnswer {
 export interface UndoMerchants extends Pick<Merchants, "selfServeCancel" | "get" | "agent"> {
   hasSupportDesk(merchant_id: MerchantId): boolean;
   supportEmail(merchant_id: MerchantId, email: { from: string; subject: string; body: string }, now: string): Promise<SupportAnswer>;
+  /** The merchant's web return form, for a merchant whose agent sends refunds there (return-flow.ts). */
+  returnPortal?(merchant_id: MerchantId): ReturnsPortal | null;
 }
 
 /** How Proxy's messages reach a merchant agent. Real mode: Inkbox. Loopback: the in-process mock agent answers. */
@@ -88,6 +92,8 @@ export interface UndoExecutor {
   keep(chain_id: ChainId): Promise<void>;
   /** After STOP is lifted: carries on with steps the STOP held back, on every chain still undoing. */
   resume(): Promise<void>;
+  /** The (simulated) carrier scanned a package returned through a merchant's return form. */
+  onCarrierScan(scan: CarrierScan): Promise<void>;
   /** Latest real-time ISO of a processed merchant message, for restarting the inbox. Null when none. */
   lastProcessedAt(): Promise<string | null>;
 }
@@ -109,7 +115,7 @@ export function undoneByAgent(chain: Pick<Chain, "action_ids" | "steps">, action
 
 /** Who speaks for a merchant in the feed. */
 export function actorFor(merchant: MerchantId): FeedActor {
-  return merchant === "hotel" ? "hotel_agent" : merchant === "transfer" ? "transfer_support" : merchant === "host" ? "host" : merchant === "airline" ? "airline" : "proxy";
+  return merchant === "hotel" ? "hotel_agent" : merchant === "transfer" ? "transfer_support" : merchant === "host" ? "host" : merchant === "airline" ? "airline" : merchant === "northwind" ? "store" : "proxy";
 }
 
 export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
@@ -191,7 +197,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   }
 
   /** Refunds the agreed amount once and records whether Stripe shows it. Returns the action's new state. */
-  async function refundAndVerify(chain: Chain, action: Action, agreed: Cents, route: Step["route"], note: string): Promise<Action["state"]> {
+  async function refundAndVerify(chain: Chain, action: Action, agreed: Cents, route: Step["route"], note: string, howDone?: string): Promise<Action["state"]> {
     await savePlanRefund(chain.chain_id, action.action_id, agreed);
     await pace(chain, 0.6, { text: `Refund of ${money(agreed)} issued; verifying it in ${paymentsName}…`, merchant: action.merchant, action_id: action.action_id });
     const r = await refundOnce(payments, action, agreed);
@@ -208,7 +214,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     }
     await setState(action, "verified");
     await step(chain, action, route, "succeeded", `${note}; refunded ${money(agreed)}, verified in Stripe`, { stripe_ref: ref });
-    const how = howUndone(action, route, nameOf(action.merchant));
+    const how = howDone ?? howUndone(action, route, nameOf(action.merchant));
     stripeNote(chain, action, r.refunded_amount, ref, how);
     await deps.textHuman(chain.chain_id, "progress", refundedStep(action, r.refunded_amount, paymentsName, how));
     return "verified";
@@ -258,6 +264,22 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     if (outcome.reversed) await deps.onReversed?.(chain_id);
   }
 
+  const returnFlow = createReturnFlow({
+    clock,
+    portal: (merchant) => merchants.returnPortal?.(merchant) ?? null,
+    merchantName: (merchant) => merchants.get(merchant)?.name ?? merchant,
+    note: (chain, actor, kind, text, data = {}) => note(chain, actor, kind, text, data),
+    step: (chain, action, route, outcome, message) => step(chain, action, route, outcome, message),
+    setState,
+    getAction: (action_id) => store.getAction(action_id),
+    getChain: (chain_id) => store.getChain(chain_id),
+    textHuman: (chain_id, kind, body) => deps.textHuman(chain_id, kind, body),
+    refundAndVerify,
+    finishIfDone,
+    isFrozen: () => deps.isFrozen(),
+    pace: (chain, factor) => pace(chain, factor),
+  });
+
   // --- routes ---
 
   async function runSelfServe(chain: Chain, action: Action) {
@@ -272,6 +294,8 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
 
   function requestFor(chain: Chain, intent: Intent, action: Action, state: NegotiationState): RequestReversal {
     const sent_at = clock.now();
+    // A wrong item (not wrong dates) is described by its own mismatch.
+    const item = logic.compare(intent, [action]).find((m) => m.action_id === action.action_id && m.field === "item");
     return {
       type: "request_reversal",
       negotiation_id: state.negotiation_id,
@@ -281,15 +305,15 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       sent_at,
       order: { merchant: action.merchant, ref: action.ref, amount: action.amount },
       intent: { goal: intent.goal, constraints: intent.constraints },
-      what_went_wrong: `booked for ${action.dates?.start ? humanDate(action.dates.start) : "the wrong dates"}; the trip is ${intent.constraints.dates ? `${humanDate(intent.constraints.dates.start)}${intent.constraints.dates.end ? ` to ${humanDate(intent.constraints.dates.end)}` : ""}` : "on other dates"}`,
+      what_went_wrong: item ? `ordered ${String(item.actual)}; the task asked for ${String(item.expected)}` : `booked for ${action.dates?.start ? humanDate(action.dates.start) : "the wrong dates"}; the trip is ${intent.constraints.dates ? `${humanDate(intent.constraints.dates.start)}${intent.constraints.dates.end ? ` to ${humanDate(intent.constraints.dates.end)}` : ""}` : "on other dates"}`,
       deadline: state.deadline,
       evidence: {
         intent,
         order: action,
         confirmation_excerpt: action.summary,
         stripe_charge_id: null,
-        mismatch: { action_id: action.action_id, field: "dates", expected: intent.constraints.dates?.start ?? "", actual: action.dates?.start ?? "" },
-        why_wrong: "The booking does not match the task's dates.",
+        mismatch: item ?? { action_id: action.action_id, field: "dates", expected: intent.constraints.dates?.start ?? "", actual: action.dates?.start ?? "" },
+        why_wrong: item ? "The order is not the item the task asked for." : "The booking does not match the task's dates.",
         deadline: state.deadline,
         message_timeline: [{ at: sent_at, channel: "a2a", direction: "outbound", summary: "Reversal requested" }],
       },
@@ -623,6 +647,8 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     if (next.state === "refund_pending") {
       const agreed = message.type === "accept" ? message.refund_amount : (next.last_counter?.amount ?? action.amount);
       if (!deps.isFrozen()) await refundAndVerify(chain, action, agreed, "reversal_protocol", `Merchant agreed ${money(agreed)}`);
+    } else if (next.state === "denied" && (await returnFlow.start(chain, action))) {
+      // The merchant takes refunds through its return form: return-flow.ts carries on from here.
     } else if (next.state === "denied") {
       await setState(action, "denied");
       // The merchant's reason is untrusted text: never shown or acted on.
@@ -728,6 +754,10 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
         await deps.logEvent({ kind: "a2a", chain_id, action_id: action.action_id, outcome: "out:accept_counter" });
         await sendToAgent(negotiation_id, msg);
       });
+    },
+
+    onCarrierScan(scan) {
+      return returnFlow.onScan(scan);
     },
 
     onProtocolMessage(message, realReceivedAt) {

@@ -13,7 +13,7 @@ import { DEMO_NOW, demoActions } from "../helpers/demo.js";
 
 const HOUR = 60 * 60 * 1000;
 const ROUTES: RouteKind[] = ["reversal_protocol", "email_support", "self_serve", "correction", "stripe_dispute"];
-const KEYS: RuleKey[] = ["airline", "hotel", "transfer", "saas", "store", "domain", "final_sale", "message"];
+const KEYS: RuleKey[] = ["airline", "hotel", "transfer", "saas", "store", "northwind", "domain", "final_sale", "message"];
 const CATEGORIES: ActionCategory[] = ["flight", "hotel", "transfer", "saas", "store", "message"];
 
 const [flight, transfer, , hotel] = demoActions(true);

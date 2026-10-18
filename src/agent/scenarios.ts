@@ -5,18 +5,23 @@
 //   plan       The agent signs up for Acme Cloud's annual plan instead of monthly, reviews before the receipt arrives,
 //              says it is done and leaves. The receipt arrives late; Proxy flags the term and texts the human. After
 //              UNDO ALL, billing refunds it and the demo agent re-subscribes monthly (the server's demo redo).
+//   store      The agent orders a USB-A 20W charger from Northwind Market instead of the USB-C 65W one, says it is done and
+//              leaves. The receipt arrives late; Proxy flags the item and texts the human. After UNDO ALL, Northwind's agent
+//              offers store credit, Proxy declines, fills Northwind's return form, the simulated carrier scans the drop-off,
+//              the refund is verified, and the demo agent orders the USB-C 65W charger (the server's demo redo).
 // The trip story is runScriptedDemo (scripted.ts).
 import type { DateRange, LogIntentOutput, ReviewOutput, ToolResult } from "../types.js";
 import type { DemoBookingMerchants } from "./http-merchants.js";
 import type { ToolClient } from "./mcp-client.js";
 import { DEMO_PREFERENCES, type DemoControl } from "./scripted.js";
 
-export const SCENARIO_NAMES = ["trip", "ambiguous", "plan"] as const;
+export const SCENARIO_NAMES = ["trip", "ambiguous", "plan", "store"] as const;
 export type ScenarioName = (typeof SCENARIO_NAMES)[number];
 
 export const AMBIGUOUS_REQUEST =
   "Book me a flight SFO to JFK landing 3/11, 3 nights at Harborview from 3/11, and an airport transfer on 3/11. Under $1,500 total.";
 export const PLAN_REQUEST = "Sign our team up for Acme Cloud's team plan, billed monthly.";
+export const STORE_REQUEST = "Order a USB-C 65W charger for my MacBook, under $60.";
 
 export interface ScenarioAgentOptions {
   client: ToolClient;
@@ -98,6 +103,28 @@ export async function runPlanAgent(o: ScenarioAgentOptions): Promise<ScenarioAge
   const booked = await o.merchants.book({ merchant_id: "saas", task_id: logged.task_id, task_email: logged.task_email, item: "Acme Cloud Team plan, billed annually", amount: 118_800, booked_at: o.now() });
   const review = okOrThrow(await o.client.callTool<ToolResult<ReviewOutput>>("review", { task_id: logged.task_id }), "review");
   write(`Signed up (${booked.ref}); the agent's review: ${review.status}. It says it's done and leaves.`);
+  await o.control.endSession(logged.task_id);
+  await o.merchants.releaseConfirmation(booked.ref, o.now());
+  write("The receipt arrived after the agent left. Proxy texts the human in a few seconds: reply UNDO ALL on /web/show or by text.");
+  return { task_id: logged.task_id, review };
+}
+
+export async function runStoreAgent(o: ScenarioAgentOptions): Promise<ScenarioAgentResult> {
+  const write = o.write ?? console.log;
+  const logged = okOrThrow(
+    await o.client.callTool<LogIntent>("log_intent", {
+      goal: "USB-C 65W charger for a MacBook, under $60",
+      constraints: { categories: ["store"], budget_total: 6_000, must_haves: ["item:USB-C 65W charger"] },
+      preferences: DEMO_PREFERENCES,
+      original_request: STORE_REQUEST,
+      idempotency_key: "demo:store:usb-c-65w",
+    }),
+    "log_intent",
+  );
+  // The mistake: the USB-A 20W charger. Its receipt is held back, so the agent's own review sees nothing yet.
+  const booked = await o.merchants.book({ merchant_id: "northwind", task_id: logged.task_id, task_email: logged.task_email, item: "USB-A 20W charger", amount: 4_500, booked_at: o.now() });
+  const review = okOrThrow(await o.client.callTool<ToolResult<ReviewOutput>>("review", { task_id: logged.task_id }), "review");
+  write(`Ordered from Northwind Market (${booked.ref}); the agent's review: ${review.status}. It says "Ordered" and leaves.`);
   await o.control.endSession(logged.task_id);
   await o.merchants.releaseConfirmation(booked.ref, o.now());
   write("The receipt arrived after the agent left. Proxy texts the human in a few seconds: reply UNDO ALL on /web/show or by text.");
