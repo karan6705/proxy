@@ -124,6 +124,13 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
     reason,
   });
 
+  /**
+   * The hotel agent's persona: a short human-readable line next to the typed fields, for logs and the demo video.
+   * negotiate_step reads only the typed fields, never this text.
+   */
+  const say = <T extends MerchantProtocolMessage>(reply: T, line: string): MerchantProtocolMessage =>
+    ({ ...reply, message: line } as unknown as MerchantProtocolMessage);
+
   /** With inject_text set, tacks the extra untrusted field onto a reply. */
   const tag = (reply: MerchantProtocolMessage): MerchantProtocolMessage =>
     options.inject_text ? ({ ...reply, note: options.inject_text } as unknown as MerchantProtocolMessage) : reply;
@@ -156,11 +163,14 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           }
           if (behavior === "accept_full") {
             agreeRefund(ctx, order, order.amount);
-            return accept(message, now, order.amount);
+            return say(accept(message, now, order.amount), `Full refund of ${formatMoney(order.amount)} approved.`);
           }
           const offer = { kind: "store_credit" as const, amount: order.amount };
           negotiations.set(message.negotiation_id, { ref: order.ref, phase: "credit_offered", offer });
-          return counter(message, now, offer.kind, offer.amount);
+          return say(
+            counter(message, now, offer.kind, offer.amount),
+            `Rate is non-refundable. We can offer store credit of ${formatMoney(offer.amount)}.`,
+          );
         }
 
         case "push_back": {
@@ -174,7 +184,10 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
             negotiation.offer = { kind: "partial_refund", amount: Math.round((order.amount * partialPct) / 100) };
           }
           // Asked again after the partial offer: the same offer stands.
-          return counter(message, now, negotiation.offer.kind, negotiation.offer.amount);
+          return say(
+            counter(message, now, negotiation.offer.kind, negotiation.offer.amount),
+            `As a one-time goodwill exception we can refund ${partialPct}%, ${formatMoney(negotiation.offer.amount)}.`,
+          );
         }
 
         case "accept_counter": {
@@ -187,11 +200,11 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           if (negotiation.offer.kind === "store_credit") {
             // Store credit moves no money, so the agreed refund is 0.
             ctx.orders.update(order.ref, { status: "credited", refund_amount: 0 });
-            return accept(message, now, 0);
+            return say(accept(message, now, 0), `Store credit of ${formatMoney(negotiation.offer.amount)} issued. Nothing goes back to the card.`);
           }
           // The hotel agrees to the partial refund. The orchestrator issues and verifies it through Payments.
           agreeRefund(ctx, order, negotiation.offer.amount);
-          return accept(message, now, negotiation.offer.amount);
+          return say(accept(message, now, negotiation.offer.amount), `Agreed: refunding ${formatMoney(negotiation.offer.amount)}.`);
         }
 
         case "ask_human": {
@@ -200,7 +213,7 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           if (!negotiation || negotiation.phase === "closed") {
             return deny(message, now, "No open negotiation.");
           }
-          return counter(message, now, negotiation.offer.kind, negotiation.offer.amount);
+          return say(counter(message, now, negotiation.offer.kind, negotiation.offer.amount), "Our offer stands while you check with your customer.");
         }
       }
     }
