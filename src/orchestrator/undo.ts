@@ -31,7 +31,8 @@ import type {
 import { expectedRefund, refundOnce } from "./refunds.js";
 import { humanDate, type AlreadyUndone } from "./copy.js";
 import { runSelfServeRoute } from "./routes/self-serve.js";
-import { chainSummary, correctionStep, deniedStep, merchantLine, nextOption, noAnswerYet, proxyLine, refundedStep } from "./copy.js";
+import { chainSummary, correctionStep, deniedStep, merchantLine, merchantSaid, nextOption, noAnswerYet, proxyLine, proxyWhy, pushBackKind, refundedStep, type ProxyLineContext } from "./copy.js";
+import { MAX_ROUNDS } from "../logic/negotiate-step.js";
 import type { FeedActor, FeedEntry } from "./feed.js";
 
 /** What a support desk answers: whether it approved and the refund it agreed. */
@@ -124,7 +125,8 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       of: action.amount,
       refund_id: ref,
     });
-  const negotiations = new Map<string, { state: NegotiationState; merchant: MerchantId; chain_id: ChainId; action: Action }>();
+  /** `window` is when the booking's own window closes (the plan's deadline), for the "time left" in Proxy's reasons. */
+  const negotiations = new Map<string, { state: NegotiationState; merchant: MerchantId; chain_id: ChainId; action: Action; window?: string | null }>();
   const queues = new Map<string, Promise<void>>();
   const serial = <T>(key: string, fn: () => Promise<T>): Promise<T> => {
     const run = (queues.get(key) ?? Promise.resolve()).then(fn, fn);
@@ -301,7 +303,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     };
     const request = requestFor(chain, intent, action, state);
     const updated = await setState(action, "requested");
-    negotiations.set(state.negotiation_id, { state, merchant: action.merchant, chain_id: chain.chain_id, action: updated });
+    negotiations.set(state.negotiation_id, { state, merchant: action.merchant, chain_id: chain.chain_id, action: updated, window: plan.deadline ?? null });
     await step(chain, action, "reversal_protocol", "pending", "Asked the merchant agent to reverse the booking", { protocol_state: "requested", round: 1 });
     await deps.logEvent({ kind: "a2a", chain_id: chain.chain_id, action_id: action.action_id, outcome: "out:request_reversal" });
     await sendToAgent(state.negotiation_id, request);
@@ -316,26 +318,54 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   async function sendToAgent(negotiation_id: string, message: ProxyProtocolMessage, via: "default" | "email" = "default") {
     const neg = negotiations.get(negotiation_id);
     if (!neg) return;
-    lastSent.set(negotiation_id, message);
     armTimer(negotiation_id);
     const intent = await store.getIntent(neg.action.task_id);
+    const d = intent?.constraints.dates;
+    const ctx: ProxyLineContext = {
+      summary: `this ${neg.action.category}`,
+      amount: neg.action.amount,
+      lastCounter: neg.state.last_counter,
+      minPct: intent?.preferences.min_partial_refund_pct ?? 0,
+      mismatch: message.type === "request_reversal" ? message.evidence.mismatch : undefined,
+      ref: neg.action.ref,
+      noStoreCredit: intent?.preferences.no_store_credit ?? false,
+      timeLeftMs: neg.window ? Date.parse(neg.window) - clock.nowMs() : null,
+      ...(d ? { rebook: `${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""}` } : {}),
+    };
+    const line = proxyLine(message, ctx);
+    const why = proxyWhy(message, ctx);
+    // Every message carries its line and its reason next to the typed fields; the merchant acts only on the typed ones.
+    const carried = { ...message, message: line.replace(/^Proxy:\s*/, ""), why } as unknown as ProxyProtocolMessage;
+    lastSent.set(negotiation_id, carried);
+    const offer = neg.state.last_counter;
     note(
       { task_id: neg.action.task_id, chain_id: neg.chain_id },
       "proxy",
       "protocol_out",
-      `${proxyLine(message, {
-        summary: `this ${neg.action.category}`,
-        amount: neg.action.amount,
-        lastCounter: neg.state.last_counter,
-        minPct: intent?.preferences.min_partial_refund_pct ?? 0,
-        mismatch: message.type === "request_reversal" ? message.evidence.mismatch : undefined,
-      })}${via === "email" ? " (sent again by email)" : ""}`,
-      { type: message.type, round: message.round, negotiation_id, via, to: merchants.get(neg.merchant)?.agent_identity ?? neg.merchant, merchant: neg.merchant, action_id: neg.action.action_id },
+      `${line}${via === "email" ? " (sent again by email)" : ""}`,
+      {
+        type: message.type,
+        round: message.round,
+        negotiation_id,
+        via,
+        to: merchants.get(neg.merchant)?.agent_identity ?? neg.merchant,
+        merchant: neg.merchant,
+        action_id: neg.action.action_id,
+        // What Proxy checked before deciding, for the page's "Proxy is checking" card. Typed values only.
+        why,
+        decision: message.type === "push_back" ? pushBackKind(ctx) : message.type,
+        order_amount: neg.action.amount,
+        offer_kind: offer?.kind ?? null,
+        offer_amount: offer?.amount ?? null,
+        min_pct: ctx.minPct,
+        no_store_credit: ctx.noStoreCredit ?? false,
+        time_left_ms: ctx.timeLeftMs ?? null,
+      },
     );
     // Never awaited: a merchant agent that is slow or hangs must not hold up the other steps. The timer
     // above follows up if no answer comes.
     deps.transport
-      .send(neg.merchant, merchants.get(neg.merchant)?.agent_identity ?? neg.merchant, message, via)
+      .send(neg.merchant, merchants.get(neg.merchant)?.agent_identity ?? neg.merchant, carried, via)
       .catch((e) => console.error(`[undo] sending ${message.type} to ${neg.merchant} failed:`, e instanceof Error ? e.name : e));
   }
 
@@ -540,6 +570,8 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       action_id: neg.action.action_id,
       kind: message.type === "counter" ? message.kind : null,
       amount: message.type === "counter" ? message.amount : message.type === "accept" ? message.refund_amount : null,
+      // The merchant's own line, display only (sanitized, never acted on, never texted to the human).
+      said: merchantSaid(message),
     });
     await applyNegotiation(neg, message);
   }
@@ -582,7 +614,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
           await finishIfDone(chain_id);
           return;
         }
-        const round = Math.min(neg.state.round + 1, 3);
+        const round = Math.min(neg.state.round + 1, MAX_ROUNDS);
         neg.state = { ...neg.state, state: "accepted", round };
         await setState(action, "accepted");
         await step(chain, action, "reversal_protocol", "pending", "The human accepted the merchant's offer", { protocol_state: "accepted", round });
