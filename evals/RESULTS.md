@@ -58,20 +58,20 @@ Per task (counts out of the episodes per arm):
 
 ## Layer 2 rerun: the intent check from the human's own words
 
-_Not part of the pitch numbers. It is kept here as a record, and stays out of them unless a rerun shows the check working._
-
-Raw log: [`evals/results/intentcheck-2026-10-18T02-37-52-316Z.json`](results/intentcheck-2026-10-18T02-37-52-316Z.json) (run `intentcheck-2026-10-18T02-37-52-316Z`). Model: `claude-haiku-4-5-20251001`. 3 trials per task and arm, only the misread tasks (C1, C2).
+Raw log: [`evals/results/intentcheck-2026-10-18T03-09-55-855Z.json`](results/intentcheck-2026-10-18T03-09-55-855Z.json) (run `intentcheck-2026-10-18T03-09-55-855Z`). Model: `claude-haiku-4-5-20251001`. 3 trials per task and arm, only the misread tasks (C1, C2).
 
 | Task | What goes wrong | Proxy episodes | Agent passed the human's words | Check said: agrees / disagrees / absent | Proxy: real mistakes / caught |
 |---|---|---|---|---|---|
 | C1 | chain: a stale calendar says Nov 3, an email says Nov 13 | 3 | 3 / 3 | 3 / 0 / 0 | 9 / 0 |
-| C2 | chain: 3/11 written the European way means 3 November | 3 | 3 / 3 | 3 / 0 / 0 | 9 / 0 |
+| C2 | chain: 3/11 written the European way means 3 November | 3 | 3 / 3 | 0 / 3 / 0 | 9 / 9 |
 
-**Result: Proxy caught 0 / 18 of the real mistakes with the human's words passed in** (the check disagreed in 0 of 6 episodes). Without the words, the main run caught 0 / 60 on the same two tasks. This is reported as it came out.
+**Result: Proxy caught 9 / 18 of the real mistakes with the human's words passed in** (C1 0 / 9, C2 9 / 9); the check disagreed in 3 of 6 Proxy episodes. Without the words, the main run caught 0 / 60 on the same two tasks.
 
-**Why.** The check is the server's own deterministic parser (`checkIntent`, no model): it reads dates written with a month name or as ISO, and a budget, and compares them with what the agent logged. In C1 the human's words contain no date at all (the conference 'is on my calendar'), so there is nothing to compare. In C2 the date is written '3/11', which the parser does not read, so it says 'agrees'. The same check does catch a date written 'November 13' against a logged Nov 3 (tested in `tests/evals/live-intent.test.ts`), so the mechanism works where the human's words are readable. It does not cover a date that is only in a calendar, or one written as day/month digits.
+- Earlier run, before Proxy read numeric dates: caught 0 / 18 ([`evals/results/intentcheck-2026-10-18T02-37-52-316Z.json`](results/intentcheck-2026-10-18T02-37-52-316Z.json)).
 
-**How it was measured.** Same tasks and agent as above. The agent is asked to pass the human's own words, copied exactly, as `original_request` in `log_intent`. `checkIntent` from `src/orchestrator/intent-words.ts` runs in process on what the agent logged. When it disagrees, the server would ask the human; here that answer is simulated as the human choosing their own words, and Proxy compares receipts with the corrected intent. A catch is therefore only as real as the parser, and the human's answer is not measured.
+**Why.** The check is the server's own deterministic parser (`checkIntent`, no model). It reads dates written with a month name, ISO dates and numeric dates, and a budget, and compares them with what the agent logged. A numeric date that reads two ways ("3/11" is 3 November or March 11) is treated as ambiguous: if the agent logged one reading, the human is asked which they meant. That is C2: the check disagreed every time, and the simulated human picked the reading the agent had not taken. In C1 the human's words contain no date at all (the conference 'is on my calendar'), so there is nothing to compare and the check says 'agrees'. It cannot catch what the human never wrote.
+
+**How it was measured.** Same tasks and agent as above. The agent is asked to pass the human's own words, copied exactly, as `original_request` in `log_intent`. `checkIntent` from `src/orchestrator/intent-words.ts` runs in process on what the agent logged. When it disagrees, the server would ask the human; here that answer is simulated as the human choosing the reading they did not see the agent take, and Proxy compares receipts with the corrected intent. So a catch is only as real as the parser, and the human's answer is not measured. Some bookings may already be in the past (one run had the agent book March 2026): those are flagged but cannot be refunded.
 
 ## What we do not claim
 
