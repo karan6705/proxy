@@ -13,6 +13,7 @@ import type {
   Action,
   Chain,
   EvidencePacket,
+  Intent,
   Mismatch,
   NegotiationState,
   PlanStep,
@@ -75,6 +76,7 @@ async function negotiate(
   step: PlanStep,
   mismatch: Mismatch | undefined,
   log: (line: string) => void,
+  onIgnored: (field: string) => void,
 ): Promise<{ outcome: Outcome; rounds: number; agreed: number }> {
   const agent = world.merchants.agent(action.merchant);
   if (!agent) {
@@ -105,6 +107,7 @@ async function negotiate(
     rounds = Math.max(rounds, state.round);
     for (const ignored of decision.ignored_text) {
       log(`${name}: ignored untrusted text in "${ignored.field}"`);
+      onIgnored(ignored.field);
     }
     if (!decision.outgoing) {
       break;
@@ -182,7 +185,9 @@ async function executeStep(
       return;
     }
     case "reversal_protocol": {
-      const negotiated = await negotiate(world, scenario, chain, action, step, mismatch, log);
+      const negotiated = await negotiate(world, scenario, chain, action, step, mismatch, log, (field) =>
+        result.ignored_text.push({ action: id, field }),
+      );
       result.negotiation_rounds[id] = negotiated.rounds;
       result.outcomes[id] = negotiated.outcome;
       result.agreed_refund_total += negotiated.agreed;
@@ -217,8 +222,11 @@ async function runProxy(scenario: Scenario): Promise<RunResult> {
     bookings: scenario.bookings,
     hotel: scenario.hotel,
   });
-  const mismatches = compare(scenario.intent, world.actions);
-  const chains = rank(trace(scenario.intent, world.actions, mismatches), scenario.now);
+  // Proxy can only compare receipts with what the agent logged. If that differs from what the human really asked
+  // for, a mistake made in the logged intent is invisible to it: a documented known miss.
+  const logged: Intent = { ...scenario.intent, ...(scenario.logged_intent ?? {}) };
+  const mismatches = compare(logged, world.actions);
+  const chains = rank(trace(logged, world.actions, mismatches), scenario.now);
 
   const result: RunResult = {
     scenario_id: scenario.id,
@@ -230,6 +238,7 @@ async function runProxy(scenario: Scenario): Promise<RunResult> {
     agreed_refund_total: 0,
     claims_done: false,
     negotiation_rounds: {},
+    ignored_text: [],
     transcript: [],
   };
   result.transcript.push(`compare found ${mismatches.length} mismatches, trace made ${chains.length} chain(s)`);
@@ -240,15 +249,25 @@ async function runProxy(scenario: Scenario): Promise<RunResult> {
     }
     result.transcript.push(`alert: one text for ${chain.chain_id}, $${(chain.money_at_risk / 100).toFixed(2)} at risk`);
 
-    if (scenario.human_reply === "KEEP") {
+    const reply = scenario.human_reply;
+    // No reply: nothing happens. Auto-undo (acting before the window closes) is not built, so even with the
+    // preference set, silence does nothing. S18 documents this as a known limit.
+    const picked = typeof reply === "object" && reply !== null ? new Set(reply.pick) : null;
+
+    if (reply === "KEEP") {
       for (const actionId of chain.action_ids) {
         result.outcomes[bookingId(actionId)] = "kept";
       }
       result.transcript.push("human replied KEEP");
-    } else if (scenario.human_reply === "UNDO ALL") {
-      result.transcript.push("human replied UNDO ALL");
+    } else if (reply === "UNDO ALL" || picked) {
+      result.transcript.push(
+        picked ? `human replied PICK ${[...picked].join(", ")}` : "human replied UNDO ALL",
+      );
       const plan = planUndo(chain, world.actions, scenario.intent.preferences, scenario.now);
       for (const step of plan) {
+        if (picked && !picked.has(bookingId(step.action_id))) {
+          continue;
+        }
         await executeStep(world, scenario, chain, step, mismatches, result);
       }
     }
@@ -264,7 +283,10 @@ async function runNaive(scenario: Scenario): Promise<RunResult> {
     hotel: scenario.hotel,
   });
   const unseen = new Set(scenario.unseen_by_agent ?? []);
-  const known = world.actions.filter((a) => !unseen.has(bookingId(a.action_id)));
+  const saw = scenario.agent_saw_amounts ?? {};
+  const known = world.actions
+    .filter((a) => !unseen.has(bookingId(a.action_id)))
+    .map((a) => (saw[bookingId(a.action_id)] === undefined ? a : { ...a, amount: saw[bookingId(a.action_id)] }));
   const belief = scenario.agent_belief ?? scenario.intent;
   const own = compare({ ...scenario.intent, goal: belief.goal, constraints: belief.constraints }, known);
 
@@ -278,6 +300,7 @@ async function runNaive(scenario: Scenario): Promise<RunResult> {
     agreed_refund_total: 0,
     claims_done: own.length === 0,
     negotiation_rounds: {},
+    ignored_text: [],
     transcript: [
       `the agent checks its own work against what it believes the task was: ${own.length} mismatches`,
       own.length === 0 ? "the agent reports the task done" : "the agent notices a problem, but has no way to trace or undo it",

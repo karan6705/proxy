@@ -301,3 +301,78 @@ describe("compare: wrong quantity, off-task items and unexpected subscriptions",
     expect(compare(intent, [saas("Acme Pro, monthly")])).toEqual([]);
   });
 });
+
+describe("compare: billing term wording on receipts", () => {
+  const wantMonthly = demoIntent({ constraints: { must_haves: ["term:monthly"] } });
+  const wantAnnual = demoIntent({ constraints: { must_haves: ["term:annual"] } });
+
+  it.each(["Acme Pro, P1Y", "Acme Pro, P12M", "Acme Pro $240/yr", "Acme Pro $240 / year", "Acme Pro, 12-month plan", "Acme Pro, yearly"])(
+    "reads %j as annual",
+    (summary) => {
+      expect(compare(wantMonthly, [saas(summary)])).toMatchObject([{ field: "term", expected: "monthly", actual: "annual" }]);
+      expect(compare(wantAnnual, [saas(summary)])).toEqual([]);
+    },
+  );
+
+  it.each(["Acme Pro $20/mo", "Acme Pro $20 / month", "Acme Pro, P1M", "Acme Pro, monthly"])("reads %j as monthly", (summary) => {
+    expect(compare(wantMonthly, [saas(summary)])).toEqual([]);
+    expect(compare(wantAnnual, [saas(summary)])).toMatchObject([{ field: "term", expected: "annual", actual: "monthly" }]);
+  });
+
+  it("cannot tell the term when the receipt says nothing, so it does not guess (a known limit)", () => {
+    expect(compare(wantMonthly, [saas("Acme Pro")])).toEqual([]);
+  });
+});
+
+describe("compare: a charge seen by both email and Stripe is counted once", () => {
+  const budget = 124000;
+  const intent = demoIntent({ constraints: { dates: { start: "2026-11-13", end: "2026-11-16" }, budget_total: budget } });
+  const stripeCopy = (a: Action): Action => ({
+    ...a,
+    action_id: `${a.action_id}_stripe`,
+    source: "stripe",
+    received_at: new Date(Date.parse(a.received_at) + 60_000).toISOString(),
+  });
+
+  it("does not go over a budget the receipts exactly meet", () => {
+    const receipts = demoActions(false);
+    expect(compare(intent, [...receipts, ...receipts.map(stripeCopy)])).toEqual([]);
+  });
+
+  it("still counts a Stripe charge that has no receipt", () => {
+    const receipts = demoActions(false).filter((a) => a.category !== "hotel");
+    const hotel = demoActions(false).find((a) => a.category === "hotel") as Action;
+    const onlyStripe: Action = { ...stripeCopy(hotel), received_at: "2026-10-17T12:00:00.000Z" };
+    expect(compare(demoIntent({ constraints: { dates: { start: "2026-11-13", end: "2026-11-16" }, budget_total: budget - 1 } }), [...receipts, onlyStripe])).toMatchObject([
+      { action_id: "act_hotel_stripe", field: "amount", expected: budget - 1, actual: budget },
+    ]);
+  });
+});
+
+describe("compare: item and size match whole words", () => {
+  const sizeM = demoIntent({ constraints: { must_haves: ["item:rain jacket", "size:M"] } });
+  const jacket = (summary: string): Action =>
+    saas(summary, { action_id: "act_jacket", merchant: "store", category: "store", ref: "STO-2", amount: 8900 });
+
+  it("does not let size:M match the letter inside another word", () => {
+    expect(compare(sizeM, [jacket("Rain jacket, size Medium")])).toMatchObject([{ field: "item", expected: "M" }]);
+    expect(compare(sizeM, [jacket("Rain jacket, women's")])).toMatchObject([{ field: "item", expected: "M" }]);
+  });
+
+  it("matches the size as its own word, in any case", () => {
+    expect(compare(sizeM, [jacket("Rain jacket, size M")])).toEqual([]);
+    expect(compare(sizeM, [jacket("RAIN JACKET (m)")])).toEqual([]);
+  });
+
+  it("matches a multi-word item and names with punctuation", () => {
+    const hub = demoIntent({ constraints: { must_haves: ["item:USB-C hub"] } });
+    expect(compare(hub, [jacket("USB-C hub x1")])).toEqual([]);
+    expect(compare(hub, [jacket("USB-A hub x1")])).toMatchObject([{ field: "item" }]);
+  });
+
+  it("treats regex characters in a must-have as plain text", () => {
+    const odd = demoIntent({ constraints: { must_haves: ["item:(2) cables"] } });
+    expect(compare(odd, [jacket("Cables (2) cables")])).toEqual([]);
+    expect(compare(odd, [jacket("Cables")])).toMatchObject([{ field: "item" }]);
+  });
+});

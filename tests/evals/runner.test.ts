@@ -166,13 +166,172 @@ describe("runAll and summarize", () => {
     expect(grades).toHaveLength(SCENARIOS.length * 2);
   });
 
-  it("summarizes each arm", async () => {
+  it("summarizes each arm (a snapshot of Layer 1, which is scripted: not a measured rate)", async () => {
     const { grades } = await runAll();
     const naive = summarize("naive", grades);
     const proxy = summarize("proxy", grades);
-    expect(proxy).toMatchObject({ scenarios: 5, passed: 5, mistakes_expected: 6, mistakes_caught: 6, false_alarms: 0, false_done_claims: 0 });
-    expect(naive).toMatchObject({ scenarios: 5, passed: 2, mistakes_expected: 6, mistakes_caught: 0, false_alarms: 0, false_done_claims: 3 });
+    // 44 real mistakes in total, 5 of them documented known misses (S15, S34). One documented false alarm (S33).
+    expect(proxy).toMatchObject({
+      scenarios: SCENARIOS.length,
+      passed: SCENARIOS.length,
+      mistakes_expected: 44,
+      mistakes_caught: 39,
+      known_misses: 5,
+      false_alarms: 1,
+      known_false_alarms: 1,
+      false_done_claims: 0,
+    });
     expect(proxy.refund_agreed).toBe(proxy.refund_expected);
+    // The scripted self-review catches one: it can add up its own spend (S05).
+    expect(naive).toMatchObject({ scenarios: SCENARIOS.length, mistakes_expected: 44, mistakes_caught: 1 });
     expect(naive.refund_agreed).toBe(0);
+    expect(naive.passed).toBeLessThan(proxy.passed);
+  });
+});
+
+describe("the scenario set", () => {
+  it("covers the groups planned in docs/04-architecture.md", () => {
+    const counts: Record<string, number> = {};
+    for (const s of SCENARIOS) counts[s.group] = (counts[s.group] ?? 0) + 1;
+    expect(counts).toEqual({
+      "wrong date": 4,
+      "wrong amount": 2,
+      "annual vs monthly": 3,
+      "wrong item": 3,
+      duplicate: 2,
+      "late price change": 2,
+      "late confirmation": 1,
+      "hotel negotiation": 3,
+      "no agent": 2,
+      "window closed": 3,
+      "correct task": 5,
+      injection: 1,
+      "known limit": 3,
+    });
+    expect(SCENARIOS).toHaveLength(34);
+  });
+
+  it("documents its limits instead of hiding them", () => {
+    const withLimits = SCENARIOS.filter((s) => (s.expect.known_misses?.length ?? 0) + (s.expect.known_false_alarms?.length ?? 0) > 0 || s.expect.known_limit !== undefined).map((s) => s.id);
+    expect(withLimits).toEqual(["S15", "S18", "S33", "S34"]);
+  });
+});
+
+describe("the newer scenarios", () => {
+  it("S04: a flight booked 4 days out has only a change fee, and the airline has no desk to ask", async () => {
+    const result = await runScenario(scenario("S04"), "proxy");
+    expect(result.outcomes).toEqual({ flight: "not_undone" });
+    expect(result.transcript.join("\n")).toContain("no support desk to email");
+  });
+
+  it("S09: PICK undoes only the chosen plan and leaves the other alone", async () => {
+    const result = await runScenario(scenario("S09"), "proxy");
+    expect(result.outcomes).toEqual({ plan_a: "refund_agreed", plan_b: "none" });
+    expect(result.agreed_refund_total).toBe(24000);
+    expect(result.transcript.join("\n")).toContain("human replied PICK plan_a");
+  });
+
+  it("S11: a late return takes the 15% restocking fee off the refund", async () => {
+    expect((await runScenario(scenario("S11"), "proxy")).agreed_refund_total).toBe(17000);
+  });
+
+  it("S18: auto-undo is not built, so silence leaves the flight booked even with the preference on", async () => {
+    const scenarioS18 = scenario("S18");
+    expect(scenarioS18.intent.preferences.auto_undo).toBe(true);
+    const result = await runScenario(scenarioS18, "proxy");
+    expect(result.outcomes).toEqual({ flight: "none" });
+    expect(result.agreed_refund_total).toBe(0);
+    expect(result.alert_sent).toBe(true);
+    expect(gradeRun(scenarioS18, result).passed).toBe(true);
+  });
+
+  it("S20: a 70% offer is below the human's 80% minimum, so the human decides", async () => {
+    const result = await runScenario(scenario("S20"), "proxy");
+    expect(result.outcomes).toEqual({ hotel: "asked_human" });
+    expect(result.negotiation_rounds.hotel).toBeLessThanOrEqual(3);
+  });
+
+  it("S21 and S26: a hotel that refuses leaves the rest of the chain to reverse", async () => {
+    expect((await runScenario(scenario("S21"), "proxy")).outcomes).toEqual({ hotel: "not_undone" });
+    const mixed = await runScenario(scenario("S26"), "proxy");
+    expect(mixed.outcomes).toMatchObject({ flight: "refund_agreed", hotel: "not_undone", transfer: "refund_agreed", host_email: "corrected" });
+  });
+
+  it("S25: found too late, only the correction message can still be fixed", async () => {
+    const result = await runScenario(scenario("S25"), "proxy");
+    expect(result.outcomes).toEqual({ flight: "kept", hotel: "kept", transfer: "kept", host_email: "corrected" });
+    expect(result.agreed_refund_total).toBe(0);
+  });
+
+  it("S30: injected text is seen on every hotel reply, never acted on, and the outcome is the same as the demo", async () => {
+    const injected = await runScenario(scenario("S30"), "proxy");
+    const demo = await runScenario(scenario("S01"), "proxy");
+    expect(injected.ignored_text.length).toBeGreaterThanOrEqual(3);
+    expect(injected.ignored_text.every((t) => t.action === "hotel" && t.field === "note")).toBe(true);
+    expect(injected.outcomes).toEqual(demo.outcomes);
+    expect(injected.agreed_refund_total).toBe(demo.agreed_refund_total);
+    expect(JSON.stringify(injected)).not.toContain("card number");
+  });
+
+  it("S05: the scripted self-review can add up its own spend and catch the overrun, but still cannot undo it", async () => {
+    const s = scenario("S05");
+    const grade = gradeRun(s, await runScenario(s, "naive"));
+    expect(grade.mistakes).toMatchObject({ expected: 1, caught: 1 });
+    expect(grade.passed).toBe(false);
+    expect(grade.outcomes.correct).toBe(0);
+  });
+
+  it("S16: a price that rose after the quote is invisible to the naive arm but caught by Proxy", async () => {
+    const s = scenario("S16");
+    expect((await runScenario(s, "naive")).mismatches).toEqual([]);
+    expect((await runScenario(s, "proxy")).mismatches).toEqual([{ action: "hotel", field: "amount" }]);
+  });
+});
+
+describe("documented limits fail loudly if they stop being true", () => {
+  it("S34: a mistake made inside the logged intent is a known miss, counted as a miss", async () => {
+    const s = scenario("S34");
+    const result = await runScenario(s, "proxy");
+    expect(result.mismatches).toEqual([]);
+    const grade = gradeRun(s, result);
+    expect(grade).toMatchObject({ passed: true, mistakes: { expected: 4, caught: 0, known_misses: 4 } });
+  });
+
+  it("S34: if Proxy starts catching one, the scenario fails until it is updated on purpose", async () => {
+    const s = scenario("S34");
+    const result = await runScenario(s, "proxy");
+    const grade = gradeRun(s, { ...result, mismatches: [{ action: "flight", field: "dates" }] });
+    expect(grade.passed).toBe(false);
+    expect(grade.mistakes.surprise_catches).toEqual(["flight:dates"]);
+  });
+
+  it("S33: a documented false alarm counts as a false alarm in the totals", async () => {
+    const s = scenario("S33");
+    const grade = gradeRun(s, await runScenario(s, "proxy"));
+    expect(grade).toMatchObject({ passed: true, mistakes: { expected: 0, known_false_alarms: 1, false_alarms: [] } });
+    expect(summarize("proxy", [grade]).false_alarms).toBe(1);
+  });
+
+  it("S33: if the false alarm stops happening, the scenario fails until it is updated on purpose", async () => {
+    const s = scenario("S33");
+    const result = await runScenario(s, "proxy");
+    const grade = gradeRun(s, { ...result, mismatches: [] });
+    expect(grade.passed).toBe(false);
+    expect(grade.mistakes.missing_known_false_alarms).toEqual(["transfer_2:duplicate"]);
+  });
+
+  it("S15: an overcharge with nothing to compare against is a known miss", async () => {
+    const s = scenario("S15");
+    const result = await runScenario(s, "proxy");
+    expect(result).toMatchObject({ mismatches: [], alert_sent: false });
+    expect(gradeRun(s, result).mistakes).toMatchObject({ expected: 1, caught: 0, known_misses: 1 });
+  });
+
+  it("checks the ignored-text expectation both ways", async () => {
+    const s = scenario("S30");
+    const result = await runScenario(s, "proxy");
+    expect(gradeRun(s, { ...result, ignored_text: [] })).toMatchObject({ ignored_text_ok: false, passed: false });
+    expect(gradeRun(s, result).ignored_text_ok).toBe(true);
+    expect(gradeRun(scenario("S01"), await runScenario(scenario("S01"), "proxy")).ignored_text_ok).toBeNull();
   });
 });
