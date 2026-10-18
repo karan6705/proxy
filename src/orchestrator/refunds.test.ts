@@ -21,7 +21,7 @@ const flight: Action = {
 
 describe("a refund happens at most once per action", () => {
   it("uses one idempotency key per action, whatever the route", () => {
-    expect(refundKey("act_flight")).toBe("refund:act_flight");
+    expect(refundKey("act_flight", "ch_1")).toBe("refund:act_flight:ch_1");
   });
 
   it("does not refund again when Stripe already shows a refund, even if the idempotency key expired", async () => {
