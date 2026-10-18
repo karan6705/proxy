@@ -24,11 +24,11 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 
 ### Setup instructions for judges (draft)
 
-> Connect any MCP client to `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (streamable HTTP, no authentication). It exposes six tools: `log_intent`, `reversibility`, `review`, `undo`, `get_chain`, `list_chains`; a `mistakes` resource; and a live-chain view.
+> Connect any MCP client to `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (streamable HTTP, no authentication). It exposes seven tools: `log_intent`, `reversibility`, `review`, `undo`, `get_chain`, `list_chains` and `try_proxy_demo` (runs the whole story in a simulated sandbox); a `mistakes` resource; a prompt, `undo_my_agents_mistake`; and a live-chain view.
 >
-> Try it: call `log_intent` with a goal and constraints (it returns a `task_email` unique to that task), book through that address, then call `review(task_id)`. Every error has `retryable` and `next_action`; follow `next_action`. `undo` only touches the agent's own free, full-refund actions; anything else waits for the human, who answers UNDO ALL, PICK or KEEP by text, so no tool lets the agent approve its own undo.
+> Fastest way to see it work: call `try_proxy_demo` (a simulated sandbox: no real money, messages or merchants), then `get_chain` with the `chain_id` it returns. Or, by hand: call `log_intent` with a goal and constraints (it returns a `task_email` unique to that task), book through that address, then call `review(task_id)`. Every error has `retryable` and `next_action`; follow `next_action`. `undo` only touches the agent's own free, full-refund actions; anything else waits for the human, who answers UNDO ALL, PICK or KEEP by text, so no tool lets the agent approve its own undo.
 >
-> To watch a full run without setting anything up, open `https://bold-zero-0m4lf.run.mcp-use.com/web/stage?fixture=1`. The merchants and their agents in our demo are our own mocks, the clock is simulated, and money is Stripe test mode. Clients shown in the video: `<list only the clients you actually recorded, for example Claude Code, Codex, Cursor>`.
+> To watch a full run without setting anything up, open `https://bold-zero-0m4lf.run.mcp-use.com/web/stage` (the finished example) or `/web/stage?fixture=1` (the story replayed). Source code: https://github.com/karan6705/proxy. The merchants and their agents in our demo are our own mocks, the clock is simulated, and money is Stripe test mode. Clients shown in the video: `<list only the clients you actually recorded, for example Claude Code, Codex, Cursor>`.
 
 ### Builder feedback (drafts from what actually happened in this build; edit or delete anything you did not experience)
 

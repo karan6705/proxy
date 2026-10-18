@@ -4,21 +4,26 @@ Agents book, buy and email on our behalf, and sometimes they get it wrong. Proxy
 
 Built for YC "Make Something Agents Want" (tracks: Manufact, Inkbox). Source: https://github.com/karan6705/proxy (the folder is still called `tripwire` in places).
 
-## Try it in a minute
+## Try it in 60 seconds
 
-Add the MCP URL to your client (details in [CLIENTS.md](CLIENTS.md)):
+The cloud copy is `https://bold-zero-0m4lf.run.mcp-use.com/mcp`, a simulated sandbox: no real money, messages or merchants.
 
-```bash
-claude mcp add --transport http proxy https://<DEPLOYED_URL>/mcp
-```
+1. **Add it to your client** (more in [CLIENTS.md](CLIENTS.md)).
 
-Then ask your agent: *"Use Proxy for this: book my NYC trip for the Nov 13 conference, under $1,500."* Or call `log_intent` yourself:
+   Claude Code:
+   ```bash
+   claude mcp add --transport http proxy https://bold-zero-0m4lf.run.mcp-use.com/mcp
+   ```
+   Cursor, in `.cursor/mcp.json`:
+   ```json
+   { "mcpServers": { "proxy": { "url": "https://bold-zero-0m4lf.run.mcp-use.com/mcp" } } }
+   ```
+2. **Call `try_proxy_demo`.** It runs the whole story in about a second: an agent books a trip for Nov 3 instead of Nov 13, Proxy alerts a (simulated) human, who replies UNDO ALL, and Proxy undoes the chain. You get a `chain_id` and a plain-English summary.
+3. **Call `get_chain` with that `chain_id`** to see every action, the refunds, and "$1,144 of $1,240 recovered". Clients that support MCP Apps also render the live-chain view. `list_chains` shows every run.
 
-```json
-{ "goal": "NYC trip for the Nov 13 conference, under $1,500", "constraints": { "dates": { "start": "2026-11-13", "end": "2026-11-16" }, "budget_total": 150000 }, "idempotency_key": "try-1" }
-```
+To use Proxy around your own agent, call `log_intent` first (see the tools below), or ask your agent to use the `undo_my_agents_mistake` prompt.
 
-## The six tools
+## The tools
 
 | Tool | What it does |
 |---|---|
@@ -28,6 +33,7 @@ Then ask your agent: *"Use Proxy for this: book my NYC trip for the Nov 13 confe
 | `undo` | Undoes the agent's own flagged actions that are free to undo, during its session. Everything else goes to the human. |
 | `get_chain` | One undo chain, live: each action's state, money at risk, time left, and the redo instruction. Shows the live-chain widget (an MCP App). |
 | `list_chains` | Open chains, ranked by money at risk and time left. |
+| `try_proxy_demo` | Runs the whole story in a simulated sandbox and returns a chain to inspect. On the cloud copy and in demo mode. |
 
 There is also a prompt, `undo_my_agents_mistake`, that walks an agent through all of it, and a `mistakes` resource with lessons learned.
 
