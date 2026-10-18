@@ -110,7 +110,30 @@ Found while reviewing `origin/main`. File and line references are the current on
 - `fail("internal", e.message, true, "retry")` returns the raw error message to the agent and tells it to retry every time. Stripe error text can include a masked key fragment, and the docs promise tokens and codes never reach the agent.
 - Return a generic message, log the detail server-side with context (tool, task_id, error name), and set `retryable: true` only for known transient errors (`StripeApiError` 429 or 5xx, `upstream_unavailable`).
 
+### From Dhwanil: demo polish for the agent-to-agent part (2026-10-18)
+Done on branch `dhwanil` (PR to follow):
+- **Hotel persona.** Every hotel counter and accept now carries a short plain-language `message` next to the typed fields (for example "Rate is non-refundable. We can offer store credit of $640.00." and "As a one-time goodwill exception we can refund 85%, $544.00."). `negotiate_step` reads only the typed fields and returns the line in `ignored_text` like any other merchant text.
+- **Narration helpers** in `src/merchants/narrate.ts`, exported from `src/merchants/index.js`: `narrateExchange(incoming, reply, { color })` returns the two lines for one exchange (`← Proxy: reversal request for HTL-..., wrong dates`, `→ Proxy: ...`), `narrateSupport(email, reply)` does the same for the transfer desk's email replies, `colorEnabled()` honours `NO_COLOR` and pipes, and every line is cut to one short line with control characters removed.
+- **Scoreboard page** in `evals/scoreboard.ts`: `npx tsx evals/scoreboard.ts` writes `evals/scoreboard/index.html`, a self-contained dark 16:9 slide with counts only and the caveat line.
+- **`plan_undo`, airline after 24 hours: NOT changed yet, waiting on you.** Your QA item 1 asks for something Proxy can do or `keep`. `keep` is right (the airline has no agent and no support desk), and I have the change ready: in `src/logic/plan-undo.ts`, the fee-fix branch returns `keep(action)` when `action.merchant === "airline"` (a 3-line change, tests included). I held it out of this PR because it makes your `src/orchestrator/workflows.test.ts` test 10 fail: with a `keep` step the final text becomes "All done. $0 of $412 back", but the flight is still open. Your final-text code should list `keep` steps under "Still open", for the airline with the fee: "Flight (change it with the airline for a $75 fee)", which `reversibility` still gives you (`kind: "change"`, `cost_to_reverse: 7500`). Tell me once test 10 and that text are ready (or that I should push my change and you fix them) and I will push it the same hour.
+
+Requests for you (the files are yours):
+1. **`scripts/hotel-agent.ts`** (for `npm run demo:hotel`): in `respond(message)`, after you get the reply from the route, print the exchange:
+   ```ts
+   import { colorEnabled, narrateExchange } from "../src/merchants/index.js";
+   // inside respond(), after `const reply = (await res.json()) as MerchantProtocolMessage;`
+   for (const line of narrateExchange(message, reply, { color: colorEnabled() })) console.log(line);
+   return reply;
+   ```
+   Add `FORCE_COLOR=1` to the command if the terminal is not detected as a TTY when you record.
+2. **Serve the scoreboard at `/scoreboard`:** `import { renderLatestScoreboard } from "../evals/scoreboard.js"` and return it as `text/html` (it reads the newest `evals/results/layer1-*.json` and `layer2-*.json`). If you would rather not import from `evals/`, serve the file `evals/scoreboard/index.html`; run `npx tsx evals/scoreboard.ts` first to refresh it.
+3. **"keep" route:** `RouteKind` has no `keep` yet (only `FixOption` does). `plan_undo` still marks keep steps with `route: "stripe_dispute"`. Tell me when `"keep"` is in `RouteKind` and I will switch; it is a one-line change in `src/logic/plan-undo.ts` plus tests.
+4. **The transfer desk's lines on the server terminal:** `narrateSupport(email, reply)` returns `{ received, replied }`; call it where you handle `POST /merchants/transfer/support` if you want them printed there.
+
 ## Sarah
+
+### From Dhwanil: the hotel's readable line (optional)
+The hotel agent's counters and accepts now include a `message` string next to the typed fields. `parseMerchantMessage` in `src/inkbox/protocol.ts` drops it for `accept` and `counter` (it keeps only the typed fields, and `reason` for `deny`). If you want Proxy's own log to show the hotel's line, keep a cleaned `message` (one line, at most 140 characters, no control characters) on the parsed message. It is display text only; `negotiate_step` ignores it and lists it in `ignored_text`. Skip it if it complicates the contract.
 
 ### A2A transport ownership
 Sarah owns A2A transport in both directions: inbound Proxy requests route to Dhwanil's hotel agent, and hotel replies route back to the orchestrator. If Inkbox inbound A2A does not work, use email between `proxy-agent` and `hotel-agent` with a structured JSON body. The protocol state machine is unchanged.
