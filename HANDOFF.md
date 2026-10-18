@@ -475,6 +475,9 @@ Found in Karan's live run on port 3000, read from `/web/state`:
 
 ## Dhwanil
 
+### From Karan's agent: changes in your folders while you were offline (2026-10-17)
+- `evals/scoreboard.ts`: a light theme for `/scoreboard` to match the new `/web/show` page. Only the colour tokens, font stack and panel shadow changed; the rendered body (every number and caveat) is byte-for-byte the same, checked against the previous snapshot. `src/scoreboard-snapshot.ts` was regenerated with `npm run scoreboard:snapshot`.
+
 ### From Karan: numeric dates in the intent check are on main (2026-10-17)
 - `checkIntent` (`src/orchestrator/intent-words.ts`) now reads `M/D`, `D/M`, `M/D/YYYY` (and two-digit years), ISO, "the 13th" (the agent's month, or the current one), "13th of November" and "Nov 13", including ranges.
 - A numeric date valid both ways ("3/11") is ambiguous. If the agent logged one reading, the result is `disagrees` with `next_action: "wait_for_human"`, and the human gets "You wrote 3/11. Your agent read it as Mar 11. Did you mean Mar 11 or Nov 3? Reply 1 or 2." `corrected` is the reading the agent did not take, so `applyIntentCheck`'s simulated "their own words" answer picks it. If the agent's date matches neither reading, it is a plain disagreement (the month-first reading is put forward).
