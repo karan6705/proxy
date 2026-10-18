@@ -3,7 +3,7 @@
 // real Stripe test mode when a sk_test_ key is set. Logic and Merchants stay stand-ins until Dhwanil's merge.
 import { createAnthropicExtractor, createCapture, createInboundEmailRoute, deliverToCapture, type Capture } from "../capture/index.js";
 import { createStoreFromEnv } from "../db/index.js";
-import { createA2AAccess, createClient, createHumanChannel, createHumanRoutes, createInkbox, createProtocolInbox, type HumanChannel, type ProtocolInbox } from "../inkbox/index.js";
+import { createA2AAccess, createClient, createVerifier, createHumanChannel, createHumanRoutes, createInkbox, createProtocolInbox, type HumanChannel, type ProtocolInbox } from "../inkbox/index.js";
 import { logic } from "../logic/index.js";
 import {
   addressMode,
@@ -22,6 +22,8 @@ import { createProxy, type DemoTask, type Proxy } from "./proxy.js";
 import { createSessions } from "./sessions.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
 import type { ProtocolTransport } from "./undo.js";
+import { frontHumanChannel } from "./human-front.js";
+import { protocolSubject } from "../inkbox/index.js";
 
 /** Stands in for the human's number in the demo when HUMAN_PHONE isn't set. Nothing is ever sent to it. */
 const DEMO_HUMAN_NUMBER = "+10000000000";
@@ -39,6 +41,8 @@ export interface Runtime {
 }
 
 export interface RuntimeOverrides {
+  /** Replaces how protocol messages reach merchant agents (tests: a silent or scripted merchant). */
+  transport?: ProtocolTransport;
   store?: Store;
   inkbox?: Inkbox;
   env?: NodeJS.ProcessEnv;
@@ -141,8 +145,13 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   const realInkbox = Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
   const loopback = env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !realInkbox;
   let proxyRef: Proxy | null = null;
-  const transport: ProtocolTransport = {
-    async send(merchant, to_identity, message) {
+  const transport: ProtocolTransport = overrides.transport ?? {
+    async send(merchant, to_identity, message, via = "default") {
+      if (!loopback && via === "email") {
+        // Follow-up when the agent hasn't answered: the same JSON by email; the merchant bridge reads it.
+        await inkbox.sendEmail({ to: `${to_identity}@inkboxmail.com`, subject: protocolSubject(message.type, message.negotiation_id), body: JSON.stringify(message) });
+        return;
+      }
       if (!loopback) {
         await inkbox.sendProtocolMessage(to_identity, message);
         return;
@@ -172,7 +181,11 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     merchants,
     sessions: createSessions(clock, params.SESSION_IDLE_MS),
     clock,
-    params,
+    // The demo waits 60 s for a merchant agent before following up by email.
+    params: {
+      ...params,
+      MERCHANT_REPLY_TIMEOUT: env.PROXY_AGENT_TIMEOUT_MS ? Number(env.PROXY_AGENT_TIMEOUT_MS) : demoOn ? 60_000 : params.MERCHANT_REPLY_TIMEOUT,
+    },
     defaultPreferences,
     demo: env.PROXY_DEMO_ROUTES === "1" ? { identityTaskId: env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo", current: null } : null,
     humanNumber,
@@ -192,17 +205,21 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     clock,
     ...(anthropicKey ? { llm: createAnthropicExtractor({ apiKey: anthropicKey }) } : {}),
   });
-  const human = createHumanChannel({
+  // Every message to the human goes on the alert channel and from Proxy's identity, whatever channel the
+  // reply came in on (the demo page's buttons arrive as "sms").
+  const sendToHuman = async (body: string) => (humanPhone ? inkbox.sendText(alertChannel, humanNumber, body) : { message_id: "not_sent" });
+  const channel = createHumanChannel({
     store,
     hooks: proxy,
     clock,
-    sendText: async (channel, to, body) => (humanPhone ? inkbox.sendText(channel, to, body) : { message_id: "not_sent" }),
+    sendText: async (_via, _to, body) => sendToHuman(body),
     humanNumber,
   });
-  proxy.setHumanChannel(human);
+  proxy.setHumanChannel(channel);
+  const human = frontHumanChannel({ human: channel, proxy, clock, humanNumber, say: sendToHuman });
   const routes = [
     createInboundEmailRoute({ capture, fetchFullMessage }),
-    ...createHumanRoutes(human),
+    ...createHumanRoutes(human, createVerifier(env)),
     ...merchantRoutes(merchants, merchantDeps, clock),
     ...("recentEvents" in store
       ? createWebRoutes({ store: store as Store & EventReader, clock, channel: human, humanNumber, controls: demoOn })
