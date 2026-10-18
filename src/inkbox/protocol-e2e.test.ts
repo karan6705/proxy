@@ -164,7 +164,7 @@ describe("the Reversal Protocol over Inkbox (real inbox, bridge and client code)
     ]);
     expect(await s.state(s.hotel)).toBe("verified");
     expect(s.rt.fakePayments?.refunds.size).toBe(1);
-    expect(s.texts()).toContain("Hotel refunded, $544 of $640, confirmed in Stripe.");
+    expect(s.texts()).toContain("Proxy negotiated with the hotel's agent. Hotel refunded, $544 of $640, confirmed in Stripe.");
     // The hotel's own words arrived for display, and nothing was dropped on either side.
     const said = s.rt.proxy.feed.list(s.chain.task_id).filter((e) => e.kind === "protocol_in").map((e) => e.data.said);
     expect(said.at(-2)).toBe("85% ($544.00) is our final offer.");
