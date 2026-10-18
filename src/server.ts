@@ -404,7 +404,7 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
         for (const a of actions) labels[a.action_id] ??= actionLabel(a, runtime.merchants.get(a.merchant)?.name ?? a.merchant);
         // Wrong: anything compare flags now, and everything in the chain (refunded actions drop out of compare).
         const flagged = [...(intent ? runtime.proxy.deps.logic.compare(intent, actions).map((m) => m.action_id) : []), ...(chainRow?.action_ids ?? [])];
-        const stage = toStageFeed(task_id, clock.now(), intent, entries, chain, labels, flagged);
+        const stage = toStageFeed(task_id, clock.now(), intent, entries, chain, labels, flagged, runtime.proxy.deps.paymentsName);
         // `entries` is the full plain-English timeline; the rest is the StageFeed the stage page reads.
         return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true, ...stage, entries } };
       },

@@ -26,7 +26,6 @@ import type { ProtocolTransport } from "./undo.js";
 import { createRateLimitState, guardAccess, schedulePolls, throttledLog, type PollSchedule } from "./poll-guard.js";
 import { frontHumanChannel } from "./human-front.js";
 import { withIntentUpdates } from "./intent-store.js";
-import { setPaymentsName } from "./copy.js";
 import { protocolSubject } from "../inkbox/index.js";
 
 /** Stands in for the human's number in the demo when HUMAN_PHONE isn't set. Nothing is ever sent to it. */
@@ -102,8 +101,8 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   const inkbox = overrides.inkbox ?? (useInkbox ? createInkbox({ store, clock }) : createStandInInkbox());
   const useStripe = (env.STRIPE_SECRET_KEY ?? "").startsWith("sk_test_");
   const fakePayments = useStripe ? null : createFakePayments();
-  // The offline recording runs on simulated payments; every text then says so instead of "Stripe".
-  setPaymentsName(fakePayments && env.PROXY_SIMULATED_PAYMENTS === "1" ? "Stripe (simulated)" : "Stripe");
+  // Simulated payments (the offline recording, the sandbox) say so in every text instead of plain "Stripe".
+  const paymentsName = fakePayments && env.PROXY_SIMULATED_PAYMENTS === "1" ? "Stripe (simulated)" : "Stripe";
   const fakeChargesByKey = new Map<string, string>();
   let fakeChargeSequence = 0;
   let capture: Capture | null = null;
@@ -214,6 +213,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     },
     defaultPreferences,
     demo: env.PROXY_DEMO_ROUTES === "1" ? { identityTaskId: env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo", current: null } : null,
+    paymentsName,
     humanNumber,
     canTextHuman: Boolean(humanPhone),
     humanChannel: alertChannel,
