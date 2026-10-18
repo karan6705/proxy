@@ -52,17 +52,20 @@ describe("narration of the agent-to-agent part", () => {
     for (const message of [
       requestReversal(ref, "hotel", 64000),
       { ...ids, round: 2, type: "push_back" as const, reason: "Store credit is not acceptable." },
-      { ...ids, round: 3, type: "accept_counter" as const },
+      { ...ids, round: 3, type: "push_back" as const, reason: "Please refund the full amount." },
+      { ...ids, round: 4, type: "accept_counter" as const },
     ]) {
       lines.push(...narrateExchange(message, await agent.respond(message, DEMO_NOW)));
     }
     expect(lines).toEqual([
       expect.stringMatching(/^← Proxy: reversal request for HTL-/),
-      "→ Proxy: Rate is non-refundable. We can offer store credit of $640.00.",
+      "→ Proxy: Our policy: this rate is non-refundable within 7 days of check-in. We can offer $640.00 in store credit.",
       "← Proxy: push back: Store credit is not acceptable.",
-      "→ Proxy: As a one-time goodwill exception we can refund 85%, $544.00.",
+      "→ Proxy: As a one-time goodwill exception we can refund 85%, $544.00, to the original card.",
+      "← Proxy: push back: Please refund the full amount.",
+      "→ Proxy: 85% ($544.00) is our final offer.",
       "← Proxy: accepted your offer",
-      "→ Proxy: Agreed: refunding $544.00.",
+      "→ Proxy: Confirmed: refunding $544.00 to the original card.",
     ]);
   });
 

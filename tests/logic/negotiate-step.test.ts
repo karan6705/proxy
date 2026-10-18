@@ -52,16 +52,23 @@ describe("negotiate_step: the demo, one step at a time", () => {
     });
   });
 
-  it("accepts the hotel's 85% partial refund, since 80% is the human's minimum", () => {
-    const pushed = state({ state: "pushed_back", round: 2, push_backs_used: 1 });
+  it("asks once for the full amount when the hotel offers 85%, which meets the human's 80% minimum (the anchor)", () => {
+    const pushed = state({ state: "pushed_back", round: 2, push_backs_used: 1, last_counter: { kind: "store_credit", amount: 64000 } });
     const result = negotiateStep(pushed, counter("partial_refund", 54400, 2), PREFERENCES);
-    expect(result.outgoing).toMatchObject({ type: "accept_counter", ...IDS, round: 3 });
-    expect(result.next_state).toMatchObject({ state: "accepted", round: 3, last_counter: { kind: "partial_refund", amount: 54400 } });
+    expect(result.outgoing).toMatchObject({ type: "push_back", ...IDS, round: 3, reason: expect.stringContaining("full amount") });
+    expect(result.next_state).toMatchObject({ state: "pushed_back", round: 3, push_backs_used: 2, last_counter: { kind: "partial_refund", amount: 54400 } });
+  });
+
+  it("accepts the 85% when the hotel holds it as its final offer", () => {
+    const anchored = state({ state: "pushed_back", round: 3, push_backs_used: 2, last_counter: { kind: "partial_refund", amount: 54400 } });
+    const result = negotiateStep(anchored, counter("partial_refund", 54400, 3), PREFERENCES);
+    expect(result.outgoing).toMatchObject({ type: "accept_counter", ...IDS, round: 4 });
+    expect(result.next_state).toMatchObject({ state: "accepted", round: 4, last_counter: { kind: "partial_refund", amount: 54400 } });
   });
 
   it("moves to refund_pending when the hotel confirms the refund it counter-offered", () => {
-    const accepted = state({ state: "accepted", round: 3, push_backs_used: 1, last_counter: { kind: "partial_refund", amount: 54400 } });
-    const result = negotiateStep(accepted, accept(54400, 3), PREFERENCES);
+    const accepted = state({ state: "accepted", round: 4, push_backs_used: 2, last_counter: { kind: "partial_refund", amount: 54400 } });
+    const result = negotiateStep(accepted, accept(54400, 4), PREFERENCES);
     expect(result.outgoing).toBeUndefined();
     expect(result.next_state.state).toBe("refund_pending");
   });
@@ -115,11 +122,11 @@ describe("negotiate_step: against the real hotel agent, end to end", () => {
     return { current, transcript, rounds, merchants, ref };
   }
 
-  it("runs the demo: store credit, push back, 85% partial refund, accept, refund agreed", async () => {
+  it("runs the demo: store credit, push back, 85%, ask for the full amount, 85% final, accept, refund agreed", async () => {
     const { current, transcript, rounds, merchants, ref } = await negotiate({}, PREFERENCES);
-    expect(transcript).toEqual(["request_reversal", "counter:store_credit", "push_back", "counter:partial_refund", "accept_counter", "accept"]);
+    expect(transcript).toEqual(["request_reversal", "counter:store_credit", "push_back", "counter:partial_refund", "push_back", "counter:partial_refund", "accept_counter", "accept"]);
     expect(current.state).toBe("refund_pending");
-    expect(current.push_backs_used).toBe(1);
+    expect(current.push_backs_used).toBe(2);
     expect(Math.max(...rounds)).toBeLessThanOrEqual(MAX_ROUNDS);
     // The hotel only agreed the amount. The orchestrator would now refund it and verify it in Stripe.
     expect(merchants.getOrder(ref)).toMatchObject({ status: "cancelled", refund_amount: 54400 });
@@ -137,10 +144,10 @@ describe("negotiate_step: against the real hotel agent, end to end", () => {
     expect(current.state).toBe("denied");
   });
 
-  it("asks the human, and never pushes back twice, when the hotel's partial refund is below the minimum", async () => {
+  it("asks the human, and never pushes back more than twice, when the hotel's partial refund stays below the minimum", async () => {
     const { current, transcript } = await negotiate({ partial_refund_pct: 70 }, PREFERENCES);
-    expect(transcript).toEqual(["request_reversal", "counter:store_credit", "push_back", "counter:partial_refund", "ask_human"]);
-    expect(transcript.filter((t) => t === "push_back")).toHaveLength(1);
+    expect(transcript).toEqual(["request_reversal", "counter:store_credit", "push_back", "counter:partial_refund", "push_back", "counter:partial_refund", "ask_human"]);
+    expect(transcript.filter((t) => t === "push_back")).toHaveLength(2);
     expect(current.state).toBe("human_decision");
   });
 
@@ -153,12 +160,18 @@ describe("negotiate_step: against the real hotel agent, end to end", () => {
 });
 
 describe("negotiate_step: counters", () => {
-  it("accepts a partial refund at exactly the minimum, and pushes back one cent below it", () => {
+  it("treats exactly the minimum as acceptable (anchor, then accept), and one cent below it as too low", () => {
     const atMinimum = negotiateStep(state(), counter("partial_refund", 51200), PREFERENCES); // 80% of 64000
-    expect(atMinimum.outgoing?.type).toBe("accept_counter");
+    expect(atMinimum.outgoing).toMatchObject({ type: "push_back", reason: expect.stringContaining("full amount") });
+    expect(negotiateStep(atMinimum.next_state, counter("partial_refund", 51200, 2), PREFERENCES).outgoing?.type).toBe("accept_counter");
 
     const justBelow = negotiateStep(state(), counter("partial_refund", 51199), PREFERENCES);
-    expect(justBelow.outgoing?.type).toBe("push_back");
+    expect(justBelow.outgoing).toMatchObject({ type: "push_back", reason: expect.stringContaining("below the minimum") });
+  });
+
+  it("does not anchor when no round would be left to accept in: it accepts the acceptable offer", () => {
+    const late = state({ state: "pushed_back", round: 3, push_backs_used: 1, last_counter: { kind: "store_credit", amount: 64000 } });
+    expect(negotiateStep(late, counter("partial_refund", 54400, 3), PREFERENCES).outgoing).toMatchObject({ type: "accept_counter", round: 4 });
   });
 
   it("accepts a full-price refund counter", () => {
@@ -171,11 +184,11 @@ describe("negotiate_step: counters", () => {
     expect(result.next_state.state).toBe("accepted");
   });
 
-  it("pushes back at most once: the second unacceptable counter goes to the human", () => {
-    const pushedOnce = state({ state: "pushed_back", round: 2, push_backs_used: 1 });
-    const result = negotiateStep(pushedOnce, counter("store_credit", 64000, 2), PREFERENCES);
+  it("pushes back at most twice: the third unacceptable counter goes to the human", () => {
+    const pushedTwice = state({ state: "pushed_back", round: 3, push_backs_used: 2 });
+    const result = negotiateStep(pushedTwice, counter("store_credit", 64000, 3), PREFERENCES);
     expect(result.outgoing).toMatchObject({ type: "ask_human", counter: { kind: "store_credit", amount: 64000 } });
-    expect(result.next_state).toMatchObject({ state: "human_decision", push_backs_used: 1 });
+    expect(result.next_state).toMatchObject({ state: "human_decision", push_backs_used: 2 });
   });
 
   it("sends an exchange to the human", () => {
@@ -184,9 +197,9 @@ describe("negotiate_step: counters", () => {
     expect(result.next_state.state).toBe("human_decision");
   });
 
-  it("never goes past the round limit: an acceptable counter in round 3 goes to the human instead", () => {
-    const late = state({ state: "pushed_back", round: 3, push_backs_used: 1 });
-    const result = negotiateStep(late, counter("partial_refund", 54400, 3), PREFERENCES);
+  it("never goes past the round limit: an acceptable counter in round 4 goes to the human instead", () => {
+    const late = state({ state: "pushed_back", round: 4, push_backs_used: 2, last_counter: { kind: "partial_refund", amount: 54400 } });
+    const result = negotiateStep(late, counter("partial_refund", 54400, 4), PREFERENCES);
     expect(result.outgoing?.type).toBe("ask_human");
     expect(result.next_state.state).toBe("human_decision");
     for (const outgoing of [result.outgoing]) {
@@ -195,22 +208,22 @@ describe("negotiate_step: counters", () => {
   });
 
   it("does not push back past the round limit either", () => {
-    const late = state({ round: 3 });
+    const late = state({ round: 4 });
     const result = negotiateStep(late, credit, PREFERENCES);
     expect(result.outgoing?.type).toBe("ask_human");
   });
 
   it("counts rounds from Proxy's own record, so a merchant claiming a lower round cannot extend the limit", () => {
-    const late = state({ state: "pushed_back", round: 3, push_backs_used: 1 });
-    // The merchant says "round 1", but Proxy is already in round 3.
+    const late = state({ state: "pushed_back", round: 4, push_backs_used: 2, last_counter: { kind: "partial_refund", amount: 54400 } });
+    // The merchant says "round 1", but Proxy is already in round 4.
     const result = negotiateStep(late, counter("partial_refund", 54400, 1), PREFERENCES);
     expect(result.outgoing?.type).toBe("ask_human");
-    expect(result.next_state.round).toBe(3);
+    expect(result.next_state.round).toBe(4);
   });
 
   it("follows a merchant that claims a higher round than Proxy has counted, so it never goes backwards", () => {
     const result = negotiateStep(state({ round: 1 }), counter("partial_refund", 54400, 2), PREFERENCES);
-    expect(result.outgoing).toMatchObject({ type: "accept_counter", round: 3 });
+    expect(result.outgoing).toMatchObject({ type: "push_back", round: 3 });
   });
 
   it.each([
@@ -241,10 +254,10 @@ describe("negotiate_step: accept and deny", () => {
 
   it("judges a merchant accept for less than the price like a partial refund offer", () => {
     const high = negotiateStep(state(), accept(54400), PREFERENCES);
-    expect(high.outgoing?.type).toBe("accept_counter");
+    expect(high.outgoing).toMatchObject({ type: "push_back", reason: expect.stringContaining("full amount") });
 
     const low = negotiateStep(state(), accept(10000), PREFERENCES);
-    expect(low.outgoing?.type).toBe("push_back");
+    expect(low.outgoing).toMatchObject({ type: "push_back", reason: expect.stringContaining("below the minimum") });
   });
 
   it.each([
@@ -355,22 +368,22 @@ describe("negotiate_step: purity", () => {
 describe("negotiate_step: the second counter after a push back (seen in the live hotel run)", () => {
   const second = counter("partial_refund", 54400, 2);
 
-  it("returns accept_counter when the driver kept the state from the push back", () => {
+  it("asks for the full amount when the driver kept the state from the push back", () => {
     const result = negotiateStep(state({ state: "pushed_back", round: 2, push_backs_used: 1, last_counter: { kind: "store_credit", amount: 64000 } }), second, PREFERENCES);
-    expect(result.outgoing).toMatchObject({ type: "accept_counter", round: 3 });
+    expect(result.outgoing).toMatchObject({ type: "push_back", round: 3 });
   });
 
-  it("returns accept_counter even when the driver never updated its state after the push back", () => {
+  it("still makes a valid round-3 reply when the driver never updated its state after the push back", () => {
     for (const stale of [state({ state: "requested", round: 0 }), state({ state: "countered", round: 1 }), state({ state: "pushed_back", round: 1, push_backs_used: 0 })]) {
-      expect(negotiateStep(stale, second, PREFERENCES).outgoing).toMatchObject({ type: "accept_counter", round: 3 });
+      expect(negotiateStep(stale, second, PREFERENCES).outgoing).toMatchObject({ type: "push_back", round: 3 });
     }
   });
 
-  it("returns accept_counter for the exact 85% offer, and for any offer at or above the 80% minimum", () => {
-    const pushed = state({ state: "pushed_back", round: 2, push_backs_used: 1 });
+  it("after the anchor, accepts the exact 85% offer and any offer at or above the 80% minimum", () => {
+    const anchored = state({ state: "pushed_back", round: 3, push_backs_used: 2, last_counter: { kind: "partial_refund", amount: 54400 } });
     for (const amount of [51200, 54400, 63999]) {
-      expect(negotiateStep(pushed, counter("partial_refund", amount, 2), PREFERENCES).outgoing?.type).toBe("accept_counter");
+      expect(negotiateStep(anchored, counter("partial_refund", amount, 3), PREFERENCES).outgoing).toMatchObject({ type: "accept_counter", round: 4 });
     }
-    expect(negotiateStep(pushed, counter("partial_refund", 51199, 2), PREFERENCES).outgoing?.type).toBe("ask_human");
+    expect(negotiateStep(anchored, counter("partial_refund", 51199, 3), PREFERENCES).outgoing?.type).toBe("ask_human");
   });
 });
