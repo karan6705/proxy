@@ -416,10 +416,10 @@ describe("QA workflows", () => {
     const lines = feed.map((e) => `${e.actor}|${e.kind}|${e.text}`);
     const order = [
       "agent|intent|Agent started a task: NYC trip for the Nov 13 conference, under $1,500 (Nov 13 to Nov 16).",
-      "proxy|mismatch|Proxy: Flight SFO to JFK, Nov 3 has the wrong dates (Nov 3, not Nov 13).",
-      "agent|self_undo|Agent undid its own booking: Flight SFO to JFK, Nov 3 (free under the airline's 24-hour rule).",
+      "proxy|mismatch|Proxy: the flight with Skyline Demo Air has the wrong dates (Nov 3, not Nov 13).",
+      "agent|self_undo|Agent undid its own flight with Skyline Demo Air (free under the airline's 24-hour rule).",
       "human|text_in|Human: UNDO ALL",
-      "proxy|protocol_out|Proxy: our agent booked Hotel, 3 nights from Nov 3 for the wrong dates (Nov 3, not Nov 13). Please cancel it and refund $640.",
+      "proxy|protocol_out|Proxy: our agent booked this hotel for the wrong dates (Nov 3, not Nov 13). Please cancel it and refund $640.",
       "hotel_agent|protocol_in|Harborview Hotel agent: we can offer store credit of $640.",
       "proxy|protocol_out|Proxy: our human doesn't accept store credit; requesting a refund.",
       "hotel_agent|protocol_in|Harborview Hotel agent: we can refund 85%, $544.",

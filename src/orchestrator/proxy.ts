@@ -335,7 +335,12 @@ export function createProxy(deps: ProxyDeps): Proxy {
     });
     if (!latest) return;
     const d = intent.constraints.dates;
-    const list = fresh.filter((a) => needed.includes(a.category)).map((a) => `${a.category} ${money(a.amount)}`).join(", ");
+    const order = ["flight", "hotel", "transfer", "saas", "store"];
+    const list = fresh
+      .filter((a) => needed.includes(a.category))
+      .sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category))
+      .map((a) => `${a.category} ${money(a.amount)}`)
+      .join(", ");
     note({ task_id: chain.task_id, chain_id: chain.chain_id, actor: "proxy", kind: "chain", text: `Proxy: redo checked against the intent. ${list}, all for ${d ? humanDate(d.start) : "the right dates"}.`, data: { state: "redone" } });
     await textHuman(chain.chain_id, "result", `Rebooked for ${d ? `${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""}` : "the right dates"}: ${list}. Each confirmation matches what you asked for.`);
   }

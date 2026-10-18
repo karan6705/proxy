@@ -248,7 +248,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       sent_at,
       order: { merchant: action.merchant, ref: action.ref, amount: action.amount },
       intent: { goal: intent.goal, constraints: intent.constraints },
-      what_went_wrong: `Booked ${action.summary}; the task needed ${JSON.stringify(intent.constraints.dates ?? {})}.`,
+      what_went_wrong: `booked for ${action.dates?.start ? humanDate(action.dates.start) : "the wrong dates"}; the trip is ${intent.constraints.dates ? `${humanDate(intent.constraints.dates.start)}${intent.constraints.dates.end ? ` to ${humanDate(intent.constraints.dates.end)}` : ""}` : "on other dates"}`,
       deadline: state.deadline,
       evidence: {
         intent,
@@ -310,7 +310,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       "proxy",
       "protocol_out",
       `${proxyLine(message, {
-        summary: neg.action.summary,
+        summary: `this ${neg.action.category}`,
         amount: neg.action.amount,
         lastCounter: neg.state.last_counter,
         minPct: intent?.preferences.min_partial_refund_pct ?? 0,
