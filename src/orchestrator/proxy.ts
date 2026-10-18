@@ -18,8 +18,9 @@ import type {
   Store,
   TaskId,
 } from "../types.js";
-import { chainAlert, chainMoney, correctedDates, humanDate } from "./copy.js";
-import { createUndoExecutor, type ProtocolTransport, type UndoExecutor, type UndoMerchants } from "./undo.js";
+import { chainAlert, chainMoney, correctedDates, humanDate, money } from "./copy.js";
+import { createFeed, type Feed, type FeedEntry } from "./feed.js";
+import { createUndoExecutor, undoneByAgent, type ProtocolTransport, type UndoExecutor, type UndoMerchants } from "./undo.js";
 
 export interface ProxyDeps {
   store: Store;
@@ -50,10 +51,17 @@ export interface ProxyDeps {
    * Each reset starts a new task id, so old rows stay as history. Null outside the demo.
    */
   demo: DemoTask | null;
+  /** The demo feed (GET /demo/feed). Created if not given. */
+  feed?: Feed;
+  /** Demo only: called once a chain is reversed, so the demo agent can rebook with the corrected intent. */
+  onRedoRequested?: (chain: Chain) => Promise<void>;
 }
 
 export interface Proxy extends OrchestratorHooks {
   deps: ProxyDeps;
+  feed: Feed;
+  /** Adds a line to the demo feed. */
+  note(entry: Omit<FeedEntry, "seq" | "at"> & { at?: string }): void;
   /** Re-runs compare and trace for a task and saves the resulting chains. */
   refreshChains(task_id: TaskId): Promise<{ mismatches: Mismatch[]; chains: Chain[] }>;
   logEvent(row: Partial<EventRow> & Pick<EventRow, "kind">): Promise<void>;
@@ -105,6 +113,12 @@ export function createProxy(deps: ProxyDeps): Proxy {
   const { store, logic, clock } = deps;
   let frozen = false;
   let humanChannel: HumanChannelLink | null = null;
+  const feed = deps.feed ?? createFeed();
+  const note: Proxy["note"] = (entry) => feed.add({ ...entry, at: entry.at ?? clock.now() });
+  const fedActions = new Set<string>();
+  const when = (d: Action["dates"]) => (d ? `${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""}` : "no date");
+  const merchantName = (id: string) => deps.merchants.get(id)?.name ?? id;
+
   // One writer at a time per chain (alerts, plan, state); steps go to their own table.
   const chainQueues = new Map<ChainId, Promise<unknown>>();
   function lockChain<T>(chain_id: ChainId, fn: () => Promise<T>): Promise<T> {
@@ -114,6 +128,11 @@ export function createProxy(deps: ProxyDeps): Proxy {
   }
   const undo = createUndoExecutor({
     lockChain,
+    note,
+    onReversed: async (chain_id) => {
+      const chain = await store.getChain(chain_id);
+      if (chain && deps.onRedoRequested) await deps.onRedoRequested(chain);
+    },
     store,
     logic,
     inkbox: deps.inkbox,
@@ -205,6 +224,7 @@ export function createProxy(deps: ProxyDeps): Proxy {
     const chain = await store.getChain(chain_id);
     if (!chain) throw new Error(`No chain ${chain_id}`);
     const channel = deps.humanChannel ?? "imessage";
+    note({ task_id: chain.task_id, chain_id, actor: "proxy", kind: "text_out", text: body, data: { channel, alert: kind } });
     // Without HUMAN_PHONE the alert is still recorded on the chain (the demo page shows it and its buttons reply).
     if (deps.canTextHuman !== false && deps.humanNumber) {
       await deps.inkbox.sendText(channel, deps.humanNumber, body);
@@ -247,6 +267,7 @@ export function createProxy(deps: ProxyDeps): Proxy {
       const { at_risk, total } = chainMoney(chain, actions);
       const left = chain.window_ends_at ? Date.parse(chain.window_ends_at) - clock.nowMs() : null;
       await textHuman(chain.chain_id, "chain_opened", chainAlert({
+        already: undoneByAgent(chain, actions),
         mismatch: mine[0],
         affected: chain.action_ids.filter((id) => actions.find((a) => a.action_id === id && !["verified", "kept"].includes(a.state))).length,
         at_risk,
@@ -298,6 +319,27 @@ export function createProxy(deps: ProxyDeps): Proxy {
     return true;
   }
 
+  /** The chain is redone once every rebooked category has a new booking that matches the intent. */
+  async function checkRedone(chain: Chain, mismatches: Mismatch[]) {
+    const intent = await store.getIntent(chain.task_id);
+    if (!intent) return;
+    const inChain = new Set(chain.action_ids);
+    const old = (await Promise.all(chain.action_ids.map((id) => store.getAction(id)))).filter((a): a is Action => a !== null);
+    const needed = [...new Set(old.filter((a) => a.category !== "message").map((a) => a.category))];
+    const fresh = (await store.listActions(chain.task_id)).filter((a) => !inChain.has(a.action_id) && !mismatches.some((m) => m.action_id === a.action_id));
+    if (!needed.every((cat) => fresh.some((a) => a.category === cat))) return;
+    const latest = await lockChain(chain.chain_id, async () => {
+      const c = await store.getChain(chain.chain_id);
+      if (!c || c.state !== "redo_requested") return null;
+      return store.upsertChain({ ...c, state: "redone" });
+    });
+    if (!latest) return;
+    const d = intent.constraints.dates;
+    const list = fresh.filter((a) => needed.includes(a.category)).map((a) => `${a.category} ${money(a.amount)}`).join(", ");
+    note({ task_id: chain.task_id, chain_id: chain.chain_id, actor: "proxy", kind: "chain", text: `Proxy: redo checked against the intent. ${list}, all for ${d ? humanDate(d.start) : "the right dates"}.`, data: { state: "redone" } });
+    await textHuman(chain.chain_id, "result", `Rebooked for ${d ? `${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""}` : "the right dates"}: ${list}. Each confirmation matches what you asked for.`);
+  }
+
   async function askHumanAboutCounter(chain_id: ChainId, negotiation_id: string, body: string) {
     // Tell the channel first, so a fast reply can't arrive before it knows what YES/NO means.
     humanChannel?.expectCounterDecision(chain_id, negotiation_id);
@@ -316,6 +358,8 @@ export function createProxy(deps: ProxyDeps): Proxy {
 
   return {
     deps,
+    feed,
+    note,
     refreshChains,
     mostRecentlyAlertedOpenChain,
     startDemoTask,
@@ -353,8 +397,27 @@ export function createProxy(deps: ProxyDeps): Proxy {
       const same = (await store.listActions(action.task_id)).find((a) => a.ref === action.ref && a.ref !== "");
       const saved = await store.upsertAction(same ? { ...action, action_id: same.action_id, state: same.state } : action);
       await logEvent({ kind: action.source === "agent" ? "email_out" : "email_in", task_id: saved.task_id, action_id: saved.action_id });
-      await refreshChains(saved.task_id);
-      scheduleAlert(saved.task_id);
+      const redoing = (await store.listChains(saved.task_id)).find((c) => c.state === "redo_requested");
+      // Capture may store the action before calling this hook, so "new" means new to the feed.
+      if (!fedActions.has(saved.action_id)) {
+        fedActions.add(saved.action_id);
+        const data = { action_id: saved.action_id, merchant: saved.merchant, category: saved.category, amount: saved.amount, start: saved.dates?.start ?? null, end: saved.dates?.end ?? null, ref: saved.ref };
+        if (saved.category === "message") {
+          note({ task_id: saved.task_id, chain_id: null, actor: "agent", kind: "message", text: `Agent emailed ${merchantName(saved.merchant)}: arriving ${when(saved.dates)}.`, data });
+        } else {
+          note({
+            task_id: saved.task_id,
+            chain_id: redoing?.chain_id ?? null,
+            actor: "agent",
+            kind: redoing ? "redo" : "booking",
+            text: `Agent ${redoing ? "rebooked" : "booked"} the ${saved.category} with ${merchantName(saved.merchant)} for ${when(saved.dates)}, ${money(saved.amount)}. Confirmation reached the task inbox.`,
+            data,
+          });
+        }
+      }
+      const { mismatches } = await refreshChains(saved.task_id);
+      if (redoing) await checkRedone(redoing, mismatches);
+      else scheduleAlert(saved.task_id);
     },
 
     async onStripeEvent(event) {

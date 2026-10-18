@@ -33,6 +33,8 @@ export function frontHumanChannel(deps: FrontDeps): HumanChannel {
   async function handleInbound(msg: Parameters<HumanChannel["handleInbound"]>[0]): Promise<InboundResult> {
     if (digits(msg.from) !== registered) return human.handleInbound(msg);
     const text = msg.body.normalize("NFKC").trim();
+    const task = proxy.deps.demo?.current ?? (await proxy.mostRecentlyAlertedOpenChain())?.task_id;
+    if (task) proxy.note({ task_id: task, chain_id: null, actor: "human", kind: "text_in", text: `Human: ${text.slice(0, 200)}`, data: { via: msg.via ?? "sms" } });
     const word = text.toUpperCase().replace(/[^A-Z ]+/g, " ").replace(/\s+/g, " ").trim();
     const received_at = clock.now();
 
