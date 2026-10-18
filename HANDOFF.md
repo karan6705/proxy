@@ -210,6 +210,25 @@ I ran `runAll()` in memory and read `scenarios.ts`, `grader.ts`, `runner.ts`. Re
 - Clean tasks: vary them (a refund line, a total exactly at budget, a SaaS plan with no term) instead of the same trip.
 - Same-ref resends never reach `compare` (capture dedupes by ref); test them at the capture boundary.
 
+### From Dhwanil: Layer 2 (live agent) is built and has a first real run
+`LIVE_TRIALS=5 npx tsx --env-file=.env evals/live/run.ts` (code in `evals/live/`, results in `evals/results/layer2-*.json`). A real model (claude-haiku-4-5, `LIVE_EVAL_MODEL` to change) is the agent in five faulty environments: a signup that defaults to annual billing, a flight call that times out but goes through, an out-of-stock product with a "similar" one offered, a cheap hotel that sells out, and a clean control. Nothing scripts the agent's mistake. Truth is hand-written per task and does not use `compare`. Proxy runs in process (real compare, trace, plan_undo and negotiation against the mock merchants), not over MCP.
+First run (5 trials per task and arm, so 25 episodes per arm; small samples, counts and not rates):
+- Naive (agent checks its own work): 8 of 25 episodes had a real mistake; the agent said PROBLEM in 3 of those 8 and a false "done" in 5.
+- Proxy: 5 of 25 episodes had a real mistake; 6 of 6 mistakes caught; 0 false alarms; $4,832.00 of refunds agreed (merchant-agreed, not Stripe-verified).
+- Caveats: the arms are separate live runs, so the mistake counts differ between them. The faults are ones `compare` can see (duplicate, over budget), so 6 of 6 says little about unseen failure kinds. The substitute task (L3) produced no mistakes because the agent refused the substitute. The first run was discarded because the prompt had no date and the agent assumed 2024; fixed and rerun. Time to alert and Stripe verification are not measured here.
+Not yet over the real MCP server: that needs Karan's server and the demo routes.
+
+### From Dhwanil: scenarios ready for your review (Sarah)
+`evals/scenarios.ts` has 34 scenarios. Every expected result is written by hand from the story and the human's real request, not copied from what the logic outputs. Please check them the way you offered, so the grader does not share `compare`'s blind spots. Run `npx tsx evals/run.ts` to see them against both arms and `evals/results/` for the raw log.
+
+What I did with your earlier points:
+- **Ground truth vs the logged intent:** a scenario has `intent` (what the human really asked) and an optional `logged_intent` (what the agent logged). Proxy compares against the logged one. S34 is the case where they differ: all four wrong bookings are counted as real mistakes that Proxy misses.
+- **Known misses and known false alarms are documented, and fail loudly if they stop being true.** S15 (price rose after the quote, still under budget: no quote to compare against), S34 (wrong logged intent), S33 (two real identical transfers look like a duplicate). They count in the totals: 44 real mistakes, 39 caught, 5 documented misses, 1 documented false alarm.
+- **The naive arm is labelled "scripted self-review"** in the CLI output and the raw log. What it notices follows each scenario's `assumption`, so those numbers are not a measured rate. Please look hard at the `assumption` lines: they are the soft spot.
+- **Your blind-spot list:** term wording now includes `P1Y`, `P12M`, `/yr`, `/mo`; a charge seen by both email and Stripe is counted once; `item:` and `size:` match whole words (`size:M` no longer matches "Medium"). Not done: the quoted-price gap (S15 documents it), and the two-identical-purchases false alarm (S33 documents it).
+- **Adversarial clean tasks:** S29 (total exactly at budget), S31 (SaaS receipt with no term), S32 (a $0 message), S28 (late confirmation). I did not add a refund line, because `Action.amount` has no negative case.
+- Money here is what the merchants agreed. Verifying it against Stripe test-mode objects, as you asked, happens in Layer 2 and the orchestrator, not in Layer 1.
+
 ### Reversal Protocol transport (A2A both ways, email fallback; checked live 2026-10-17)
 Full negotiation run between `proxy-agent` and `hotel-agent` on real Inkbox: request, counter (store credit), push back, accept (85%).
 - **Over A2A:** counter in about 3s, accept in about 5s. The merchant answers on the same task; a counter leaves the task `input_required` and Proxy's push back continues that task.
@@ -296,7 +315,7 @@ Merchants no longer refund. `selfServeCancel`, the hotel agent and the support d
 8. **Hotel behaviors:** fine as an option on `createMerchants`. The default stays the demo behavior.
 - **Task address:** use `@tasks.proxy.example` in tests (e.g. `task_nyc@tasks.proxy.example`) until Sarah reports the Inkbox format.
 ### Status from Dhwanil
-Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/` (`compare`, `trace`, `reversibility`, `plan_undo`, `rank`, `negotiate_step`), the rules table, the airline, hotel agent, transfer company and host merchants with `RouteHandler`s, the demo fixtures in `fixtures/demo/`, and a first Layer 1 scenario runner with a naive arm in `evals/` (5 of ~30 scenarios). Not started: the SaaS and store merchants, the prompt-injection merchant scenario, the other ~25 scenarios, Layer 2 (live agent), the scoreboard page. Sarah still needs to review the expected results in `evals/scenarios.ts`.
+Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/`; the airline, hotel agent, transfer company, host, SaaS vendor and store merchants with `RouteHandler`s; the demo fixtures in `fixtures/demo/`; and the Layer 1 scenario runner, grader and CLI in `evals/` with **34 scenarios** (`evals/scenarios.ts`) and a scripted-self-review naive arm. Not started: Layer 2 (live agent, needs the Anthropic key), the scoreboard page, time-to-alert and tokens metrics, and a live Inkbox run of the merchants (needs the keys). Waiting on Sarah's review of the expected results.
 
 
 ### From Karan (2026-10-17)

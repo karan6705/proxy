@@ -96,8 +96,8 @@ export interface ModuleContext {
 export interface BookingSpec {
   info: MerchantInfo;
   ref_prefix: string;
-  /** "single" needs dates.start. "range" also needs a dates.end after the start. */
-  dates: "single" | "range";
+  /** "single" needs dates.start. "range" also needs a dates.end after the start. "none": no dates (SaaS, store). */
+  dates: "single" | "range" | "none";
   /** Messages cost nothing, so they may be booked for 0. Everything else needs a positive amount. */
   allow_zero_amount?: boolean;
   render(order: MerchantOrder): MerchantEmail;
@@ -133,6 +133,10 @@ function validate(spec: BookingSpec, request: BookInput): DateRange {
   }
   if (typeof request.booked_at !== "string" || Number.isNaN(Date.parse(request.booked_at))) {
     bad("booked_at must be an ISO timestamp");
+  }
+  if (spec.dates === "none") {
+    // The merchant keeps the booking date. The receipt itself carries no dates.
+    return { start: request.booked_at.slice(0, 10) };
   }
   const dates = request.dates;
   if (!dates || !isCalendarDate(dates.start)) {
