@@ -162,7 +162,7 @@ export function createToolHandlers(getProxy: () => Proxy, sandboxes?: SandboxLoo
         data: { goal: input.goal, start: d?.start ?? null, end: d?.end ?? null, budget_total: input.constraints.budget_total ?? null },
       });
       // The human's own words, if given: a disagreement is put to the human; agreement sends nothing.
-      const check = checkIntent(input.constraints, input.original_request, Number(clock.now().slice(0, 4)));
+      const check = checkIntent(input.constraints, input.original_request, Number(clock.now().slice(0, 4)), clock.now());
       if (check.status === "disagrees") {
         await p.askAboutIntent(task_id, check);
         const asked = { task_id, task_email, intent_check: { status: check.status, understood: check.understood, said: check.said }, next_action: "wait_for_human" as const };
@@ -234,6 +234,13 @@ export function createToolHandlers(getProxy: () => Proxy, sandboxes?: SandboxLoo
       const accepted: ActionId[] = [];
       const requires_human: ActionId[] = [];
       let chain_id: string | null = null;
+
+      // Unknown ids are a caller mistake: say so before anything is undone, so a typo never half-runs a request.
+      const unknown: ActionId[] = [];
+      for (const id of new Set(action_ids)) if (!(await store.getAction(id))) unknown.push(id);
+      if (unknown.length) {
+        return fail("not_found", `No action ${unknown.join(", ")}. Use the action ids in review.fixable_now: call review(task_id), then undo with those ids.`, false, "fix_now");
+      }
 
       for (const id of action_ids) {
         // STOP from the human freezes all undo activity, including the agent's self-undo.

@@ -21,11 +21,11 @@ describe("the intent check from the human's own words, applied to a logged inten
     expect(applyIntentCheck(null, "anything", 2026)).toEqual({ status: "absent", intent: null });
   });
 
-  it("cannot read the two misread tasks: C1 states no date and C2 writes 3/11, so it says agrees and nothing changes", () => {
+  it("C1 states no date, so only its budget is checked and it agrees; C2's 3/11 reads two ways, so it disagrees and the other reading wins", () => {
     const c1 = applyIntentCheck(logged("2026-11-03", "2026-11-06"), request("C1"), 2026);
     const c2 = applyIntentCheck(logged("2027-03-11", "2027-03-14"), request("C2"), 2026);
     expect(c1.status).toBe("agrees");
-    expect(c2.status).toBe("agrees");
-    expect(c2.intent?.constraints.dates?.start).toBe("2027-03-11");
+    expect(c2).toMatchObject({ status: "disagrees", said: "3/11 (Mar 11 or Nov 3)" });
+    expect(c2.intent?.constraints.dates).toEqual({ start: "2027-11-03", end: "2027-11-06" });
   });
 });

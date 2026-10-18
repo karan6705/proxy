@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Publishes the public judge mirror (karan6705/proxy) from the private team repo (karan6705/tripwire):
-#   1. a fresh bare clone of main (and the demo-v1 tag, if it exists) in a temp folder;
+#   1. a fresh bare clone of main (and the demo-v1 and demo-v2 tags, where they exist) in a temp folder;
 #   2. git filter-repo replaces the three phone numbers that are in the history with fictional 555 numbers
 #      (the numbers are read from the old commits and never printed);
 #   3. the secret scan must come back clean, or nothing is pushed;
 #   4. commit dates, authors and messages are checked against the original;
-#   5. the public repo is created if missing, and main (plus the tag) is force-pushed to it, the mirror only.
+#   5. the public repo is created if missing, and main (plus the tags) is force-pushed to it, the mirror only.
 # Usage (from the repo root): scripts/publish-mirror.sh [--dry-run]   (--dry-run stops before step 5)
 set -euo pipefail
 DRY_RUN=0
@@ -14,7 +14,7 @@ DRY_RUN=0
 SOURCE="https://github.com/karan6705/tripwire.git"
 MIRROR_REPO="karan6705/proxy"
 MIRROR="https://github.com/${MIRROR_REPO}.git"
-TAG="demo-v1"
+TAGS=(demo-v1 demo-v2)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 command -v git-filter-repo >/dev/null || { echo "git filter-repo is missing: pip install git-filter-repo (or brew install git-filter-repo)" >&2; exit 1; }
@@ -25,9 +25,11 @@ umask 077
 
 echo "1/5 cloning main from the team repo"
 git clone --quiet --bare --single-branch --branch main "$SOURCE" "$WORK/mirror.git"
-if git ls-remote --exit-code --tags "$SOURCE" "refs/tags/$TAG" >/dev/null 2>&1; then
-  git -C "$WORK/mirror.git" fetch --quiet "$SOURCE" "refs/tags/$TAG:refs/tags/$TAG"
-fi
+for TAG in "${TAGS[@]}"; do
+  if git ls-remote --exit-code --tags "$SOURCE" "refs/tags/$TAG" >/dev/null 2>&1; then
+    git -C "$WORK/mirror.git" fetch --quiet "$SOURCE" "refs/tags/$TAG:refs/tags/$TAG"
+  fi
+done
 ORIGINAL="$(git -C "$WORK/mirror.git" log main --format='%ad %cd %an %s' --date=iso-strict)"
 
 echo "2/5 redacting phone numbers (values never printed)"
@@ -51,7 +53,9 @@ add_rule "$OLD_1428" "+15555550101"
 add_rule "$OLD_408" "+15555550102"
 echo "   $(wc -l < "$REPLACE" | tr -d ' ') numbers to replace"
 REFS=(main)
-git -C "$WORK/mirror.git" rev-parse -q --verify "refs/tags/$TAG" >/dev/null && REFS+=("refs/tags/$TAG")
+for TAG in "${TAGS[@]}"; do
+  git -C "$WORK/mirror.git" rev-parse -q --verify "refs/tags/$TAG" >/dev/null && REFS+=("refs/tags/$TAG")
+done
 git -C "$WORK/mirror.git" filter-repo --quiet --force --replace-text "$REPLACE" --refs "${REFS[@]}"
 rm -f "$REPLACE"
 
@@ -75,7 +79,9 @@ if ! gh repo view "$MIRROR_REPO" >/dev/null 2>&1; then
   gh repo create "$MIRROR_REPO" --public --description "Proxy: the undo layer for AI agents" >/dev/null
 fi
 git -C "$WORK/mirror.git" push --quiet --force "$MIRROR" main
-if git -C "$WORK/mirror.git" rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  git -C "$WORK/mirror.git" push --quiet --force "$MIRROR" "refs/tags/$TAG"
-fi
+for TAG in "${TAGS[@]}"; do
+  if git -C "$WORK/mirror.git" rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+    git -C "$WORK/mirror.git" push --quiet --force "$MIRROR" "refs/tags/$TAG"
+  fi
+done
 echo "Published https://github.com/${MIRROR_REPO} (main at $(git -C "$WORK/mirror.git" rev-parse --short main))"

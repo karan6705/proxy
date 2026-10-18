@@ -13,7 +13,7 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 | Field | Required | Answer |
 |---|---|---|
 | Team name | yes | `Proxy` (confirm: the repo lists three people, Dhwanil Ranpura, Karan Raval and Sarah Khadder, and no separate team name) |
-| MCP server URL | yes | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (deployed on Manufact Cloud, verified over MCP: six tools). It is a dry-run copy with an in-memory store, which is fine for judges to connect to. Do not use a tunnel URL: it changes when the laptop restarts. |
+| MCP server URL | yes | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (deployed on Manufact Cloud, verified over MCP on 2026-10-17: seven tools, commit 51feb13, tag `demo-v2`). It runs in cloud mode: an in-memory store and simulated payments and messages, which is fine for judges to connect to. Do not use a tunnel URL: it changes when the laptop restarts. |
 | Manufact organization ID | yes | `9833fb6a-873c-4b80-b5a6-16c3f30ba17c`: the organization that owns the deployed server (Sarah Khadder's Projects, slug `org-3e8505eb-iovbr`). If the server is ever redeployed under a different organization, use that organization's ID instead. |
 | Demo video URL (YouTube/Loom/etc.) | yes | `<PUBLIC VIDEO LINK>`. It must show the server working in more than one MCP client (Claude Code, Codex, Cursor), and judges must be able to watch it without requesting access. Open the link in a private window before pasting. |
 | Setup instructions for judges | no | See the draft below. Source code (public): https://github.com/karan6705/proxy |
@@ -57,7 +57,7 @@ Do not say anything in the video or the form that this table does not support. E
 | SMS | Not working outbound | The carrier dropped it with error 40002 after the API accepted it. Inbound `START` arrived. Do not claim SMS delivery. |
 | Phone call escalation | Not tested | Do not claim it |
 | "A refund only counts when Stripe shows it" | Verified in code and tests | Per Karan's orchestrator; confirm against a real Stripe test charge before saying it on camera |
-| Deployed on Manufact Cloud | Verified | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` answers `initialize` as "proxy" and `tools/list` returns six tools. It is a dry-run copy (no Inkbox, Stripe or Supabase keys), so the live email, iMessage and A2A parts are shown from the local server in the video, not from this URL. Say so if asked. |
+| Deployed on Manufact Cloud | Verified | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` answers `initialize` as "proxy", `tools/list` returns seven tools, `try_proxy_demo` finishes the story in under a second ($1,144 of $1,240 back, simulated), and `/status` shows commit 51feb13 in cloud mode (checked 2026-10-17). It is a cloud-mode copy (no Inkbox, Stripe or Supabase keys), so the live email, iMessage and A2A parts are shown from the local server in the video, not from this URL. Say so if asked. |
 | Works in several MCP clients | Not yet shown | Record each client you name |
 | Proxy catches an agent's execution mistakes (a retry that duplicates a booking, a fallback that breaks the budget) | Shown in our own eval, as counts | `evals/RESULTS.md` (from `evals/results/layer2-2026-10-18T00-54-41-756Z.json`): a live Haiku 4.5 agent, 10 trials per task and arm; Proxy caught 19 of 19 real mistakes, all from two of the five tasks. Proxy ran in process, not over MCP, against our own mocks. Say counts, never a rate. |
 | Proxy catches an agent's misreading of the task | **Not shown. Do not claim.** | The same run: 0 of 60 on the two chain tasks, because the agent logged the same misreading in `log_intent`. Say it as the honest limit. |
@@ -67,7 +67,7 @@ Do not say anything in the video or the form that this table does not support. E
 
 ## Before you submit
 
-- [x] The server is deployed and `https://bold-zero-0m4lf.run.mcp-use.com/mcp` answers `tools/list` with six tools (checked 2026-10-25). The Manufact gateway answers `/health` itself, so a 200 there proves nothing; use an MCP client.
+- [x] The server is deployed and `https://bold-zero-0m4lf.run.mcp-use.com/mcp` answers `tools/list` with seven tools and `try_proxy_demo`, `get_chain` and `list_chains` work (checked 2026-10-17). The Manufact gateway answers `/health` itself, so a 200 there proves nothing; `/status` shows the deployed commit.
 - [ ] Decide whether the Inkbox webhooks stay on Karan's tunnel (they are, and the deployed copy is dry-run) or move to a deployed server with real keys (cutover steps are in HANDOFF.md). For the submission the tunnel is fine.
 - [ ] The video is public, shows more than one MCP client, and the link works in a private window.
 - [x] The organization ID `9833fb6a-873c-4b80-b5a6-16c3f30ba17c` is the one that owns the deployed server.
