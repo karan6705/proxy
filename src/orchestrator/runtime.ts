@@ -2,7 +2,7 @@
 // memory), capture and human channel; her Inkbox client when INKBOX_API_KEY or INKBOX_DRY_RUN is set;
 // real Stripe test mode when a sk_test_ key is set. Logic and Merchants stay stand-ins until Dhwanil's merge.
 import { createAnthropicExtractor, createCapture, createInboundEmailRoute, deliverToCapture, type Capture } from "../capture/index.js";
-import { createStoreFromEnv } from "../db/index.js";
+import { createMemoryStore, createStoreFromEnv } from "../db/index.js";
 import { createA2AAccess, createClient, createVerifier, createHumanChannel, createHumanRoutes, createInkbox, createProtocolInbox, type A2AAccess, type HumanChannel, type ProtocolInbox } from "../inkbox/index.js";
 import { logic } from "../logic/index.js";
 import {
@@ -29,7 +29,7 @@ import { withIntentUpdates } from "./intent-store.js";
 import { protocolSubject } from "../inkbox/index.js";
 
 /** Stands in for the human's number in the demo when HUMAN_PHONE isn't set. Nothing is ever sent to it. */
-const DEMO_HUMAN_NUMBER = "+10000000000";
+export const DEMO_HUMAN_NUMBER = "+10000000000";
 
 export interface Runtime {
   proxy: Proxy;
@@ -93,21 +93,28 @@ function withKnownCharges(payments: Payments, known: ReadonlyMap<string, string>
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const shortDate = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Number(iso.slice(8, 10))}`;
 
+/**
+ * The cloud judge copy (PROXY_MODE=cloud) can never reach a real service, whatever keys are in its environment:
+ * in-memory store, stand-in Inkbox that sends nothing, simulated payments, no model calls, no human number.
+ */
+export const isCloud = (env: NodeJS.ProcessEnv): boolean => env.PROXY_MODE === "cloud";
+
 export function createRuntime(clock: Clock, params: Params, defaultPreferences: Preferences, overrides: RuntimeOverrides = {}): Runtime {
   const env = overrides.env ?? process.env;
+  const cloud = isCloud(env);
   // Intents can be changed by the human's answers; see intent-store.ts.
-  const store = withIntentUpdates(overrides.store ?? createStoreFromEnv(env));
-  const useInkbox = Boolean(env.INKBOX_API_KEY?.trim()) || env.INKBOX_DRY_RUN === "1";
+  const store = withIntentUpdates(overrides.store ?? (cloud ? createMemoryStore() : createStoreFromEnv(env)));
+  const useInkbox = !cloud && (Boolean(env.INKBOX_API_KEY?.trim()) || env.INKBOX_DRY_RUN === "1");
   const inkbox = overrides.inkbox ?? (useInkbox ? createInkbox({ store, clock }) : createStandInInkbox());
-  const useStripe = (env.STRIPE_SECRET_KEY ?? "").startsWith("sk_test_");
+  const useStripe = !cloud && (env.STRIPE_SECRET_KEY ?? "").startsWith("sk_test_");
   const fakePayments = useStripe ? null : createFakePayments();
   // Simulated payments (the offline recording, the sandbox) say so in every text instead of plain "Stripe".
-  const paymentsName = fakePayments && env.PROXY_SIMULATED_PAYMENTS === "1" ? "Stripe (simulated)" : "Stripe";
+  const paymentsName = fakePayments && (cloud || env.PROXY_SIMULATED_PAYMENTS === "1") ? "Stripe (simulated)" : "Stripe";
   const fakeChargesByKey = new Map<string, string>();
   let fakeChargeSequence = 0;
   let capture: Capture | null = null;
   const mode = addressMode(env);
-  const liveDeliver = mode === "real" ? createInkboxDeliver({ env }) : null;
+  const liveDeliver = !cloud && mode === "real" ? createInkboxDeliver({ env }) : null;
   // Charge ids by action, remembered when the merchant charges. Stripe's search is eventually consistent,
   // so a refund right after a booking can't rely on it alone; the search stays as the fallback.
   const chargeByAction = new Map<string, string>();
@@ -153,8 +160,8 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
 
   // Real Inkbox carries the protocol; without it (no key, or INKBOX_DRY_RUN=1) the in-process mock merchant
   // agent answers instead, so the whole negotiation still runs. PROXY_PROTOCOL_LOOPBACK=1 or 0 forces either.
-  const realInkbox = Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
-  const loopback = env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !realInkbox;
+  const realInkbox = !cloud && Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
+  const loopback = cloud || (env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !realInkbox);
   let proxyRef: Proxy | null = null;
   const transport: ProtocolTransport = overrides.transport ?? {
     async send(merchant, to_identity, message, via = "default") {
@@ -178,7 +185,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
       });
     },
   };
-  const humanPhone = env.HUMAN_PHONE?.trim() ?? "";
+  const humanPhone = cloud ? "" : (env.HUMAN_PHONE?.trim() ?? "");
   const demoOn = env.PROXY_DEMO_ROUTES === "1";
   // The demo page's buttons act as the registered human. With no real number they use a placeholder that is never texted.
   const humanNumber = humanPhone || (demoOn ? DEMO_HUMAN_NUMBER : "");
@@ -248,7 +255,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     run().catch((e) => console.error("[demo-redo] failed:", e instanceof Error ? e.message : e));
   }
 
-  const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
+  const anthropicKey = cloud ? undefined : env.ANTHROPIC_API_KEY?.trim();
   const captureSide = proxy.deps.demo ? repointDemo(store, proxy, proxy.deps.demo) : { store, hooks: proxy };
   capture = createCapture({
     store: captureSide.store,
@@ -302,8 +309,8 @@ export async function startProtocolInbox(
   env: NodeJS.ProcessEnv = process.env,
   access?: A2AAccess,
 ): Promise<StartedInbox | null> {
-  // Dry-run never polls Inkbox; neither does loopback (the in-process mock agent answers instead).
-  if (env.INKBOX_DRY_RUN === "1") return null;
+  // Dry-run and the cloud judge copy never poll Inkbox; neither does loopback (the in-process mock agent answers instead).
+  if (env.INKBOX_DRY_RUN === "1" || isCloud(env)) return null;
   const real = Boolean(env.INKBOX_API_KEY?.trim());
   const loopback = env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !real;
   if (!real || loopback) return null;
