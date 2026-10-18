@@ -24,5 +24,9 @@ try {
 } catch {
   // first run
 }
-if (current !== next) writeFileSync(file, next);
-console.log(`build info: commit ${commit()}`);
+// A deploy from `git archive` has no .git and no CI variable: keep a commit that was put into the file by hand
+// (see "Redeploy" in HANDOFF.md) instead of overwriting it with "unknown".
+const already = /BUILD_COMMIT: string = "([0-9a-f]{7,})"/.exec(current)?.[1];
+const final = commit() === "unknown" && already ? current : next;
+if (current !== final) writeFileSync(file, final);
+console.log(`build info: commit ${commit() === "unknown" && already ? already : commit()}`);
