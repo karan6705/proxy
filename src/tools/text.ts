@@ -15,7 +15,8 @@ export function textLogIntent(r: LogIntentOutput): string {
   }
   if (c?.status === "confirmed_human") lines.push(`The human confirmed their own words (${c.said}). Use the constraints in this result${r.constraints?.dates ? ` (${dateRange(r.constraints.dates)})` : ""}.`);
   if (c?.status === "confirmed_agent") lines.push(`The human confirmed your version (${c.understood}).`);
-  if (c?.status === "agrees") lines.push("Your dates and budget match the human's words.");
+  if (c?.status === "agrees") lines.push("Nothing in the human's words conflicts with your dates or budget.");
+  if (c?.status === "absent") lines.push("Nothing in the human's words could be checked (no date or budget Proxy can read), so nothing was sent to them.");
   lines.push("Next: use task_email as the contact email for every booking and signup in this task, then call review(task_id) before you tell the human you are done.");
   return lines.join("\n");
 }
