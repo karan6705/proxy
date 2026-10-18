@@ -46,6 +46,8 @@ export interface LiveChainMeta {
   windows: Record<string, string | null>;
   /** Amount Stripe shows refunded, for verified actions only. */
   recovered: Record<string, number>;
+  /** Message actions whose correction was sent and acknowledged; their rows are done (green) with no money. */
+  corrected: string[];
 }
 
 export function createToolHandlers(getProxy: () => Proxy) {
@@ -305,7 +307,10 @@ export function createToolHandlers(getProxy: () => Proxy) {
         route: routeOf.get(a.action_id) ?? null,
         stripe_verified: verifiedByStripe.has(a.action_id),
       }));
-      const meta: LiveChainMeta = { server_now: now, windows, recovered };
+      const corrected = members
+        .filter((a) => a.amount === 0 && a.state === "accepted" && chain.steps.some((s) => s.action_id === a.action_id && s.route === "correction" && s.outcome === "succeeded"))
+        .map((a) => a.action_id);
+      const meta: LiveChainMeta = { server_now: now, windows, recovered, corrected };
       return withMeta(ok({
         chain_id: chain.chain_id,
         state: chain.state,
