@@ -20,6 +20,11 @@
 
 ## Karan
 
+### Demo clarity and pacing (2026-10-18)
+- `DEMO_PACE_MS` (demo mode only, `PROXY_DEMO_ROUTES=1`; default 2500, 0 in tests and in sandboxes): visible pauses with "waiting for a reply…" and "verifying in Stripe…" lines around each support email, refund and host correction, and about 2 s between hotel negotiation messages. Outside demo mode nothing is slowed. Set `DEMO_PACE_MS=1000` to speed up or `4000` to slow down.
+- The alert now reads "Your agent already fixed the flight ($412). 3 more things need you." Every refund text says who did it and how ("Proxy negotiated with the hotel's agent. Hotel refunded, $544 of $640, confirmed in Stripe."), and so does every refund row and receipt on /web/show. The agent's own flight undo is its own message in "Your agent".
+- Before the human replies, only the agent's own self-undo happens (tested in workflow 17).
+
 ### Readiness and the intent check (2026-10-17)
 - Tag `demo-v2` is on main at 51feb13 (`demo-v1` unchanged).
 - Every tool parameter has a description; `src/tools/schemas.test.ts` fails if one is added without.

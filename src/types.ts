@@ -592,6 +592,11 @@ export interface Params {
   PROTOCOL_DEADLINE: number;
   /** Wait for a merchant agent's answer before following up by email, then giving up, in real ms. */
   MERCHANT_REPLY_TIMEOUT: number;
+  /**
+   * Demo mode only: the pause, in real ms, around each visible step of an undo (waiting for a reply, verifying in
+   * Stripe, between negotiation messages), so a viewer can follow it. 0 or unset everywhere else.
+   */
+  DEMO_PACE_MS?: number;
   /** Simulated ms per real ms. */
   CLOCK_SCALE: number;
   /** The agent's session ends after this many ms without a tool call for the task, in ms. */

@@ -70,6 +70,8 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
         PROXY_DEMO_REDO: "1",
         PROXY_DEMO_REDO_GAP_MS: "0",
         PROXY_ALERT_SETTLE_MS: "0",
+        // A sandbox answers a tool call: never paced for the screen.
+        DEMO_PACE_MS: "0",
         INKBOX_DEMO_TASK_ID: task_id,
       },
     });
