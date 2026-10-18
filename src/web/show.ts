@@ -166,6 +166,7 @@ footer .hint{color:var(--faint)}
 .checking:not(.done) .check-head::after{content:"";display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;background:var(--accent);animation:blink 1s infinite}
 @keyframes blink{50%{opacity:.2}}
 .tm .typed{display:block;margin-top:4px;font-size:12.5px;color:var(--muted)}
+.card .amt .credit-back{color:var(--muted)}
 .card .who{font-size:13px;color:var(--green);margin-top:3px;font-weight:500}
 .waiting{display:flex;align-items:center;gap:10px;font-size:15px;color:var(--muted);padding:6px 6px}
 .spin{width:14px;height:14px;border-radius:50%;border:2px solid #D8D8DE;border-top-color:var(--accent);animation:spin .8s linear infinite}
@@ -174,6 +175,15 @@ footer .hint{color:var(--faint)}
 .ladder{position:sticky;top:12px;z-index:2;border-radius:14px;background:#F7F7F9;padding:10px 14px;margin-bottom:6px;box-shadow:0 -14px 0 0 var(--card),0 6px 12px -8px rgba(29,29,31,.18)}
 .ladder-head{font-size:13px;font-weight:700;color:var(--muted);margin-bottom:4px}
 .ladder.settled{position:static;box-shadow:none}
+.asked-card{margin:10px 0 2px 36px;border:1.5px solid #C9C8F5;background:#FAFAFF;border-radius:14px;padding:10px 14px}
+.asked-card .check-head{font-size:13px;font-weight:700;color:var(--accent-ink);margin-bottom:6px}
+.opt{display:flex;align-items:center;gap:10px;font-size:15px;padding:5px 0}
+.opt .on{width:22px;height:22px;border-radius:50%;background:#F2F2F7;display:grid;place-items:center;font-size:12px;font-weight:700;color:var(--muted)}
+.opt.rec .on{background:var(--accent);color:#fff}
+.opt .star{margin-left:auto;font-size:12px;font-weight:700;color:var(--accent-ink)}
+.opt-note{font-size:13px;color:var(--muted);margin-top:4px}
+.chose{display:flex;align-items:center;gap:8px;margin:8px 0 2px 36px;font-size:15px;font-weight:600;color:var(--green)}
+.revert.credit{border-color:#D8D8DE;background:#FAFAFB}
 .rung{display:grid;grid-template-columns:92px 1fr 56px 104px;align-items:center;gap:10px;font-size:14px;padding:3px 0}
 .rung .rl{color:var(--muted)}
 .rung .rb{height:8px;border-radius:4px;background:#EDEDF0;overflow:hidden}
@@ -302,10 +312,10 @@ footer .hint{color:var(--faint)}
   var TASK=q.get("task_id")||"";
   var LIVE=!SCENARIO&&!TASK;
   var STORIES={
-    trip:{title:"The wrong-date trip",blurb:"The agent books NYC for Nov 3, not Nov 13, says it's done and leaves. Proxy catches it and gets the money back.",scenes:["The ask","The agent says done","Proxy spots the mistake","The phone buzzes","The human replies","The agents negotiate","The money comes back","Rebooked for Nov 13"],talk:6},
+    trip:{title:"The wrong-date trip",blurb:"The agent books NYC for Nov 3, not Nov 13, says it's done and leaves. Proxy catches it and gets the money back.",scenes:["The ask","The agent says done","Proxy spots the mistake","The phone buzzes","The human replies","The agents negotiate","You choose the offer","The money comes back","Rebooked for Nov 13"],talk:6,choose:7,money:8,redo:9},
     ambiguous:{title:"The date that reads two ways",blurb:"The human writes 3/11. Proxy asks which date they meant before anything is booked.",scenes:["The ask","The agent reads 3/11","Proxy asks before booking","The human taps 1","Booked the right dates"],talk:0},
     store:{title:"The wrong charger",blurb:"The agent orders a USB-A 20W charger, not USB-C 65W. Proxy returns it like a person would: chat, form, label, refund.",scenes:["The ask","The agent says ordered","Proxy spots the wrong item","The phone buzzes","The human replies","The support chat","The return form","The return label","The drop-off scan","The money comes back","The right charger"],talk:6,each:[7]},
-    plan:{title:"The annual plan",blurb:"The agent signs up for the annual plan instead of monthly. Proxy cancels it, gets the refund, and the agent re-subscribes monthly.",scenes:["The ask","The agent says done","Proxy spots the annual plan","The phone buzzes","The human replies","Proxy cancels with billing","The money comes back","Re-subscribed monthly"],talk:6}
+    plan:{title:"The annual plan",blurb:"The agent signs up for the annual plan instead of monthly. Proxy cancels it, gets the refund, and the agent re-subscribes monthly.",scenes:["The ask","The agent says done","Proxy spots the annual plan","The phone buzzes","The human replies","Proxy cancels with billing","The money comes back","Re-subscribed monthly"],talk:6,money:7,redo:8}
   };
   var NAMES={northwind:"Northwind Market support",hotel:"Harborview Hotel's agent",transfer:"Metro Transfer support",host:"Your host",saas:"Acme Cloud billing",airline:"Skyline Demo Air"};
   var STORE_NAMES={northwind:"Northwind Market"};
@@ -327,6 +337,7 @@ footer .hint{color:var(--faint)}
   addEventListener("resize",fit);fit();
 
   // ---- state
+  var credited={};
   var feed=null, story="trip", steps=[], cursor=-1, timer=null, lastOut=0, counter={shown:0,target:0,raf:0}, howBy={}, items={}, itemDiff=null;
 
   function detect(f){
@@ -369,27 +380,34 @@ footer .hint{color:var(--faint)}
       if(k==="text_in")return 4;
       return 5;
     }
+    var S=STORIES[story], MONEY=S.money||7, REDO=S.redo||8, CHOOSE=S.choose||S.talk;
+    // After the human's choice, everything (the accept, the refunds, the other merchants) is the money coming back.
+    var afterChoice=ctx.decision&&e.seq>ctx.decision;
     if(k==="intent")return 1;
     if(k==="wait")return 0; // live pacing lines; a presenter paces the story themselves
     if(k==="booking"||k==="message"||k==="self_undo")return 2;
     if(k==="mismatch")return 3;
-    if(k==="stripe_refund")return ctx.firstAlert&&e.seq>ctx.firstAlert?7:2;
-    if(k==="text_in")return 5;
+    if(k==="stripe_refund"||k==="credit")return ctx.firstAlert&&e.seq>ctx.firstAlert?MONEY:2;
+    if(k==="options"||k==="decision")return CHOOSE;
+    if(k==="text_in")return ctx.options&&e.seq>ctx.options&&(!ctx.decision||e.seq<=ctx.decision+1)?CHOOSE:5;
     if(k==="text_out"){
       if(e.data&&e.data.alert==="chain_opened")return 4;
       if(!ctx.firstIn||e.seq<ctx.firstIn)return 4;
+      if(/best offer:|^Okay: /.test(e.text))return CHOOSE;
       if(/^Got it/.test(e.text))return 5;
-      if(/^Rebooked|^Re-subscribed/.test(e.text))return 8;
-      if(/refunded|All done/i.test(e.text))return 7;
-      return 6;
+      if(/^Rebooked|^Re-subscribed/.test(e.text))return REDO;
+      if(afterChoice||/refunded|All done|store credit/i.test(e.text))return MONEY;
+      return S.talk;
     }
-    if(k==="protocol_out"||k==="protocol_in"||k==="email_out"||k==="email_in")return 6;
-    if(k==="redo"||k==="chain")return 8;
-    return 6;
+    if(k==="protocol_out"||k==="protocol_in"||k==="email_out"||k==="email_in")return afterChoice?MONEY:S.talk;
+    if(k==="redo"||k==="chain")return REDO;
+    return afterChoice?MONEY:S.talk;
   }
   function context(es){
-    var c={firstAlert:0,firstIn:0};
+    var c={firstAlert:0,firstIn:0,options:0,decision:0};
     es.forEach(function(e){
+      if(!c.options&&e.kind==="options")c.options=e.seq;
+      if(!c.decision&&e.kind==="decision")c.decision=e.seq;
       if(!c.firstAlert&&e.kind==="text_out"&&e.data&&e.data.alert==="chain_opened")c.firstAlert=e.seq;
       if(!c.firstIn&&e.kind==="text_in")c.firstIn=e.seq;
     });
@@ -408,6 +426,21 @@ footer .hint{color:var(--faint)}
         if(e.kind==="protocol_out"&&e.data&&e.data.why)out.push({scene:s,seqs:[],checks:[e.seq]});
         out.push({scene:s,seqs:[e.seq],checks:e.kind==="protocol_out"?[e.seq]:[]});
       });continue}
+      if(S.choose&&s===S.choose&&list.length){
+        // The options text is one step; the human's tap and Proxy's confirmation the next.
+        var firstIn=list.findIndex(function(e){return e.kind==="text_in"});
+        var ask=firstIn<0?list:list.slice(0,firstIn), ans=firstIn<0?[]:list.slice(firstIn);
+        out.push({scene:s,seqs:ask.map(function(e){return e.seq})});
+        if(ans.length)out.push({scene:s,seqs:ans.map(function(e){return e.seq})});
+        continue;
+      }
+      if(S.choose&&s===S.money&&list.length){
+        // One step per merchant as the money comes back, in order.
+        var group=[],key=null;
+        list.forEach(function(e){var m=(e.data&&e.data.merchant)||key;if(group.length&&m!==key){out.push({scene:s,seqs:group});group=[]}key=m;group.push(e.seq)});
+        if(group.length)out.push({scene:s,seqs:group});
+        continue;
+      }
       if(list.length||(story==="ambiguous"&&s===2))out.push({scene:s,seqs:list.map(function(e){return e.seq})});
     }
     return out;
@@ -429,7 +462,7 @@ footer .hint{color:var(--faint)}
     var v=visible(), es=v.entries, S=STORIES[story];
     $("title").textContent=S.title;
     var byId={};(feed.bookings||[]).forEach(function(b){byId[b.id]=b});
-    var refunded={}, corrected={}; howBy={}; items={}; itemDiff=null;
+    var refunded={}, corrected={}; howBy={}; credited={}; items={}; itemDiff=null;
     (feed.entries||[]).forEach(function(e){
       if(e.data&&e.data.item)items[e.data.action_id]=String(e.data.item);
       if(e.kind==="mismatch"&&e.data&&e.data.field==="item"&&!itemDiff)itemDiff=shortDiff(String(e.data.actual||""),String(e.data.expected||""));
@@ -438,6 +471,7 @@ footer .hint{color:var(--faint)}
     if(!itemDiff)(feed.entries||[]).forEach(function(e){var m=e.kind==="text_out"&&/ordered the wrong item \((.+), not (.+)\)/.exec(e.text);if(m&&!itemDiff)itemDiff=shortDiff(m[1],m[2])});
     es.forEach(function(e){
       if(e.kind==="stripe_refund"){refunded[e.data.action_id]=Number(e.data.amount||0);howBy[e.data.action_id]=e.data.how||null}
+      if(e.kind==="credit")credited[e.data.action_id]=Number(e.data.amount||0);
       if(e.kind==="email_out"&&e.data&&e.data.correction)corrected[e.data.action_id]=1;
     });
     var spotted=es.some(function(e){return e.kind==="mismatch"||(e.kind==="text_out"&&e.data&&e.data.alert==="chain_opened")});
@@ -461,12 +495,14 @@ footer .hint{color:var(--faint)}
     var when=el("div","when",b.category==="saas"?(annual?"Billed annually":"Billed monthly"):b.category==="store"?(STORE_NAMES[b.merchant]||"Online order")+(SIMULATED[b.merchant]?" (simulated store)":""):range(b.dates));
     mid.appendChild(when);
     if(b.category==="message"){amt.textContent=opts.corrected?"Corrected":"Sent";if(opts.corrected)amt.style.color="var(--green)"}
+    else if(credited[b.id]!==undefined){amt.appendChild(el("s",null,money(b.amount)));amt.appendChild(el("span","back credit-back","Kept as "+money(credited[b.id])+" credit"));opts.credit=true}
     else if(opts.refunded!==undefined){var s=el("s",null,money(b.amount));amt.appendChild(s);amt.appendChild(el("span","back","Refunded "+money(opts.refunded)))}
     else amt.textContent=money(b.amount);
     if(opts.refunded!==undefined&&howBy[b.id])mid.appendChild(el("div","who",howBy[b.id]));
     if(opts.corrected)mid.appendChild(el("div","who","Proxy emailed the right dates"));
+    if(opts.credit)mid.appendChild(el("div","who","You chose store credit"));
     if(opts.bad){
-      c.className+=opts.refunded!==undefined||opts.corrected?" bad fixed":" bad";
+      c.className+=opts.refunded!==undefined||opts.corrected||opts.credit?" bad fixed":" bad";
       var want=feed.task&&feed.task.intended_dates;
       var diff=b.category==="saas"?"Annual ≠ Monthly":b.category==="store"&&itemDiff?itemDiff.actual+" ≠ "+itemDiff.expected:(want&&b.dates?day(b.dates.start)+" ≠ "+day(want.start):"Doesn't match");
       when.appendChild(el("span","diff",diff));
@@ -544,10 +580,20 @@ footer .hint{color:var(--faint)}
   }
   function clock(at){try{return new Date(at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",timeZone:"America/New_York"}).replace(/\s?[AP]M$/,"")}catch(e){return "9:41"}}
   function renderChips(texts){
-    var chips=$("chips"), last=texts[texts.length-1], opts=[];
-    if(last&&last.kind==="text_out"){
+    // Chips for the newest question that hasn't been answered yet (other texts may have arrived after it).
+    var chips=$("chips"), opts=[], last=null;
+    for(var i=texts.length-1;i>=0;i--){
+      var t=texts[i];
+      if(t.kind==="text_in")break;
+      if((t.data&&t.data.alert==="chain_opened")||/Reply 1\b/.test(t.text)){last=t;break}
+    }
+    if(last){
       if(last.data&&last.data.alert==="chain_opened")opts=[["UNDO ALL","undo_all"],["PICK","pick"],["KEEP","keep"]];
-      else if(/Reply 1 or 2/.test(last.text))opts=[["1","choice1"],["2","choice2"]];
+      else{
+        var n=(last.text.match(/Reply ([0-9, or]+)/)||["","1"])[1].match(/\d+/g)||["1"];
+        opts=n.map(function(x){return [x,"choice"+x]});
+        if(/KEEP PUSHING/.test(last.text))opts.push(["KEEP PUSHING","keep_pushing"]);
+      }
     }
     if(PRESENT&&opts.length){var next=steps[cursor+1];if(!next||!next.seqs.some(function(n){return feed.entries.some(function(e){return e.seq===n&&e.kind==="text_in"})}))opts=[]}
     chips.replaceChildren.apply(chips,opts.map(function(o){
@@ -559,7 +605,7 @@ footer .hint{color:var(--faint)}
   function reply(kind,btn){
     if(PRESENT){advance(1);return}
     btn.classList.add("sent");
-    var body=kind.indexOf("choice")===0?{kind:"choice",choice:Number(kind.slice(6))}:{kind:kind,chain_id:feed.chain&&feed.chain.chain_id};
+    var body=kind.indexOf("choice")===0?{kind:"choice",choice:Number(kind.slice(6))}:kind==="keep_pushing"?{kind:"keep_pushing"}:{kind:kind,chain_id:feed.chain&&feed.chain.chain_id};
     fetch("/web/reply",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){if(!r.ok)btn.classList.remove("sent");return poll()}).catch(function(){btn.classList.remove("sent")});
   }
 
@@ -589,7 +635,9 @@ footer .hint{color:var(--faint)}
     $("moneyBar").firstChild.style.width=(total?Math.round(back/total*100):0)+"%";
     var sim=es.some(function(e){return e.kind==="stripe_refund"&&/simulated/i.test(e.text)});
     var done=es.some(function(e){return e.kind==="redo"});
-    $("moneyNote").textContent=back?(sim?"Simulated payments: no real money moved.":"Every dollar here is confirmed in Stripe.")+(done?" The agent redid the task correctly.":""):"Proxy found the mistake. Nothing is back yet.";
+    // Store credit the human chose is shown as credit, never as money back.
+    var credit=es.filter(function(e){return e.kind==="credit"}).reduce(function(t,e){return t+Number(e.data.amount||0)},0);
+    $("moneyNote").textContent=(back?(sim?"Simulated payments: no real money moved.":"Every dollar here is confirmed in Stripe.")+(done?" The agent redid the task correctly.":""):"Proxy found the mistake. Nothing is back yet.")+(credit?" Plus "+money(credit)+" kept as store credit, not money back.":"");
     // Nothing back yet: show $0, not the booked total the panel showed before Proxy spotted the mistake.
     if(!back){counter.shown=counter.target=0;$("moneyNum").textContent="$0"}
     else setCount(back,false);
@@ -608,9 +656,13 @@ footer .hint{color:var(--faint)}
     steps.forEach(function(st,i){
       var refund=es.filter(function(e){return e.kind==="stripe_refund"&&e.data.action_id===st.action_id}).pop();
       var fixed=es.some(function(e){return e.kind==="email_in"&&e.data.action_id===st.action_id&&e.data.correction&&e.data.approved});
+      var cred=es.filter(function(e){return e.kind==="credit"&&e.data.action_id===st.action_id}).pop();
+      var askedYou=es.some(function(e){return e.kind==="options"&&e.data.action_id===st.action_id})&&!es.some(function(e){return e.kind==="decision"&&e.data.action_id===st.action_id});
       var touched=es.some(function(e){return e.seq>plan.seq&&e.data&&e.data.action_id===st.action_id&&e.kind!=="stripe_refund"});
       var title=label(st.category,st.merchant);
       if(refund)frag.appendChild(chip("✓",title,money(refund.data.amount)+" back","done"));
+      else if(cred)frag.appendChild(chip("✓",title,money(cred.data.amount)+" store credit","done"));
+      else if(askedYou){activeSet=true;frag.appendChild(chip(String(i+1),title,"Waiting for your choice","active"))}
       else if(fixed)frag.appendChild(chip("✓",title,"Right dates sent","done"));
       else if(touched&&!activeSet){activeSet=true;frag.appendChild(chip(String(i+1),title,st.how.charAt(0).toUpperCase()+st.how.slice(1)+"…","active"))}
       else frag.appendChild(chip(String(i+1),title,(activeSet||touched?"Waiting: ":"Next: ")+st.how,"next"));
@@ -816,6 +868,28 @@ footer .hint{color:var(--faint)}
         }
         tr.appendChild(k==="carrier_scan"?trackEvent(String(d.event||"Package scanned"),String(d.location||"")+" · "+day(e.at)+", "+clock(e.at)):trackEvent("Return received, refund approved "+money(d.amount),STORE_NAMES[m]||m));
         any=true;
+      }else if(k==="options"||k==="decision"){
+        // The question Proxy put to the human, and their answer, inside the merchant's thread.
+        var tg=groups["t"+m];
+        if(!tg){tg=groups["t"+m]={box:el("div","thread"),list:[]};var th=el("div","thread-head");th.appendChild(el("div","avatar av-merchant",(NAMES[m]||m).charAt(0)));th.appendChild(el("span",null,"Proxy and "+(NAMES[m]||m)));tg.box.appendChild(th);frag.appendChild(tg.box)}
+        if(k==="options"){
+          var oc=el("div","asked-card");oc.appendChild(el("div","check-head","Proxy asked you to choose"));
+          var opts=[];try{opts=JSON.parse(String(d.options||"[]"))}catch(x){opts=[]}
+          opts.forEach(function(o,i){var r=el("div","opt"+(d.recommended===i+1?" rec":""));r.appendChild(el("span","on",String(i+1)));r.appendChild(el("span",null,o.label));if(d.recommended===i+1)r.appendChild(el("span","star","Recommended"));oc.appendChild(r)});
+          if(d.can_push)oc.appendChild(el("div","opt-note","or KEEP PUSHING"));
+          tg.box.appendChild(oc);
+        }else{
+          var dc=el("div","chose");dc.appendChild(el("span","ok-dot","\u2713"));dc.appendChild(document.createTextNode(e.text));tg.box.appendChild(dc);
+        }
+        any=true;
+      }else if(k==="credit"){
+        var cc=el("div","revert credit"), cb=byId[d.action_id];
+        var chh=el("div","revert-head");chh.appendChild(el("span","ok-dot","\u2713"));chh.appendChild(el("span",null,"Kept as credit: "+titleOf(cb)));cc.appendChild(chh);
+        cc.appendChild(row2("Before",(cb&&range(cb.dates)?range(cb.dates)+", ":"")+money(d.of)));
+        cc.appendChild(row2("After",money(d.amount)+" store credit, no money back","good"));
+        cc.appendChild(row2("How","You chose store credit; Proxy accepted it with the agent"));
+        cc.appendChild(row2("Why",wrongWhy(cb)));
+        frag.appendChild(cc);any=true;
       }else if(k==="email_out"||k==="email_in"){
         var mg=groups["m"+m];
         if(!mg){mg=groups["m"+m]=el("div","mail");var mh=el("div","mail-head");mh.appendChild(el("span","env","✉️"));mh.appendChild(el("span",null,(d.correction?"Correction to ":"Email to ")+(NAMES[m]||m)));mg.appendChild(mh);frag.appendChild(mg)}

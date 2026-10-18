@@ -129,11 +129,20 @@ async function liveChain(opts: { agent?: (real: MerchantAgent) => MerchantAgent;
   const inbox = createProtocolInbox({ access: ink.access("proxy-agent"), hooks: rt.proxy, clock, store, trustedHandles: ["hotel-agent"], trustedEmails: ["hotel-agent@inkboxmail.com"], since });
   await rt.human.handleInbound({ from: HUMAN, body: "UNDO ALL", via: "imessage" });
 
-  /** Both sides poll, like the 3 s timers on the laptop, until `done` or about 3 s pass. */
-  const pump = async (done: () => Promise<boolean>, merchantAnswers = true) => {
+  /**
+   * Both sides poll, like the 3 s timers on the laptop, until `done` or about 3 s pass. Proxy asks before accepting
+   * any offer; the human answers `choose` (default 1, the recommendation) to each new options text, unless null.
+   */
+  let answered = 0;
+  const pump = async (done: () => Promise<boolean>, merchantAnswers = true, choose: string | null = "1") => {
     for (let i = 0; i < 300 && !(await done()); i++) {
       if (merchantAnswers) await bridge.pollOnce();
       await inbox.pollOnce();
+      const asked = ink.texts.filter((t) => /best offer:/.test(t.text) && !/^Still waiting/.test(t.text)).length;
+      if (choose && asked > answered) {
+        answered = asked;
+        await rt.human.handleInbound({ from: HUMAN, body: choose, via: "imessage" });
+      }
       await new Promise((r) => setTimeout(r, 10));
     }
   };
@@ -188,12 +197,12 @@ describe("the Reversal Protocol over Inkbox (real inbox, bridge and client code)
         },
       }),
     });
-    await s.pump(async () => s.texts().some((t) => t.includes("Reply YES")));
-    expect(s.texts()).toContain("hotel offered partial refund of $544 on $640. Reply YES to accept or NO to decline.");
+    await s.pump(async () => s.texts().some((t) => /best offer:/.test(t)), true, null);
+    expect(s.texts()).toContain("Harborview Hotel's best offer:\n1) Refund $544 (85%) to your card\nYour rules prefer refunds, so I recommend 1. Reply 1.");
     expect(await s.state(s.hotel)).toBe("countered");
 
     await s.rt.human.handleInbound({ from: HUMAN, body: "YES", via: "imessage" });
-    await s.pump(async () => (await s.state(s.hotel)) === "verified");
+    await s.pump(async () => (await s.state(s.hotel)) === "verified", true, null);
     expect(await s.state(s.hotel)).toBe("verified");
     expect(s.ink.a2a.map(typeOf).at(-2)).toBe("accept_counter@4");
   });

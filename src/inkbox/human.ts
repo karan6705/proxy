@@ -109,8 +109,25 @@ export function createHumanChannel(deps: HumanChannelDeps) {
       return { status: "replied", reason: "already_handled" };
     }
 
-    // An open counter question takes YES / NO.
+    // An open counter question takes a number from Proxy's options, KEEP PUSHING, or YES / NO. The orchestrator
+    // answers a number or KEEP PUSHING itself (it knows the options), and asks again if the answer doesn't fit.
     const negotiation = counter.get(id);
+    if (negotiation && ((parsed.kind === "numbers" && parsed.picks.length === 1) || parsed.kind === "keep_pushing")) {
+      counter.delete(id);
+      await hooks.onHumanReply({
+        kind: "counter_decision",
+        chain_id: id,
+        negotiation_id: negotiation,
+        accept: parsed.kind === "numbers",
+        ...(parsed.kind === "numbers" ? { choice: parsed.picks[0] } : { push: true }),
+        received_at,
+      });
+      return { status: "forwarded", kind: "counter_decision" };
+    }
+    if (parsed.kind === "keep_pushing") {
+      await reply("There's no offer waiting on you right now.");
+      return { status: "replied", reason: "no_offer_open" };
+    }
     if (negotiation && (parsed.kind === "yes" || parsed.kind === "no")) {
       counter.delete(id);
       await hooks.onHumanReply({ kind: "counter_decision", chain_id: id, negotiation_id: negotiation, accept: parsed.kind === "yes", received_at });
