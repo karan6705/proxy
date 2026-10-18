@@ -85,6 +85,27 @@ describe("try_proxy_demo sandbox", () => {
     expect(await sandboxes.chains()).toEqual([]);
   });
 
+  it("trip-dmy: the agent books Nov 3 without waiting, the human's 2 means Mar 11, and the usual undo ends at $1,144 of $1,240 with the redo on Mar 11", async () => {
+    const sandboxes = createSandboxes();
+    const r = await sandboxes.run("show_trip_dmy", "trip-dmy");
+    expect(r.finished).toBe(true);
+    expect(r.summary).toContain("$1,144 of $1,240 is back, confirmed on simulated payments");
+    const feed = sandboxes.forTask("show_trip_dmy")!.feed.list("show_trip_dmy");
+    const out = feed.filter((e) => e.kind === "text_out").map((e) => e.text);
+    const ins = feed.filter((e) => e.kind === "text_in").map((e) => e.text);
+    expect(feed.find((e) => e.kind === "intent")?.data.request).toBe("Book my NYC trip for the conference on 11/3, under $1,500.");
+    expect(out[0]).toBe("You wrote 11/3. Your agent read it as Nov 3. Did you mean Nov 3 or Mar 11? Reply 1 or 2.");
+    expect(ins).toEqual(["Human: 2", "Human: UNDO ALL", "Human: 1"]);
+    // The 2 answered the date question: not a PICK, not an offer choice; one decision only, on the hotel's offer.
+    expect(out[1]).toBe("Got it: Mar 11 to Mar 14. Your agent already booked, so I'm checking those bookings against that.");
+    expect(out[2]).toMatch(/^Your agent booked Nov 3, but you meant Mar 11\.\n\n4 things affected · \$1,240 at risk\n/);
+    expect(out.some((t) => /^Got it\. Undoing/.test(t))).toBe(false);
+    expect(feed.filter((e) => e.kind === "decision").map((e) => e.text)).toEqual(["You chose: Refund $544 (85%) to your card."]);
+    expect(feed.filter((e) => e.kind === "stripe_refund").map((e) => e.data.amount).sort()).toEqual([18_800, 41_200, 54_400]);
+    expect(out).toContain("Proxy emailed Alex Rivera (host) the right dates: Mar 11 to Mar 14.");
+    expect(out.at(-1)).toBe("Rebooked for Mar 11 to Mar 14: flight $412, hotel $640, transfer $188. Each confirmation matches what you asked for.");
+  });
+
   it("the plan story refunds the annual plan in full and re-subscribes monthly", async () => {
     const sandboxes = createSandboxes();
     const r = await sandboxes.run("show_plan", "plan");

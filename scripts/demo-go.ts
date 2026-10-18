@@ -1,12 +1,15 @@
-// npm run demo:go [-- --scenario trip|ambiguous|plan|store]: the buying agent's part of a story against the running server
+// npm run demo:go [-- --scenario trip|trip-dmy|ambiguous|plan|store]: the buying agent's part of a story against the running server
 // (MCP_URL). trip (the default): it logs the intent, books with the wrong date, emails the host, reviews, undoes the
 // flight in its session, leaves, and the late confirmations arrive; the alert fires a few seconds later.
-// ambiguous, plan and store: see src/agent/scenarios.ts. Run npm run demo:stage (live) or reset the demo first.
+// trip-dmy, ambiguous, plan and store: see src/agent/scenarios.ts. --rehearse with trip-dmy also plays the human
+// (2, UNDO ALL, 1) and checks the end. Run npm run demo:stage (live) or reset the demo first.
 import { createHttpMerchants } from "../src/agent/http-merchants.js";
 import { connectToolClient } from "../src/agent/mcp-client.js";
 import { runRehearsal } from "../src/agent/rehearse.js";
-import { runAmbiguousAgent, runPlanAgent, runStoreAgent, SCENARIO_NAMES, type ScenarioName } from "../src/agent/scenarios.js";
+import { runAmbiguousAgent, runPlanAgent, runStoreAgent, runTripDmyAgent, SCENARIO_NAMES, type ScenarioName } from "../src/agent/scenarios.js";
 import { createDemoClock, createHttpDemoControl } from "../src/agent/scripted.js";
+import { runHumanPhase } from "../src/agent/human-phase.js";
+import { resetDemo } from "../src/agent/reset.js";
 
 const args = process.argv.slice(2);
 const flag = args.indexOf("--scenario");
@@ -33,7 +36,21 @@ if (scenario === "trip") {
       // The same demo clock the trip agent uses (the server is reset to it), so refund windows line up.
       now: createDemoClock().now,
     };
-    const r = scenario === "ambiguous" ? await runAmbiguousAgent(options) : scenario === "store" ? await runStoreAgent(options) : await runPlanAgent(options);
+    if (scenario === "trip-dmy") {
+      // Every confirmation arrives at once: the agent booked on its own day, and nothing is late.
+      options.merchants = createHttpMerchants(mcpUrl, fetch, () => false);
+      if (args.includes("--rehearse")) await resetDemo({ mcpUrl });
+    }
+    const r = scenario === "ambiguous" ? await runAmbiguousAgent(options) : scenario === "trip-dmy" ? await runTripDmyAgent(options) : scenario === "store" ? await runStoreAgent(options) : await runPlanAgent(options);
+    if (scenario === "trip-dmy" && args.includes("--rehearse")) {
+      const passed = await runHumanPhase({
+        mcpUrl,
+        dateAnswer: 2,
+        expectRedo: "Mar 11",
+        report: (step, status, ms, detail) => console.log(`${status} ${step} ${Math.round(ms)}ms${detail ? ` — ${detail}` : ""}`),
+      });
+      if (!passed) process.exitCode = 1;
+    }
     console.log(`Done (${r.task_id}). Watch it on ${origin}/web/show`);
   } catch (e) {
     console.error(e instanceof Error ? e.message : e);

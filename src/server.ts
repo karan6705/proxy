@@ -447,8 +447,9 @@ if (process.env.PROXY_DEMO_ROUTES === "1" || cloud) {
         if (!task_id) return bad("task_id query parameter is required");
         runtime.proxy.deps.sessions.end(task_id);
         // The late confirmations arrive close to the deadlines (see DEMO_LATE_AT). Never moves the clock back.
+        // late=0 keeps the agent's day (trip-dmy: everything was booked at once, nothing arrives late).
         const lateAt = process.env.PROXY_DEMO_LATE_AT?.trim() || DEMO_LATE_AT;
-        if (Date.parse(lateAt) > clock.nowMs()) clock.set(lateAt);
+        if (req.query.late !== "0" && Date.parse(lateAt) > clock.nowMs()) clock.set(lateAt);
         return { status: 200, body: { ok: true, task_id, session_active: false, clock: clock.now() } };
       },
     },
@@ -500,7 +501,7 @@ if (process.env.PROXY_DEMO_ROUTES === "1" || cloud) {
       if (!SCENARIOS.includes(scenario)) return bad(`scenario must be one of ${SCENARIOS.join(", ")}`);
       let run = recordings.get(scenario);
       if (!run) {
-        run = sandboxes.run(`show_${scenario}`, scenario);
+        run = sandboxes.run(`show_${scenario.replace(/-/g, "_")}`, scenario);
         recordings.set(scenario, run);
         run.catch(() => recordings.delete(scenario));
       }
