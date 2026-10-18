@@ -346,7 +346,10 @@ footer .hint{color:var(--faint)}
     if(es.some(function(e){return e.data&&e.data.category==="saas"}))return "plan";
     if(es.some(function(e){return e.data&&e.data.category==="store"}))return "store";
     var askedDate=es.some(function(e){return e.kind==="text_out"&&/^You wrote /.test(e.text)});
-    if(askedDate&&es.some(function(e){return e.data&&e.data.alert==="chain_opened"}))return "trip-dmy";
+    // trip-dmy: the agent booked before the date was confirmed (bookings before the human's first reply), or the alert is out.
+    var firstIn=es.filter(function(e){return e.kind==="text_in"}).reduce(function(m,e){return m&&m<e.seq?m:e.seq},0);
+    var bookedFirst=es.some(function(e){return (e.kind==="booking"||e.kind==="message")&&(!firstIn||e.seq<firstIn)});
+    if(askedDate&&(bookedFirst||es.some(function(e){return e.data&&e.data.alert==="chain_opened"})))return "trip-dmy";
     if(askedDate)return "ambiguous";
     return "trip";
   }
@@ -835,7 +838,7 @@ footer .hint{color:var(--faint)}
   }
 
   function renderItems(es,checks,byId){
-    var box=$("items"), frag=document.createDocumentFragment(), groups={}, any=false;
+    var box=$("items"), frag=document.createDocumentFragment(), groups={}, any=false, checkShown=false;
     var shown={};es.forEach(function(e){shown[e.seq]=1});
     var all=(feed.entries||[]).slice().sort(function(a,b){return a.seq-b.seq});
     // Every entry Proxy checked before answering: its check card comes first, then (once shown) the message itself.
@@ -911,7 +914,9 @@ footer .hint{color:var(--faint)}
         if(LIVE&&!PRESENT&&!later){var w=el("div","waiting");w.appendChild(el("span","spin"));w.appendChild(document.createTextNode(e.text));frag.appendChild(w);any=true}
       }else if(k==="stripe_refund"){
         frag.appendChild(reverted(e,es,byId));any=true;
-      }else if(k==="mismatch"&&story==="ambiguous"){
+      }else if(k==="mismatch"&&(story==="ambiguous"||story==="trip-dmy")&&d.said&&!checkShown){
+        // Once: the intent check's own entry, not the per-booking mismatches found after the answer.
+        checkShown=true;
         var c=el("div","check");c.appendChild(el("div","check-head","Intent check: your words against the plan"));
         var said=String(d.said||""), agent=String(d.understood||"");
         var rows=[["You wrote",said.replace(/\s*\(.*$/,"")],["Your agent read",agent],["It could also mean",(said.match(/\((.*)\)/)||["",""])[1].replace(agent.replace(/ to .*/,""),"").replace(/^ or | or $/,"")]];
