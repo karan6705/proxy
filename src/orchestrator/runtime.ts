@@ -102,6 +102,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   // Charge ids by action, remembered when the merchant charges. Stripe's search is eventually consistent,
   // so a refund right after a booking can't rely on it alone; the search stays as the fallback.
   const chargeByAction = new Map<string, string>();
+  const chargeScope = `rt${Date.now().toString(36)}`;
   const merchantDeps: MerchantDeps = {
     async charge(args) {
       const action_id = `act_${args.task_id}_${args.ref.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
@@ -127,7 +128,8 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
           received_at: clock.now(),
           state: "found",
         },
-        args.idempotency_key,
+        // Scoped to this runtime: a demo reset reuses task ids, and must still get fresh test charges.
+        `${chargeScope}:${args.idempotency_key}`,
       );
       chargeByAction.set(action_id, result.charge_id);
       return { charge_id: result.charge_id };
