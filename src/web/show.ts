@@ -195,12 +195,42 @@ footer .hint{color:var(--faint)}
 .reading:first-of-type{border-top:0}
 .reading .r{color:var(--muted)}
 
+/* The store story: a merchant's web return form, its label and the carrier's scan */
+.wform{border:1px solid var(--hair);border-radius:18px;overflow:hidden}
+.wform .wbar{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#F2F2F7}
+.wform .wbar i{width:9px;height:9px;border-radius:50%;background:#D1D1D6;display:inline-block}
+.wform .url{flex:1;margin-left:8px;background:#fff;border-radius:8px;padding:4px 10px;font:13px ui-monospace,"SF Mono",Menlo,monospace;color:var(--muted)}
+.wform .wbody{padding:14px 16px 16px}
+.wform h4{margin:0 0 4px;font-size:17px;letter-spacing:-.01em}
+.fld{margin-top:10px}
+.fld .fl{font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:4px}
+.fld .in{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1.5px solid var(--hair);border-radius:10px;padding:8px 11px;font-size:15px;min-height:38px;background:#fff}
+.fld .in.empty{background:#FAFAFB}
+.fld.on .in{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.fld .caret{display:inline-block;width:2px;height:17px;margin-left:2px;vertical-align:-3px;background:var(--accent);animation:blink 1s infinite}
+.fld .chev{color:var(--muted);font-size:16px;line-height:1}
+.wform .submit{margin-top:14px;text-align:center;border-radius:12px;padding:10px;font-size:15px;font-weight:600;background:#E5E5EA;color:var(--muted)}
+.wform .submit.go{background:var(--accent);color:#fff}
+.wform .submit.done{background:var(--green);color:#fff}
+.wform .submit.no{background:var(--red);color:#fff}
+.rlabel{display:grid;grid-template-columns:1fr 132px;gap:16px;align-items:center;border:2px dashed #C7C7CC;border-radius:16px;padding:14px 16px;background:#FFFEF7}
+.rlabel .carrier{font-size:13px;font-weight:800;letter-spacing:.08em;color:var(--muted)}
+.rlabel .rma{font:700 24px ui-monospace,"SF Mono",Menlo,monospace;margin:4px 0 6px;letter-spacing:.02em}
+.rlabel .meta{font-size:14px;color:var(--muted);line-height:1.5}
+.rlabel .meta b{color:var(--ink)}
+.rlabel svg{width:132px;height:132px;display:block}
+.track{border:1px solid var(--hair);border-radius:18px;padding:12px 16px}
+.track .ev{display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:15px;padding:5px 0}
+.track .ev .dot{width:10px;height:10px;border-radius:50%;background:var(--green);margin-top:5px}
+.track .ev .dot.grey{background:#C7C7CC}
+.track .ev .t2{display:block;color:var(--muted);font-size:13px}
+
 /* Start screen */
 #start{position:absolute;inset:0;background:var(--bg);display:none;flex-direction:column;align-items:center;justify-content:center;gap:42px;z-index:5}
 #start.on{display:flex}
 #start h1{margin:0;font-size:54px;letter-spacing:-.035em;font-weight:700}
 #start p.lead{margin:-24px 0 0;font-size:22px;color:var(--muted)}
-.picks{display:grid;grid-template-columns:repeat(3,420px);gap:28px}
+.picks{display:grid;grid-template-columns:repeat(4,404px);gap:24px}
 .pick{background:var(--card);border-radius:26px;box-shadow:var(--shadow);padding:28px 30px;display:flex;flex-direction:column;gap:10px}
 .pick h3{margin:0;font-size:24px;letter-spacing:-.02em}
 .pick p{margin:0;font-size:17px;line-height:1.45;color:var(--muted);min-height:74px}
@@ -274,9 +304,14 @@ footer .hint{color:var(--faint)}
   var STORIES={
     trip:{title:"The wrong-date trip",blurb:"The agent books NYC for Nov 3, not Nov 13, says it's done and leaves. Proxy catches it and gets the money back.",scenes:["The ask","The agent says done","Proxy spots the mistake","The phone buzzes","The human replies","The agents negotiate","The money comes back","Rebooked for Nov 13"],talk:6},
     ambiguous:{title:"The date that reads two ways",blurb:"The human writes 3/11. Proxy asks which date they meant before anything is booked.",scenes:["The ask","The agent reads 3/11","Proxy asks before booking","The human taps 1","Booked the right dates"],talk:0},
+    store:{title:"The wrong charger",blurb:"The agent orders a USB-A 20W charger, not USB-C 65W. Proxy returns it like a person would: chat, form, label, refund.",scenes:["The ask","The agent says ordered","Proxy spots the wrong item","The phone buzzes","The human replies","The support chat","The return form","The return label","The drop-off scan","The money comes back","The right charger"],talk:6,each:[7]},
     plan:{title:"The annual plan",blurb:"The agent signs up for the annual plan instead of monthly. Proxy cancels it, gets the refund, and the agent re-subscribes monthly.",scenes:["The ask","The agent says done","Proxy spots the annual plan","The phone buzzes","The human replies","Proxy cancels with billing","The money comes back","Re-subscribed monthly"],talk:6}
   };
-  var NAMES={hotel:"Harborview Hotel's agent",transfer:"Metro Transfer support",host:"Your host",saas:"Acme Cloud billing",airline:"Skyline Demo Air"};
+  var NAMES={northwind:"Northwind Market support",hotel:"Harborview Hotel's agent",transfer:"Metro Transfer support",host:"Your host",saas:"Acme Cloud billing",airline:"Skyline Demo Air"};
+  var STORE_NAMES={northwind:"Northwind Market"};
+  /** Merchants that are our own simulation, even on the live server: labelled "Simulated store" wherever they appear. */
+  var SIMULATED={northwind:true};
+  function simTag(){return el("span","tag sim","Simulated store")}
   var ICONS={flight:"✈️",hotel:"🏨",transfer:"🚗",message:"✉️",saas:"☁️",store:"📦"};
   var MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
@@ -292,11 +327,12 @@ footer .hint{color:var(--faint)}
   addEventListener("resize",fit);fit();
 
   // ---- state
-  var feed=null, story="trip", steps=[], cursor=-1, timer=null, lastOut=0, counter={shown:0,target:0,raf:0}, howBy={};
+  var feed=null, story="trip", steps=[], cursor=-1, timer=null, lastOut=0, counter={shown:0,target:0,raf:0}, howBy={}, items={}, itemDiff=null;
 
   function detect(f){
     var es=f.entries||[];
     if(es.some(function(e){return e.data&&e.data.category==="saas"}))return "plan";
+    if(es.some(function(e){return e.data&&e.data.category==="store"}))return "store";
     if(es.some(function(e){return e.kind==="text_out"&&/^You wrote /.test(e.text)}))return "ambiguous";
     return "trip";
   }
@@ -304,6 +340,28 @@ footer .hint{color:var(--faint)}
   // ---- which scene each timeline entry belongs to
   function sceneOf(e,ctx){
     var k=e.kind;
+    if(story==="store"){
+      if(k==="wait")return 0;
+      if(k==="intent")return 1;
+      if(k==="booking")return 2;
+      if(k==="mismatch")return 3;
+      if(k==="text_in")return 5;
+      if(k==="text_out"){
+        if(e.data&&e.data.alert==="chain_opened")return 4;
+        if(/^Got it/.test(e.text))return 5;
+        if(/return label/i.test(e.text))return 8;
+        if(/^Ordered the right/.test(e.text))return 11;
+        if(/refunded|All done/i.test(e.text))return 10;
+        return 6;
+      }
+      if(k==="protocol_out"||k==="protocol_in")return 6;
+      if(k==="form_field")return 7;
+      if(k==="return_label")return 8;
+      if(k==="carrier_scan"||(k==="email_in"&&e.data&&e.data.return_received))return 9;
+      if(k==="stripe_refund")return 10;
+      if(k==="redo"||k==="chain")return 11;
+      return 6;
+    }
     if(story==="ambiguous"){
       if(k==="intent")return 1;
       if(k==="mismatch")return 3;
@@ -343,6 +401,8 @@ footer .hint{color:var(--faint)}
     var ctx=context(es), S=STORIES[story], out=[];
     for(var s=1;s<=S.scenes.length;s++){
       var list=es.filter(function(e){return sceneOf(e,ctx)===s});
+      // Scenes shown one entry at a time, like the return form filling in field by field.
+      if(S.each&&S.each.indexOf(s)>=0){list.forEach(function(e){out.push({scene:s,seqs:[e.seq]})});continue}
       if(s===S.talk){list.forEach(function(e){
         // Present mode: "Proxy is checking" gets its own step before each of Proxy's decisions.
         if(e.kind==="protocol_out"&&e.data&&e.data.why)out.push({scene:s,seqs:[],checks:[e.seq]});
@@ -369,7 +429,13 @@ footer .hint{color:var(--faint)}
     var v=visible(), es=v.entries, S=STORIES[story];
     $("title").textContent=S.title;
     var byId={};(feed.bookings||[]).forEach(function(b){byId[b.id]=b});
-    var refunded={}, corrected={}; howBy={};
+    var refunded={}, corrected={}; howBy={}; items={}; itemDiff=null;
+    (feed.entries||[]).forEach(function(e){
+      if(e.data&&e.data.item)items[e.data.action_id]=String(e.data.item);
+      if(e.kind==="mismatch"&&e.data&&e.data.field==="item"&&!itemDiff)itemDiff=shortDiff(String(e.data.actual||""),String(e.data.expected||""));
+    });
+    // A late receipt has no mismatch entry; the alert says the same thing.
+    if(!itemDiff)(feed.entries||[]).forEach(function(e){var m=e.kind==="text_out"&&/ordered the wrong item \((.+), not (.+)\)/.exec(e.text);if(m&&!itemDiff)itemDiff=shortDiff(m[1],m[2])});
     es.forEach(function(e){
       if(e.kind==="stripe_refund"){refunded[e.data.action_id]=Number(e.data.amount||0);howBy[e.data.action_id]=e.data.how||null}
       if(e.kind==="email_out"&&e.data&&e.data.correction)corrected[e.data.action_id]=1;
@@ -390,8 +456,9 @@ footer .hint{color:var(--faint)}
     var c=el("div","card"), icon=el("div","icon",ICONS[b.category]||"•"), mid=el("div"), amt=el("div","amt");
     // The line below shows the dates, so the title drops a trailing " · Nov 3" or " · Nov 3 to Nov 6".
     mid.appendChild(el("div","what",(b.category==="saas"?"Team plan · "+String(b.summary||"").replace(/^Saas · /i,""):String(b.summary||"")).replace(/\s·\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?: to (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})?$/,"")));
+    if(b.category==="store"&&items[b.id])mid.firstChild.textContent=items[b.id];
     var annual=/annual|yearly/i.test(String(b.raw||b.summary));
-    var when=el("div","when",b.category==="saas"?(annual?"Billed annually":"Billed monthly"):range(b.dates));
+    var when=el("div","when",b.category==="saas"?(annual?"Billed annually":"Billed monthly"):b.category==="store"?(STORE_NAMES[b.merchant]||"Online order")+(SIMULATED[b.merchant]?" (simulated store)":""):range(b.dates));
     mid.appendChild(when);
     if(b.category==="message"){amt.textContent=opts.corrected?"Corrected":"Sent";if(opts.corrected)amt.style.color="var(--green)"}
     else if(opts.refunded!==undefined){var s=el("s",null,money(b.amount));amt.appendChild(s);amt.appendChild(el("span","back","Refunded "+money(opts.refunded)))}
@@ -401,10 +468,10 @@ footer .hint{color:var(--faint)}
     if(opts.bad){
       c.className+=opts.refunded!==undefined||opts.corrected?" bad fixed":" bad";
       var want=feed.task&&feed.task.intended_dates;
-      var diff=b.category==="saas"?"Annual ≠ Monthly":(want&&b.dates?day(b.dates.start)+" ≠ "+day(want.start):"Doesn't match");
+      var diff=b.category==="saas"?"Annual ≠ Monthly":b.category==="store"&&itemDiff?itemDiff.actual+" ≠ "+itemDiff.expected:(want&&b.dates?day(b.dates.start)+" ≠ "+day(want.start):"Doesn't match");
       when.appendChild(el("span","diff",diff));
     }
-    if(opts.good){c.className+=" good";when.appendChild(el("span","ok",b.category==="saas"?"Monthly ✓":day(b.dates&&b.dates.start)+" ✓"))}
+    if(opts.good){c.className+=" good";when.appendChild(el("span","ok",b.category==="saas"?"Monthly ✓":b.category==="store"?(itemDiff?itemDiff.expected:"Right item")+" ✓":day(b.dates&&b.dates.start)+" ✓"))}
     c.appendChild(icon);c.appendChild(mid);c.appendChild(amt);
     return c;
   }
@@ -434,7 +501,7 @@ footer .hint{color:var(--faint)}
       }
     }else{
       if(made.length){
-        frag.appendChild(bot("Done! Here's what I "+(story==="plan"?"signed you up for":"booked")+" ✅",made.map(function(e){
+        frag.appendChild(bot(story==="store"?"Ordered ✅":"Done! Here's what I "+(story==="plan"?"signed you up for":"booked")+" ✅",made.map(function(e){
           var b=asB(e);return card(b,{bad:spotted&&b.wrong!==false,refunded:refunded[b.id],corrected:corrected[b.id]});
         })));
       }
@@ -446,7 +513,7 @@ footer .hint{color:var(--faint)}
       });
       if(redo.length){
         var dates=feed.task&&feed.task.intended_dates;
-        var msg=story==="plan"?"Re-subscribed on the monthly plan ✅":"Rebooked for "+range(dates)+" ✅";
+        var msg=story==="plan"?"Re-subscribed on the monthly plan ✅":story==="store"?"Ordered the right one ✅":"Rebooked for "+range(dates)+" ✅";
         frag.appendChild(bot(msg,redo.map(function(e){return card(asB(e),{good:true})})));
       }
     }
@@ -569,10 +636,11 @@ footer .hint{color:var(--faint)}
   function wrongWhy(b){
     if(!b)return "";
     if(b.category==="saas")return "Annual plan, not monthly";
+    if(b.category==="store")return itemDiff?"Wrong item: "+itemDiff.actual+", not "+itemDiff.expected:"Not the item you asked for";
     var want=feed.task&&feed.task.intended_dates;
     return want&&b.dates?"Wrong dates: "+day(b.dates.start)+", not "+day(want.start):"Doesn't match the request";
   }
-  function titleOf(b){return b?String(b.summary||"").replace(/\s·\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?: to .*)?$/,""):""}
+  function titleOf(b){if(b&&items[b.id])return items[b.id];return b?String(b.summary||"").replace(/\s·\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?: to .*)?$/,""):""}
   function row2(label,value,cls){var r=el("div","reading"+(cls?" "+cls:""));r.appendChild(el("span","r",label));r.appendChild(el("span",null,value));return r}
 
   /** "Proxy is checking": the human's rules against the offer on the table, before Proxy answers. Typed fields only. */
@@ -628,9 +696,9 @@ footer .hint{color:var(--faint)}
     var d=e.data||{}, b=byId[d.action_id], m=d.merchant, c=el("div","revert");
     var head=el("div","revert-head");head.appendChild(el("span","ok-dot","✓"));head.appendChild(el("span",null,(e.kind==="stripe_refund"?"Reverted: ":"Corrected: ")+titleOf(b)));c.appendChild(head);
     if(e.kind==="stripe_refund"){
-      var before=b?(b.category==="saas"?"Annual plan, ":(range(b.dates)?range(b.dates)+", ":""))+money(b.amount):"";
+      var before=b?(b.category==="saas"?"Annual plan, ":b.category==="store"&&items[b.id]?items[b.id]+", ":(range(b.dates)?range(b.dates)+", ":""))+money(b.amount):"";
       c.appendChild(row2("Before",before));
-      c.appendChild(row2("After","Cancelled, "+money(d.amount)+" back"+(d.of&&d.of!==d.amount?" of "+money(d.of):""),"good"));
+      c.appendChild(row2("After",(b&&b.category==="store"?"Returned, ":"Cancelled, ")+money(d.amount)+" back"+(d.of&&d.of!==d.amount?" of "+money(d.of):""),"good"));
       var rounds=es.filter(function(x){return x.kind==="protocol_out"&&x.data.merchant===m}).reduce(function(t,x){return Math.max(t,Number(x.data.round||0))},0);
       var how=d.how?String(d.how)+(rounds&&/negotiated/.test(String(d.how))?", "+rounds+" rounds":""):rounds?"Proxy negotiated with the agent, "+rounds+" rounds":"Proxy emailed support";
       c.appendChild(row2("How",how));
@@ -649,6 +717,63 @@ footer .hint{color:var(--faint)}
     return c;
   }
 
+  /** "USB-A 20W charger" vs "USB-C 65W charger" -> {actual:"USB-A 20W", expected:"USB-C 65W"}: the shared words go. */
+  function shortDiff(actual,expected){
+    var a=actual.split(" "), x=expected.split(" ");
+    while(a.length>1&&x.length>1&&a[a.length-1].toLowerCase()===x[x.length-1].toLowerCase()){a.pop();x.pop()}
+    return {actual:a.join(" "),expected:x.join(" ")};
+  }
+  /** The merchant's return form as a web page: its fields come from the "_open" entry, values as Proxy fills them. */
+  function formCard(d){
+    var box=el("div","wform"), bar=el("div","wbar");
+    bar.appendChild(el("i"));bar.appendChild(el("i"));bar.appendChild(el("i"));bar.appendChild(el("span","url",String(d.form_url||"")));
+    box.appendChild(bar);
+    var body=el("div","wbody"), slots={}, n=0;
+    var h4=el("h4",null,(STORE_NAMES[d.merchant]||"Store")+" · "+String(d.form_title||"Return form")+" ");
+    if(SIMULATED[d.merchant])h4.appendChild(simTag());
+    body.appendChild(h4);
+    String(d.fields||"").split("|").filter(Boolean).forEach(function(spec){
+      var i=spec.lastIndexOf(":"), label=spec.slice(0,i), w=el("div","fld"), inp=el("div","in empty");
+      w.appendChild(el("div","fl",label));inp.appendChild(el("span","v",""));
+      if(spec.slice(i+1)==="choice")inp.appendChild(el("span","chev","▾"));
+      w.appendChild(inp);body.appendChild(w);slots[label]=w;n++;
+    });
+    var btn=el("div","submit","Submit return");body.appendChild(btn);box.appendChild(body);
+    return {box:box,slots:slots,btn:btn,total:n,filled:0};
+  }
+  function fillForm(f,d){
+    Object.keys(f.slots).forEach(function(k){f.slots[k].classList.remove("on");var c=f.slots[k].querySelector(".caret");if(c)c.remove()});
+    if(d.field==="_submit"){f.btn.className="submit done";f.btn.textContent="Submitted ✓";return}
+    if(d.field==="_rejected"){f.btn.className="submit no";f.btn.textContent="Not accepted";return}
+    var slot=f.slots[String(d.label||"")];
+    if(!slot)return;
+    var inp=slot.querySelector(".in"), v=inp.querySelector(".v");
+    v.textContent=String(d.value||"");inp.classList.remove("empty");slot.classList.add("on");
+    v.appendChild(el("span","caret"));
+    f.filled++;
+    if(f.filled>=f.total)f.btn.className="submit go";
+  }
+  function labelCard(d){
+    var c=el("div","rlabel"), left=el("div"), meta=function(label,value){var m=el("div","meta");m.appendChild(document.createTextNode(label+" "));m.appendChild(el("b",null,value));return m};
+    left.appendChild(el("div","carrier",String(d.carrier||"").toUpperCase()+" · PREPAID RETURN"+(SIMULATED[d.merchant]?" · SIMULATED":"")));
+    left.appendChild(el("div","rma",String(d.rma||"")));
+    left.appendChild(meta("Order",String(d.ref||"")));
+    left.appendChild(meta("Drop off by",day(d.drop_off_by)));
+    left.appendChild(meta("At",String(d.drop_off_point||"")));
+    left.appendChild(meta("Return to",(STORE_NAMES[d.merchant]||"the store")+" Returns"));
+    c.appendChild(left);
+    var NS="http://www.w3.org/2000/svg", size=Number(d.qr_size||0), svg=document.createElementNS(NS,"svg"), bg=document.createElementNS(NS,"rect"), path=document.createElementNS(NS,"path");
+    svg.setAttribute("viewBox","0 0 "+size+" "+size);svg.setAttribute("shape-rendering","crispEdges");svg.setAttribute("role","img");svg.setAttribute("aria-label","Return label QR code");
+    bg.setAttribute("width",String(size));bg.setAttribute("height",String(size));bg.setAttribute("fill","#fff");
+    path.setAttribute("d",String(d.qr_path||""));path.setAttribute("fill","#1D1D1F");
+    svg.appendChild(bg);svg.appendChild(path);c.appendChild(svg);
+    return c;
+  }
+  function trackEvent(what,sub,grey){
+    var r=el("div","ev"), t=el("div");r.appendChild(el("span","dot"+(grey?" grey":"")));
+    t.appendChild(document.createTextNode(what));t.appendChild(el("span","t2",sub));r.appendChild(t);return r;
+  }
+
   function renderItems(es,checks,byId){
     var box=$("items"), frag=document.createDocumentFragment(), groups={}, any=false;
     var shown={};es.forEach(function(e){shown[e.seq]=1});
@@ -661,7 +786,7 @@ footer .hint{color:var(--faint)}
         var g=groups["t"+m];
         if(!g){
           g=groups["t"+m]={box:el("div","thread"),list:[]};
-          var h=el("div","thread-head");h.appendChild(el("div","avatar av-merchant",(NAMES[m]||m).charAt(0)));h.appendChild(el("span",null,"Proxy and "+(NAMES[m]||m)));h.appendChild(el("span","sub","Agent to agent"));
+          var h=el("div","thread-head");h.appendChild(el("div","avatar av-merchant",(NAMES[m]||m).charAt(0)));h.appendChild(el("span",null,"Proxy and "+(NAMES[m]||m)));h.appendChild(el("span","sub",SIMULATED[m]?"Agent to agent · simulated store":"Agent to agent"));
           g.box.appendChild(h);g.ladderSlot=el("div");g.box.appendChild(g.ladderSlot);frag.appendChild(g.box);
         }
         var proxy=k==="protocol_out";
@@ -675,6 +800,22 @@ footer .hint{color:var(--faint)}
         t.appendChild(document.createTextNode(proxy?strip(e.text):(d.said||strip(e.text))));
         if(!proxy&&d.said)t.appendChild(el("span","typed","Read by Proxy: "+strip(e.text)));
         row.appendChild(t);g.box.appendChild(row);any=true;
+      }else if(k==="form_field"){
+        var f=groups["f"+d.action_id];
+        if(!f){f=groups["f"+d.action_id]=formCard(d);frag.appendChild(f.box)}
+        fillForm(f,d);any=true;
+      }else if(k==="return_label"){
+        frag.appendChild(labelCard(d));any=true;
+      }else if(k==="carrier_scan"||(k==="email_in"&&d.return_received)){
+        var tr=groups["s"+d.action_id];
+        if(!tr){
+          tr=groups["s"+d.action_id]=el("div","track");var th=el("div","check-head","Return tracking ");if(SIMULATED[m])th.appendChild(simTag());tr.appendChild(th);
+          var lab=all.filter(function(x){return x.kind==="return_label"&&x.data.action_id===d.action_id})[0];
+          if(lab)tr.appendChild(trackEvent("Label created, "+String(lab.data.rma),String(lab.data.carrier||"")+" · "+day(lab.at),true));
+          frag.appendChild(tr);
+        }
+        tr.appendChild(k==="carrier_scan"?trackEvent(String(d.event||"Package scanned"),String(d.location||"")+" · "+day(e.at)+", "+clock(e.at)):trackEvent("Return received, refund approved "+money(d.amount),STORE_NAMES[m]||m));
+        any=true;
       }else if(k==="email_out"||k==="email_in"){
         var mg=groups["m"+m];
         if(!mg){mg=groups["m"+m]=el("div","mail");var mh=el("div","mail-head");mh.appendChild(el("span","env","✉️"));mh.appendChild(el("span",null,(d.correction?"Correction to ":"Email to ")+(NAMES[m]||m)));mg.appendChild(mh);frag.appendChild(mg)}

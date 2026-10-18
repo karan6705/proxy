@@ -1,9 +1,10 @@
-// The mock merchants (airline, hotel, transfer, the host who gets corrections, a SaaS vendor and a store) and the HTTP routes
+// The mock merchants (airline, hotel, transfer, the host who gets corrections, a SaaS vendor, a store and Northwind Market) and the HTTP routes
 // Karan mounts in server.ts.
 // createMerchants() implements the Merchants interface from types.ts; merchantRoutes() exposes it as RouteHandlers.
 
 import type {
   BookingResult,
+  Cents,
   Clock,
   DateRange,
   MerchantAgent,
@@ -17,8 +18,9 @@ import type {
   Timestamp,
 } from "../types.js";
 import { createAirline } from "./airline.js";
-import type { BookInput, MerchantDeps, MerchantModule, SupportEmail, SupportReply } from "./deps.js";
+import type { BookInput, CarrierScan, MerchantDeps, MerchantModule, ReturnsPortal, SupportEmail, SupportReply } from "./deps.js";
 import { createHost } from "./host.js";
+import { createNorthwind } from "./northwind.js";
 import { createSaas } from "./saas.js";
 import { createStore } from "./store.js";
 import type { AddressMode } from "./identities.js";
@@ -26,7 +28,22 @@ import { type HotelAgentOptions, createHotel } from "./hotel.js";
 import { MerchantError, type MerchantErrorKind, type MerchantOrder, OrderBook } from "./orders.js";
 import { createTransfer } from "./transfer.js";
 
-export type { MerchantDeps, MerchantEmail, SupportEmail, SupportReply } from "./deps.js";
+export type {
+  CarrierScan,
+  MerchantDeps,
+  MerchantEmail,
+  ReturnFieldId,
+  ReturnForm,
+  ReturnFormField,
+  ReturnLabel,
+  ReturnReceipt,
+  ReturnSubmit,
+  ReturnsPortal,
+  SupportEmail,
+  SupportReply,
+} from "./deps.js";
+export { NORTHWIND_CATALOG, NORTHWIND_INFO, RETURN_LABEL_DAYS } from "./northwind.js";
+export { qrMatrix, qrSvgPath } from "./qr.js";
 export type { HotelAgentOptions, HotelBehavior } from "./hotel.js";
 export { colorEnabled, formatLine, formatSpeaker, narrateExchange, narrateFromProxy, narrateSupport, narrateToProxy, oneLine } from "./narrate.js";
 export type { ExchangeOptions } from "./narrate.js";
@@ -55,6 +72,14 @@ export interface MerchantsImpl extends Merchants {
   supportEmail(merchant_id: MerchantId, email: SupportEmail, now: Timestamp): Promise<SupportReply>;
   hasSupportDesk(merchant_id: MerchantId): boolean;
   getOrder(ref: string): MerchantOrder | null;
+  /** The merchant's web return form, when it takes returns that way (Northwind Market). */
+  returnPortal(merchant_id: MerchantId): ReturnsPortal | null;
+  /** What the merchant charges for an item, or null when it does not sell it. */
+  quote(merchant_id: MerchantId, item: string): Cents | null;
+  /** True for a merchant simulated only in this process (Northwind Market): never reached through Inkbox. */
+  inProcess(merchant_id: MerchantId): boolean;
+  /** Calls `listener` whenever the simulated carrier scans a returned package. */
+  onCarrierScan(listener: (scan: CarrierScan) => void): void;
 }
 
 export interface CreateMerchantsOptions {
@@ -64,11 +89,17 @@ export interface CreateMerchantsOptions {
    * @inkboxmail.com addresses, for end-to-end runs only. addressMode() reads MERCHANT_ADDRESS_MODE.
    */
   addresses?: AddressMode;
+  /**
+   * The simulated carrier that scans returned packages. `scan_delay_ms` is how long after a return label it scans
+   * (leave it out for never: tests call nothing and wait for nothing). `advance` moves a simulated clock a day.
+   */
+  carrier?: { scan_delay_ms: number; advance?: (ms: number) => void };
 }
 
 export function createMerchants(deps: MerchantDeps, options: CreateMerchantsOptions = {}): MerchantsImpl {
   const ctx = { deps, orders: new OrderBook() };
   const mode = options.addresses ?? "test";
+  const scanListeners: Array<(scan: CarrierScan) => void> = [];
   const modules: MerchantModule[] = [
     createAirline(ctx, mode),
     createHotel(ctx, options.hotel, mode),
@@ -76,6 +107,10 @@ export function createMerchants(deps: MerchantDeps, options: CreateMerchantsOpti
     createHost(ctx),
     createSaas(ctx),
     createStore(ctx),
+    createNorthwind(ctx, {
+      ...(options.carrier ? { scan_delay_ms: options.carrier.scan_delay_ms, advance: options.carrier.advance } : {}),
+      onScan: (scan) => scanListeners.forEach((listener) => listener(scan)),
+    }),
   ];
   const byId = new Map(modules.map((module) => [module.info.merchant_id, module]));
 
@@ -103,6 +138,12 @@ export function createMerchants(deps: MerchantDeps, options: CreateMerchantsOpti
     },
     hasSupportDesk: (merchant_id) => Boolean(byId.get(merchant_id)?.handleSupportEmail),
     getOrder: (ref) => ctx.orders.get(ref),
+    inProcess: (merchant_id) => byId.get(merchant_id)?.in_process === true,
+    returnPortal: (merchant_id) => byId.get(merchant_id)?.returns ?? null,
+    quote: (merchant_id, item) => byId.get(merchant_id)?.quote?.(item) ?? null,
+    onCarrierScan: (listener) => {
+      scanListeners.push(listener);
+    },
   };
 }
 

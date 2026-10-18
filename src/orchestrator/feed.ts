@@ -3,7 +3,7 @@
 // and merchant free text is never copied in (only typed protocol fields).
 import type { TaskId, Timestamp } from "../types.js";
 
-export type FeedActor = "agent" | "proxy" | "human" | "hotel_agent" | "transfer_support" | "host" | "airline" | "stripe";
+export type FeedActor = "agent" | "proxy" | "human" | "hotel_agent" | "transfer_support" | "host" | "airline" | "stripe" | "store" | "carrier";
 
 export type FeedKind =
   | "intent"
@@ -23,7 +23,11 @@ export type FeedKind =
   /** Demo pacing: a visible "waiting for a reply…" or "verifying in Stripe…" before the next step lands. */
   | "wait"
   /** Proxy's plan for a chain after the human's reply: who it will contact, how, in what order. */
-  | "plan";
+  | "plan"
+  /** A merchant's return form: opened, each field Proxy filled in, submitted. */
+  | "form_field"
+  | "return_label"
+  | "carrier_scan";
 
 export interface FeedEntry {
   /** Order of arrival, which is time order. */

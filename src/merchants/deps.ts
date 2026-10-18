@@ -4,6 +4,7 @@
 
 import type {
   BookingRequest,
+  CalendarDate,
   BookingResult,
   Cents,
   MerchantAgent,
@@ -64,6 +65,55 @@ export interface SupportReply {
   reply: MerchantEmail;
 }
 
+// ---- A merchant's return portal: a web form, then a label, then a carrier scan (Northwind Market) ----
+
+export type ReturnFieldId = "order_number" | "item" | "reason" | "resolution" | "method";
+
+export interface ReturnFormField {
+  id: ReturnFieldId;
+  label: string;
+  kind: "text" | "choice";
+  /** For a choice: the options. Proxy picks by `id`, never by the label's wording. */
+  options?: Array<{ id: string; label: string }>;
+}
+
+export interface ReturnForm {
+  title: string;
+  url: string;
+  fields: ReturnFormField[];
+}
+
+export interface ReturnLabel {
+  rma: string;
+  /** The order this return is for. */
+  ref: string;
+  carrier: string;
+  drop_off_by: CalendarDate;
+  drop_off_point: string;
+  /** What the label's QR code encodes. */
+  qr_payload: string;
+}
+
+export type ReturnSubmit = { ok: true; label: ReturnLabel } | { ok: false; errors: Partial<Record<ReturnFieldId, string>> };
+
+export type ReturnReceipt = { approved: true; refund_amount: Cents; note?: string } | { approved: false; reason: string };
+
+/** The simulated carrier tells the store a package was dropped off. Mocks only: nothing real is scanned. */
+export interface CarrierScan {
+  rma: string;
+  ref: string;
+  merchant_id: MerchantId;
+  event: string;
+  location: string;
+}
+
+export interface ReturnsPortal {
+  form(): ReturnForm;
+  submit(values: Partial<Record<ReturnFieldId, string>>, now: Timestamp): ReturnSubmit;
+  /** The store's side once the carrier scan arrives: it agrees the refund (the orchestrator issues and verifies it). */
+  receive(rma: string, now: Timestamp): ReturnReceipt;
+}
+
 export interface MerchantModule {
   info: MerchantInfo;
   book(request: BookInput): Promise<BookingResult>;
@@ -74,4 +124,13 @@ export interface MerchantModule {
   agent: MerchantAgent | null;
   /** Email support, when the merchant has a support desk and no agent. */
   handleSupportEmail: ((email: SupportEmail, now: Timestamp) => Promise<SupportReply>) | null;
+  /** A web return form, when the merchant takes returns that way. */
+  returns?: ReturnsPortal;
+  /**
+   * Simulated in this process only, on every server: its agent, emails, return form and carrier never go through
+   * Inkbox (it has no Inkbox identity), even when the rest of the server uses real Inkbox.
+   */
+  in_process?: boolean;
+  /** What the merchant would charge for an item, for a buying agent that orders again. */
+  quote?(item: string): Cents | null;
 }

@@ -20,7 +20,7 @@ import {
   TRANSFER_FREE_CANCEL_HOURS,
 } from "./rules.js";
 
-export type RuleKey = "airline" | "hotel" | "transfer" | "saas" | "store" | "domain" | "final_sale" | "message";
+export type RuleKey = "airline" | "hotel" | "transfer" | "saas" | "store" | "northwind" | "domain" | "final_sale" | "message";
 
 export type WindowAnchor = "booking" | "departure" | "check_in" | "pickup" | "registration";
 
@@ -136,6 +136,24 @@ export const RULES_TABLE: Readonly<Record<RuleKey, RuleEntry>> = {
     conditions: ["Item must be unused and returned with the label"],
     rule: "Free returns within 30 days; a 15% restocking fee until day 60",
     basis: "Our mock store.",
+  },
+  northwind: {
+    key: "northwind",
+    label: "Online order with a support agent and a return form",
+    route: "reversal_protocol",
+    window: { anchor: "booking", hours: STORE_RETURN_DAYS * HOURS_PER_DAY, direction: "after" },
+    reversible: true,
+    refundable: true,
+    cost_to_undo: { type: "none" },
+    after_window: {
+      route: "reversal_protocol",
+      window: { anchor: "booking", hours: STORE_LATE_RETURN_DAYS * HOURS_PER_DAY, direction: "after" },
+      cost_to_undo: { type: "percent", fraction: STORE_RESTOCKING_FEE },
+      note: "Late returns carry a restocking fee.",
+    },
+    conditions: ["Item must be unused and returned with the label", "A refund is agreed once the carrier scans the drop-off"],
+    rule: "Free returns within 30 days through the return form; a 15% restocking fee until day 60",
+    basis: "Our mock online store (Northwind Market). The agent offers store credit first; refunds go through the return form.",
   },
   domain: {
     key: "domain",

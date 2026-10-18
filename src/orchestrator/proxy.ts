@@ -357,6 +357,13 @@ export function createProxy(deps: ProxyDeps): Proxy {
       .sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category))
       .map((a) => `${a.category} ${money(a.amount)}`)
       .join(", ");
+    // An order has no dates: the redo is the right item.
+    if (needed.length === 1 && needed[0] === "store") {
+      const order = fresh.find((a) => a.category === "store")!;
+      note({ task_id: chain.task_id, chain_id: chain.chain_id, actor: "proxy", kind: "chain", text: `Proxy: redo checked against the intent. ${order.summary}, ${money(order.amount)}.`, data: { state: "redone" } });
+      await textHuman(chain.chain_id, "result", `Ordered the right one: ${order.summary}, ${money(order.amount)}. It matches what you asked for.`);
+      return;
+    }
     // A subscription has no dates: the redo is the right billing term.
     if (needed.length === 1 && needed[0] === "saas") {
       const plan = fresh.find((a) => a.category === "saas")!;
@@ -477,7 +484,7 @@ export function createProxy(deps: ProxyDeps): Proxy {
       // Capture may store the action before calling this hook, so "new" means new to the feed.
       if (!fedActions.has(saved.action_id)) {
         fedActions.add(saved.action_id);
-        const data = { action_id: saved.action_id, merchant: saved.merchant, category: saved.category, amount: saved.amount, start: saved.dates?.start ?? null, end: saved.dates?.end ?? null, ref: saved.ref };
+        const data = { action_id: saved.action_id, merchant: saved.merchant, category: saved.category, amount: saved.amount, start: saved.dates?.start ?? null, end: saved.dates?.end ?? null, ref: saved.ref, ...(saved.category === "store" ? { item: saved.summary } : {}) };
         if (saved.category === "message") {
           note({ task_id: saved.task_id, chain_id: null, actor: "agent", kind: "message", text: `Agent emailed ${merchantName(saved.merchant)}: arriving ${when(saved.dates)}.`, data });
         } else {
@@ -489,6 +496,8 @@ export function createProxy(deps: ProxyDeps): Proxy {
             text:
               saved.category === "saas"
                 ? `Agent ${redoing ? "re-subscribed" : "signed up"} with ${merchantName(saved.merchant)}: ${saved.summary}, ${money(saved.amount)}. Confirmation reached the task inbox.`
+                : saved.category === "store"
+                ? `Agent ${redoing ? "reordered" : "ordered"} from ${merchantName(saved.merchant)}: ${saved.summary}, ${money(saved.amount)}. Confirmation reached the task inbox.`
                 : `Agent ${redoing ? "rebooked" : "booked"} the ${saved.category} with ${merchantName(saved.merchant)} for ${when(saved.dates)}, ${money(saved.amount)}. Confirmation reached the task inbox.`,
             data,
           });

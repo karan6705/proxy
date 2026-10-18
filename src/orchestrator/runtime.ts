@@ -156,20 +156,32 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
       return { charge_id: result.charge_id };
     },
     async deliver(email) {
-      if (liveDeliver) return liveDeliver(email);
+      // An in-process merchant (Northwind Market) has no Inkbox identity: its emails go straight to capture.
+      if (liveDeliver && !(email.identity && merchants.inProcess(email.identity))) return liveDeliver(email);
       if (!capture) throw new Error("Capture is not ready for merchant email delivery");
       return deliverToCapture(capture)(email);
     },
   };
-  const merchants = createMerchants(merchantDeps, { addresses: mode });
+  // The simulated carrier scans a returned package PROXY_CARRIER_SCAN_MS after its label (default 4 s; at once in
+  // the cloud sandbox), and moves a simulated clock to the next day first, like a real drop-off.
+  const simulated = "advance" in clock ? (clock as Clock & { advance(ms: number): void }) : null;
+  const merchants = createMerchants(merchantDeps, {
+    addresses: mode,
+    carrier: {
+      scan_delay_ms: env.PROXY_CARRIER_SCAN_MS ? Number(env.PROXY_CARRIER_SCAN_MS) : cloud ? 0 : 4_000,
+      ...(simulated ? { advance: (ms: number) => simulated.advance(ms) } : {}),
+    },
+  });
 
   // Real Inkbox carries the protocol; without it (no key, or INKBOX_DRY_RUN=1) the in-process mock merchant
   // agent answers instead, so the whole negotiation still runs. PROXY_PROTOCOL_LOOPBACK=1 or 0 forces either.
   const realInkbox = !cloud && Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
-  const loopback = cloud || (env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !realInkbox);
+  const loopbackAll = cloud || (env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !realInkbox);
   let proxyRef: Proxy | null = null;
   const transport: ProtocolTransport = overrides.transport ?? {
     async send(merchant, to_identity, message, via = "default") {
+      // An in-process merchant's agent always answers here, even when the other merchants are on real Inkbox.
+      const loopback = loopbackAll || merchants.inProcess(merchant);
       if (!loopback && via === "email") {
         // Follow-up when the agent hasn't answered: the same JSON by email; the merchant bridge reads it.
         await inkbox.sendEmail({ to: `${to_identity}@inkboxmail.com`, subject: protocolSubject(message.type, message.negotiation_id), body: JSON.stringify(message) });
@@ -240,6 +252,9 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     onRedoRequested: demoOn && env.PROXY_DEMO_REDO !== "0" ? (chain) => demoRedo(chain) : undefined,
   });
   proxyRef = proxy;
+  merchants.onCarrierScan((scan) => {
+    proxy.undo.onCarrierScan(scan).catch((e) => console.error("[returns] carrier scan failed:", e instanceof Error ? e.message : e));
+  });
 
   /**
    * Demo only: what the buying agent does with the redo instruction. It rebooks each reversed booking for the
@@ -261,6 +276,13 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
           await merchants.book({ merchant_id: a.merchant, task_id: intent.task_id, task_email: intent.task_email, item, amount: Math.round(a.amount / 12), booked_at: clock.now() });
           continue;
         }
+        // A wrong item is ordered again as the item the task asked for, at the merchant's price.
+        if (a.category === "store") {
+          const wanted = (intent.constraints.must_haves ?? []).map((m) => /^\s*item\s*:\s*(.+?)\s*$/i.exec(m)?.[1]).find(Boolean);
+          if (!wanted) continue;
+          await merchants.book({ merchant_id: a.merchant, task_id: intent.task_id, task_email: intent.task_email, item: wanted, amount: merchants.quote(a.merchant, wanted) ?? a.amount, booked_at: clock.now() });
+          continue;
+        }
         if (!dates) continue;
         const from = a.dates?.start ? shortDate(a.dates.start) : null;
         const item = from ? a.summary.replace(new RegExp(`\\b${from}\\b`), shortDate(dates.start)) : a.summary;
@@ -277,6 +299,8 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     store: captureSide.store,
     hooks: captureSide.hooks,
     clock,
+    // Northwind Market's receipts come from its own domain (capture knows the other mock merchants already).
+    senderMerchants: { "northwindmarket.example": "northwind" },
     ...(anthropicKey ? { llm: createAnthropicExtractor({ apiKey: anthropicKey }) } : {}),
   });
   // Every message to the human goes on the alert channel and from Proxy's identity, whatever channel the
@@ -332,7 +356,8 @@ export async function startProtocolInbox(
   if (!real || loopback) return null;
   const rt = getRuntime();
   const handle = env.INKBOX_PROXY_HANDLE?.trim() || "proxy-agent";
-  const identities = rt.merchants.list().flatMap((m) => (m.agent_identity ? [m.agent_identity] : []));
+  // In-process merchants never send over Inkbox, so nothing from their handle is trusted.
+  const identities = rt.merchants.list().flatMap((m) => (m.agent_identity && !rt.merchants.inProcess(m.merchant_id) ? [m.agent_identity] : []));
   const last = await rt.proxy.undo.lastProcessedAt();
   const since = new Date((last ? Date.parse(last) : Date.now()) - 2 * 60_000).toISOString();
   const state = createRateLimitState();
