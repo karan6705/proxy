@@ -2,7 +2,7 @@
 // orchestrator. Each returns ok(...) or fail(...), so every error follows the error contract.
 import { createHash } from "node:crypto";
 import { expectedRefund } from "../orchestrator/refunds.js";
-import { humanDate, money } from "../orchestrator/copy.js";
+import { actionLabel, humanDate, money, payments } from "../orchestrator/copy.js";
 import { checkSelfUndo } from "../orchestrator/self-undo.js";
 import { runSelfServeRoute } from "../orchestrator/routes/self-serve.js";
 import type { Proxy } from "../orchestrator/proxy.js";
@@ -273,7 +273,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
           p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "agent", kind: "self_undo", text: `Agent undid its own ${action.category} with ${merchantName(p, action.merchant)} (free under the airline's 24-hour rule).`, data: { action_id: id, amount: action.amount } });
           const r = await runSelfServeRoute({ merchants, payments: p.deps.payments, store, clock }, chain, { ...action, state: "planned" });
           if (r.action.state === "verified") {
-            p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "stripe", kind: "stripe_refund", text: `Stripe: ${money(action.amount)} refunded on the ${p.deps.merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, data: { action_id: id, amount: action.amount, of: action.amount, refund_id: r.step.stripe_ref } });
+            p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "stripe", kind: "stripe_refund", text: `${payments()}: ${money(action.amount)} refunded on the ${p.deps.merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, data: { action_id: id, merchant: action.merchant, amount: action.amount, of: action.amount, refund_id: r.step.stripe_ref } });
           }
         }
         // The agent's undo covers only this action. If anything else in the chain is still open, the chain goes
@@ -368,11 +368,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
         .slice(-6)
         .map((e) => ({ at: e.at, actor: e.actor, text: e.text }));
       const labels: LiveChainMeta["labels"] = {};
-      for (const a of members) {
-        const d = a.dates ? `${humanDate(a.dates.start)}${a.dates.end ? ` to ${humanDate(a.dates.end)}` : ""}` : "";
-        const what = a.category === "message" ? "Email to" : `${a.category[0]!.toUpperCase()}${a.category.slice(1)} ·`;
-        labels[a.action_id] = [`${what} ${merchantName(p, a.merchant)}`, d].filter(Boolean).join(" · ");
-      }
+      for (const a of members) labels[a.action_id] = actionLabel(a, merchantName(p, a.merchant));
       const meta: LiveChainMeta = { server_now: now, windows, recovered, corrected, labels, protocol };
       return withMeta(ok({
         chain_id: chain.chain_id,

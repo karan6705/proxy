@@ -9,6 +9,7 @@ import { DEFAULT_PARAMS } from "./params.js";
 import { createRuntime, type Runtime, type RuntimeOverrides } from "./runtime.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
 import type { ProtocolTransport } from "./undo.js";
+import { toStageFeed } from "./stage.js";
 
 const START = "2026-10-25T10:00:00.000Z";
 const HUMAN = "+15550001111";
@@ -439,5 +440,19 @@ describe("QA workflows", () => {
     // Nothing that looks like a phone number or key.
     expect(JSON.stringify(feed)).not.toMatch(/\+1555|sk_test|Bearer/);
     void hotel;
+
+    // The same story as the stage page reads it.
+    const stage = toStageFeed(task_id, clock.now(), await rt.store.getIntent(task_id), feed, null, {});
+    const hotelTalk = stage.conversations.find((c) => c.with === "hotel")!;
+    expect(hotelTalk.name).toBe("Harborview Hotel agent");
+    expect(hotelTalk.entries.map((e) => `${e.from}:${e.kind}`)).toEqual([
+      "proxy:request", "merchant:counter", "proxy:push_back", "merchant:counter", "proxy:accept_counter", "merchant:accept", "stripe:stripe",
+    ]);
+    expect(hotelTalk.entries[1]!.text).toBe("We can offer store credit of $640.");
+    expect(stage.conversations.map((c) => c.with)).toEqual(["hotel", "transfer", "host"]);
+    expect(stage.human[0]).toMatchObject({ direction: "out", channel: "imessage" });
+    expect(stage.human.find((h) => h.direction === "in")?.text).toBe("UNDO ALL");
+    expect(stage.bookings.filter((b) => b.wrong).map((b) => b.category).sort()).toEqual(["flight", "message"]);
+    expect(stage.task).toMatchObject({ goal: "NYC trip for the Nov 13 conference, under $1,500", intended_dates: { start: "2026-11-13", end: "2026-11-16" } });
   });
 });
