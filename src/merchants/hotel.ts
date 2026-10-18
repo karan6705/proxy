@@ -70,6 +70,8 @@ interface Negotiation {
   ref: string;
   phase: Phase;
   offer: { kind: CounterKind; amount: Cents };
+  /** Every offer made in this negotiation; they stay open while Proxy checks with its human. */
+  offered: { kind: CounterKind; amount: Cents }[];
 }
 
 function render(order: MerchantOrder, address: string) {
@@ -169,7 +171,7 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
             return say(accept(message, now, order.amount), `Full refund of ${formatMoney(order.amount)} approved.`);
           }
           const offer = { kind: "store_credit" as const, amount: order.amount };
-          negotiations.set(message.negotiation_id, { ref: order.ref, phase: "credit_offered", offer });
+          negotiations.set(message.negotiation_id, { ref: order.ref, phase: "credit_offered", offer, offered: [offer] });
           return say(
             counter(message, now, offer.kind, offer.amount),
             `Our policy: this rate is non-refundable within ${HOTEL_POLICY_DAYS} days of check-in. We can offer ${formatMoney(offer.amount)} in store credit.`,
@@ -185,6 +187,7 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           if (negotiation.phase === "credit_offered") {
             negotiation.phase = "partial_offered";
             negotiation.offer = { kind: "partial_refund", amount: Math.round((order.amount * partialPct) / 100) };
+            negotiation.offered.push(negotiation.offer);
             return say(
               counter(message, now, negotiation.offer.kind, negotiation.offer.amount),
               `As a one-time goodwill exception we can refund ${partialPct}%, ${formatMoney(negotiation.offer.amount)}, to the original card.`,
@@ -203,6 +206,11 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           if (!negotiation || !order || negotiation.phase === "closed") {
             return deny(message, now, "No open negotiation.");
           }
+          // Proxy may accept any offer still open (its human picks); otherwise the standing offer.
+          const named = message.counter;
+          const chosen = named ? negotiation.offered.find((o) => o.kind === named.kind && o.amount === named.amount) : undefined;
+          if (named && !chosen) return deny(message, now, "That offer was never made.");
+          if (chosen) negotiation.offer = chosen;
           negotiation.phase = "closed";
           if (negotiation.offer.kind === "store_credit") {
             // Store credit moves no money, so the agreed refund is 0.

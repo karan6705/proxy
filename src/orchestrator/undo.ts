@@ -8,6 +8,7 @@
 // Money counts only after refundOnce says Stripe shows the agreed amount.
 import type {
   Action,
+  CounterKind,
   Cents,
   Chain,
   ChainId,
@@ -31,7 +32,7 @@ import type {
 import { expectedRefund, refundOnce } from "./refunds.js";
 import { humanDate, type AlreadyUndone } from "./copy.js";
 import { runSelfServeRoute } from "./routes/self-serve.js";
-import { chainSummary, correctionStep, deniedStep, merchantLine, merchantSaid, nextOption, noAnswerYet, howUndone, proxyLine, proxyWhy, pushBackKind, refundedStep, stillWorking, type ProxyLineContext } from "./copy.js";
+import { chainSummary, correctionStep, deniedStep, merchantLine, merchantSaid, nextOption, noAnswerYet, howUndone, offerOptionsText, optionLabel, proxyLine, proxyWhy, pushBackKind, refundedStep, stillWorking, type ProxyLineContext } from "./copy.js";
 import { MAX_ROUNDS } from "../logic/negotiate-step.js";
 import type { FeedActor, FeedEntry } from "./feed.js";
 import type { CarrierScan, ReturnsPortal } from "../merchants/deps.js";
@@ -85,7 +86,8 @@ export interface UndoExecutor {
   /** Starts the undo for a chain, or only for the actions numbered in `picks` (1-based, in chain order). */
   start(chain_id: ChainId, picks?: number[]): Promise<void>;
   /** The human answered a counteroffer question. */
-  decideCounter(chain_id: ChainId, negotiation_id: string, accept: boolean): Promise<void>;
+  /** The human's answer to Proxy's options: a number, KEEP PUSHING, or YES / NO (`accept`). */
+  decideCounter(chain_id: ChainId, negotiation_id: string, decision: boolean | { accept: boolean; choice?: number; push?: boolean }): Promise<void>;
   /** A merchant agent's answer arrived (A2A, email or loopback). */
   onProtocolMessage(message: MerchantProtocolMessage, realReceivedAt?: string): Promise<void>;
   /** Marks the chain's actions kept and closes it. */
@@ -102,6 +104,28 @@ const DATE_OF = (intent: Intent) => intent.constraints.dates;
 const money = (c: Cents) => `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: c % 100 ? 2 : 0 })}`;
 const DONE_STATES = new Set<Action["state"]>(["verified", "accepted", "kept", "failed", "denied", "no_agent"]);
 /** Negotiation states in which Proxy is waiting on the merchant agent. */
+/** One merchant offer, typed fields only. */
+type Offer = { kind: CounterKind; amount: Cents };
+
+/** Proxy's side of one negotiation. */
+interface Negotiation {
+  state: NegotiationState;
+  merchant: MerchantId;
+  chain_id: ChainId;
+  action: Action;
+  /** When the booking's own window closes (the plan's deadline), for the "time left" in Proxy's reasons. */
+  window?: string | null;
+  /** Every distinct offer the merchant made; the human chooses among them. */
+  offers: Offer[];
+  /** The open question to the human, while the negotiation is paused. */
+  asked?: { options: Offer[]; recommended: number | null; canPush: boolean; text: string };
+  /** The option the human chose. */
+  chosen?: Offer;
+  /** The next push back is the human's KEEP PUSHING. */
+  pushByHuman?: boolean;
+  remind?: ReturnType<typeof setTimeout>;
+}
+
 const WAITING = new Set<NegotiationState["state"]>(["requested", "countered", "pushed_back", "accepted"]);
 const IN_MARK = /\[in:([^|\]]+)\|[^\]]*\]$/;
 
@@ -134,7 +158,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       how: how ?? null,
     });
   /** `window` is when the booking's own window closes (the plan's deadline), for the "time left" in Proxy's reasons. */
-  const negotiations = new Map<string, { state: NegotiationState; merchant: MerchantId; chain_id: ChainId; action: Action; window?: string | null }>();
+  const negotiations = new Map<string, Negotiation>();
   const queues = new Map<string, Promise<void>>();
   const serial = <T>(key: string, fn: () => Promise<T>): Promise<T> => {
     const run = (queues.get(key) ?? Promise.resolve()).then(fn, fn);
@@ -246,6 +270,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
         actions.filter((a) => !untouched.includes(a)).map((a) => ({
           action: a,
           refunded: a.state === "verified" ? expectedRefund(chain, a) : 0,
+          credit: chain.plan.find((p) => p.action_id === a.action_id)?.credit_amount ?? 0,
           next: optionFor(a),
           still_open: keptByPlan.has(a.action_id) && a.state === "kept",
         })),
@@ -344,7 +369,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     };
     const request = requestFor(chain, intent, action, state);
     const updated = await setState(action, "requested");
-    negotiations.set(state.negotiation_id, { state, merchant: action.merchant, chain_id: chain.chain_id, action: updated, window: plan.deadline ?? null });
+    negotiations.set(state.negotiation_id, { state, merchant: action.merchant, chain_id: chain.chain_id, action: updated, window: plan.deadline ?? null, offers: [] });
     await step(chain, action, "reversal_protocol", "pending", "Asked the merchant agent to reverse the booking", { protocol_state: "requested", round: 1 });
     await deps.logEvent({ kind: "a2a", chain_id: chain.chain_id, action_id: action.action_id, outcome: "out:request_reversal" });
     await sendToAgent(state.negotiation_id, request);
@@ -373,10 +398,12 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       ref: neg.action.ref,
       noStoreCredit: intent?.preferences.no_store_credit ?? false,
       timeLeftMs: neg.window ? Date.parse(neg.window) - clock.nowMs() : null,
+      byHuman: message.type === "push_back" && neg.pushByHuman === true,
       ...(d ? { rebook: `${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""}` } : {}),
     };
     const line = proxyLine(message, ctx);
     const why = proxyWhy(message, ctx);
+    neg.pushByHuman = false;
     // Every message carries its line and its reason next to the typed fields; the merchant acts only on the typed ones.
     const carried = { ...message, message: line.replace(/^Proxy:\s*/, ""), why } as unknown as ProxyProtocolMessage;
     lastSent.set(negotiation_id, carried);
@@ -484,6 +511,79 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     }
   }
 
+  /** The offers in the order Proxy lists them: refunds (most money first), then store credit, then the rest. */
+  function sortedOffers(offers: Offer[]): Offer[] {
+    const rank = (o: Offer) => (o.kind === "partial_refund" ? 0 : o.kind === "store_credit" ? 1 : 2);
+    return [...offers].sort((a, b) => rank(a) - rank(b) || b.amount - a.amount);
+  }
+
+  /** The option the human's rules point to: the best refund at or above their minimum, else credit if allowed. */
+  function recommend(options: Offer[], prefs: Intent["preferences"], orderAmount: Cents, preferred: Offer | null): number | null {
+    const meets = (o: Offer) =>
+      (o.kind === "partial_refund" && o.amount * 100 >= prefs.min_partial_refund_pct * orderAmount) || (o.kind === "store_credit" && !prefs.no_store_credit);
+    if (preferred) {
+      const i = options.findIndex((o) => o.kind === preferred.kind && o.amount === preferred.amount);
+      if (i >= 0 && meets(options[i]!)) return i;
+    }
+    const i = options.findIndex(meets);
+    return i >= 0 ? i : null;
+  }
+
+  /**
+   * The negotiation is paused, not stalled: no merchant timer runs (the merchant keeps its offers open) and the round
+   * isn't used. The human gets every offer, numbered, with Proxy's recommendation; one reminder if they don't answer.
+   */
+  async function askOptions(chain: Chain, action: Action, neg: Negotiation, preferred: Offer | null) {
+    const intent = await store.getIntent(action.task_id);
+    const prefs = intent?.preferences ?? { no_store_credit: true, min_partial_refund_pct: 80, auto_undo: false };
+    const options = sortedOffers(neg.offers.length ? neg.offers : preferred ? [preferred] : []);
+    if (!options.length) {
+      await setState(action, "failed");
+      await step(chain, action, "reversal_protocol", "failed", "The merchant made no offer Proxy could put to the human");
+      await finishIfDone(chain.chain_id);
+      return;
+    }
+    const recommended = recommend(options, prefs, action.amount, preferred);
+    const canPush = neg.state.round + 2 <= MAX_ROUNDS;
+    const name = nameOf(action.merchant);
+    const text = offerOptionsText(name, options, action.amount, recommended, prefs, canPush);
+    neg.asked = { options, recommended, canPush, text };
+    stopWaiting(neg.state.negotiation_id);
+    await setState(action, "countered");
+    await step(chain, action, "reversal_protocol", "pending", "Asked the human to choose between the merchant's offers", { protocol_state: "human_decision", round: neg.state.round });
+    note(chain, "proxy", "options", `Proxy asked you to choose: ${options.map((o, i) => `${i + 1}) ${optionLabel(o, action.amount, name)}`).join("; ")}.`, {
+      merchant: action.merchant,
+      action_id: action.action_id,
+      options: JSON.stringify(options.map((o) => ({ ...o, label: optionLabel(o, action.amount, name) }))),
+      recommended: recommended === null ? null : recommended + 1,
+      can_push: canPush,
+    });
+    await deps.askHumanAboutCounter(chain.chain_id, neg.state.negotiation_id, text);
+    // Never accepts silently: one more text if the human hasn't answered.
+    clearTimeout(neg.remind);
+    const ms = deps.params.COUNTER_REMIND_MS ?? 30 * 60_000;
+    neg.remind = setTimeout(() => {
+      serial(neg.state.negotiation_id, async () => {
+        if (neg.state.state !== "human_decision" || !neg.asked) return;
+        await deps.askHumanAboutCounter(chain.chain_id, neg.state.negotiation_id, `Still waiting on your choice. ${neg.asked.text}`);
+      }).catch((e) => console.error("[undo] reminder failed:", e));
+    }, ms);
+    neg.remind.unref?.();
+  }
+
+  /** The human chose store credit: the action is resolved as kept, with the credit recorded, and no Stripe refund. */
+  async function keepAsCredit(chain: Chain, action: Action, amount: Cents) {
+    await deps.lockChain(chain.chain_id, async () => {
+      const c = (await store.getChain(chain.chain_id)) ?? chain;
+      const plan = c.plan.map((p) => (p.action_id === action.action_id ? { ...p, credit_amount: amount } : p));
+      await store.upsertChain({ ...c, plan });
+    });
+    await setState(action, "kept");
+    await step(chain, action, "reversal_protocol", "succeeded", `Kept as ${money(amount)} store credit; no Stripe refund`, { protocol_state: "failed" });
+    note(chain, "proxy", "credit", `${nameOf(action.merchant)} issued ${money(amount)} in store credit. No money moves to your card.`, { merchant: action.merchant, action_id: action.action_id, amount, of: action.amount });
+    await deps.textHuman(chain.chain_id, "progress", `${nameOf(action.merchant)} issued ${money(amount)} in store credit, as you chose. No money moves to your card.`);
+  }
+
   /** Proxy's plan, for the feed: who it will contact for each step, and how, in the order it will go. */
   function notePlan(chain: Chain, steps: PlanStep[], open: Action[]) {
     const items = steps.flatMap((p) => {
@@ -506,11 +606,16 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
    * A negotiation is bounded by its own timers (a follow-up, then giving up), so this never waits much past them.
    */
   async function untilSettled(action_id: string) {
-    const until = Date.now() + 2.5 * deps.params.MERCHANT_REPLY_TIMEOUT;
+    const until = Date.now() + 2.5 * deps.params.MERCHANT_REPLY_TIMEOUT + 2 * (deps.params.COUNTER_REMIND_MS ?? 0);
+    const humanUntil = Date.now() + 2 * (deps.params.COUNTER_REMIND_MS ?? 0);
     while (Date.now() < until) {
       const a = await store.getAction(action_id);
       if (!a || (DONE_STATES.has(a.state) && !(a.state === "accepted" && a.amount > 0))) return;
-      if ([...negotiations.values()].some((n) => n.state.action_id === action_id && n.state.state === "human_decision")) return;
+      // Waiting on the human's choice: the showcase waits for it too (up to two reminder periods), so the options
+      // text stays the newest thing on the phone until they answer.
+      if ([...negotiations.values()].some((n) => n.state.action_id === action_id && n.state.state === "human_decision")) {
+        if (Date.now() > humanUntil) return;
+      }
       await new Promise((r) => setTimeout(r, 200));
     }
   }
@@ -610,10 +715,13 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
 
   // --- protocol messages ---
 
-  async function applyNegotiation(neg: { state: NegotiationState; merchant: MerchantId; chain_id: ChainId; action: Action }, message: MerchantProtocolMessage) {
+  async function applyNegotiation(neg: Negotiation, message: MerchantProtocolMessage) {
     const { chain, intent } = await load(neg.chain_id);
     const action = (await store.getAction(neg.action.action_id)) ?? neg.action;
     stopWaiting(neg.state.negotiation_id);
+    // Every distinct offer stays on the table for the human's choice (typed fields only).
+    const offered = message.type === "counter" ? { kind: message.kind, amount: message.amount } : message.type === "accept" && message.refund_amount > 0 && message.refund_amount < action.amount && neg.state.state !== "accepted" ? { kind: "partial_refund" as const, amount: message.refund_amount } : null;
+    if (offered && Number.isInteger(offered.amount) && offered.amount > 0 && offered.amount <= action.amount && !neg.offers.some((o) => o.kind === offered.kind && o.amount === offered.amount)) neg.offers.push(offered);
     const out = logic.negotiate_step(neg.state, message, intent.preferences) as ReturnType<Logic["negotiate_step"]> & { ignored_text?: { field: string; text: string }[] };
     // Untrusted merchant text is counted, never acted on or stored.
     if (out.ignored_text?.length) await deps.logEvent({ kind: "a2a", chain_id: chain.chain_id, action_id: action.action_id, outcome: `ignored_text:${out.ignored_text.length}` });
@@ -631,10 +739,15 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       at: clock.now(),
     });
 
+    // Proxy never accepts an offer on its own: where negotiate_step would accept (the merchant's final position), or
+    // hands the decision over, the negotiation pauses and the human picks from every offer made.
+    if (out.outgoing?.type === "accept_counter") {
+      neg.state = { ...next, state: "human_decision", round: Math.max(1, next.round - 1) };
+      await askOptions(chain, action, neg, next.last_counter);
+      return;
+    }
     if (next.state === "human_decision" && out.outgoing?.type === "ask_human") {
-      const c = out.outgoing.counter;
-      await setState(action, "countered");
-      await deps.askHumanAboutCounter(chain.chain_id, next.negotiation_id, `${action.merchant} offered ${c.kind.replace("_", " ")} of ${money(c.amount)} on ${money(action.amount)}. Reply YES to accept or NO to decline.`);
+      await askOptions(chain, action, neg, null);
       return;
     }
     if (out.outgoing && out.outgoing.type !== "ask_human") {
@@ -655,8 +768,13 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       await deps.textHuman(chain.chain_id, "reminder", deniedStep(action, "The summary below has your options."));
     } else if (next.state === "failed") {
       const credit = message.type === "accept" && message.refund_amount === 0;
-      await setState(action, "failed");
-      if (credit) await step(chain, action, "reversal_protocol", "failed", "Store credit is not a refund; nothing was recovered in Stripe");
+      if (credit && neg.chosen?.kind === "store_credit") {
+        // The human chose the store credit: resolved, kept as credit; nothing moves in Stripe.
+        await keepAsCredit(chain, action, neg.chosen.amount);
+      } else {
+        await setState(action, "failed");
+        if (credit) await step(chain, action, "reversal_protocol", "failed", "Store credit is not a refund; nothing was recovered in Stripe");
+      }
     }
     await finishIfDone(chain.chain_id);
   }
@@ -733,24 +851,69 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       await finishIfDone(chain_id);
     },
 
-    async decideCounter(chain_id, negotiation_id, accept) {
+    async decideCounter(chain_id, negotiation_id, decision) {
       await serial(negotiation_id, async () => {
         const neg = negotiations.get(negotiation_id);
         if (!neg || neg.state.state !== "human_decision" || neg.chain_id !== chain_id) return;
         const { chain } = await load(chain_id);
         const action = (await store.getAction(neg.action.action_id)) ?? neg.action;
-        if (!accept) {
+        const asked = neg.asked;
+        const d = typeof decision === "boolean" ? { accept: decision } : decision;
+        const name = nameOf(action.merchant);
+
+        if (d.push) {
+          if (neg.state.round + 2 > MAX_ROUNDS) {
+            // No round left to push and still accept afterwards: say so, and ask again.
+            await deps.textHuman(chain_id, "reminder", `That's ${name}'s final offer: there are no rounds left to push.`);
+            await askOptions(chain, action, neg, asked && asked.recommended !== null ? asked.options[asked.recommended]! : null);
+            return;
+          }
+          clearTimeout(neg.remind);
+          const round = neg.state.round + 1;
+          neg.state = { ...neg.state, state: "pushed_back", round, push_backs_used: neg.state.push_backs_used + 1 };
+          neg.pushByHuman = true;
+          await setState(action, "countered");
+          await step(chain, action, "reversal_protocol", "pending", "The human asked Proxy to keep pushing", { protocol_state: "pushed_back", round });
+          await deps.textHuman(chain_id, "reminder", `Okay, pushing ${name}'s agent once more.`);
+          const msg: ProxyProtocolMessage = { type: "push_back", negotiation_id, chain_id, action_id: action.action_id, round, sent_at: clock.now(), reason: "Our customer asked us to push once more. Can you do better?" };
+          await deps.logEvent({ kind: "a2a", chain_id, action_id: action.action_id, outcome: "out:push_back" });
+          await sendToAgent(negotiation_id, msg);
+          return;
+        }
+
+        if (!d.accept && d.choice === undefined) {
+          clearTimeout(neg.remind);
           neg.state = { ...neg.state, state: "denied" };
           await setState(action, "denied");
           await step(chain, action, "reversal_protocol", "failed", "The human declined the merchant's offer", { protocol_state: "denied" });
           await finishIfDone(chain_id);
           return;
         }
+
+        // A number picks that option; a plain YES takes Proxy's recommendation (or the latest offer).
+        const options = asked?.options ?? (neg.state.last_counter ? [neg.state.last_counter] : []);
+        const index = d.choice !== undefined ? d.choice - 1 : (asked?.recommended ?? options.length - 1);
+        const chosen = options[index];
+        if (!chosen) {
+          await deps.textHuman(chain_id, "reminder", `I didn't get that: reply ${options.map((_, i) => i + 1).join(" or ")}.`);
+          await askOptions(chain, action, neg, asked && asked.recommended !== null ? asked.options[asked.recommended]! : null);
+          return;
+        }
+        clearTimeout(neg.remind);
         const round = Math.min(neg.state.round + 1, MAX_ROUNDS);
-        neg.state = { ...neg.state, state: "accepted", round };
+        neg.state = { ...neg.state, state: "accepted", round, last_counter: chosen };
+        neg.chosen = chosen;
         await setState(action, "accepted");
-        await step(chain, action, "reversal_protocol", "pending", "The human accepted the merchant's offer", { protocol_state: "accepted", round });
-        const msg: ProxyProtocolMessage = { type: "accept_counter", negotiation_id, chain_id, action_id: action.action_id, round, sent_at: clock.now() };
+        await step(chain, action, "reversal_protocol", "pending", `The human chose ${optionLabel(chosen, action.amount, name)}`, { protocol_state: "accepted", round });
+        note(chain, "human", "decision", `You chose: ${optionLabel(chosen, action.amount, name)}.`, { merchant: action.merchant, action_id: action.action_id, kind: chosen.kind, amount: chosen.amount, choice: index + 1 });
+        await deps.textHuman(
+          chain_id,
+          "reminder",
+          chosen.kind === "store_credit"
+            ? `Okay: ${money(chosen.amount)} store credit at ${name}. Accepting it with their agent; no money moves to your card.`
+            : `Okay: ${optionLabel(chosen, action.amount, name).replace(/^Refund/, "refund")}. Accepting it with ${name}'s agent; I'll text you when Stripe confirms.`,
+        );
+        const msg = { type: "accept_counter", negotiation_id, chain_id, action_id: action.action_id, round, sent_at: clock.now(), counter: chosen } as ProxyProtocolMessage;
         await deps.logEvent({ kind: "a2a", chain_id, action_id: action.action_id, outcome: "out:accept_counter" });
         await sendToAgent(negotiation_id, msg);
       });

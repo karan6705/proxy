@@ -183,6 +183,8 @@ export interface PlanStep {
   deadline: Timestamp | null;
   /** The refund agreed for this action (e.g. an accepted partial-refund counter). Absent means the full action amount. */
   refund_amount?: Cents;
+  /** Store credit the human chose instead of money back: the action is kept as credit, never counted as recovered cash. */
+  credit_amount?: Cents;
 }
 
 /** One row of the `steps` table: something the orchestrator did for one action. */
@@ -471,6 +473,8 @@ export interface DenyMsg extends ProtocolEnvelope {
 
 export interface AcceptCounterMsg extends ProtocolEnvelope {
   type: "accept_counter";
+  /** Which of the merchant's offers is accepted (the human may pick an earlier one). Absent: the standing offer. */
+  counter?: { kind: CounterKind; amount: Cents };
 }
 
 export interface PushBackMsg extends ProtocolEnvelope {
@@ -518,7 +522,18 @@ export type HumanReply =
   | { kind: "pick"; chain_id: ChainId; picks: number[]; received_at: Timestamp }
   | { kind: "keep"; chain_id: ChainId; received_at: Timestamp }
   /** Answer to ask_human during a negotiation. */
-  | { kind: "counter_decision"; chain_id: ChainId; negotiation_id: NegotiationId; accept: boolean; received_at: Timestamp }
+  | {
+      kind: "counter_decision";
+      chain_id: ChainId;
+      negotiation_id: NegotiationId;
+      /** YES / NO. With `choice` or `push` set, those win. */
+      accept: boolean;
+      /** The option number the human picked from Proxy's options text (1-based). */
+      choice?: number;
+      /** KEEP PUSHING: push back once more if a round is left. */
+      push?: boolean;
+      received_at: Timestamp;
+    }
   /** STOP: freezes all undo activity for this human, across every chain, until they reply again. */
   | { kind: "stop"; received_at: Timestamp }
   /**
@@ -599,6 +614,8 @@ export interface Params {
   DEMO_PACE_MS?: number;
   /** Demo only: undo one merchant at a time (the negotiation first) so each can be watched. On whenever DEMO_PACE_MS is. */
   DEMO_SEQUENTIAL?: boolean;
+  /** How long Proxy waits for the human's choice between a merchant's offers before texting once more, in real ms. */
+  COUNTER_REMIND_MS?: number;
   /** Simulated ms per real ms. */
   CLOCK_SCALE: number;
   /** The agent's session ends after this many ms without a tool call for the task, in ms. */

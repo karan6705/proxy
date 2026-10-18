@@ -27,7 +27,13 @@ export type FeedKind =
   /** A merchant's return form: opened, each field Proxy filled in, submitted. */
   | "form_field"
   | "return_label"
-  | "carrier_scan";
+  | "carrier_scan"
+  /** Proxy's options question to the human (every merchant offer, its recommendation). */
+  | "options"
+  /** The human's choice among those options. */
+  | "decision"
+  /** Store credit the human chose: resolved, no money back. */
+  | "credit";
 
 export interface FeedEntry {
   /** Order of arrival, which is time order. */

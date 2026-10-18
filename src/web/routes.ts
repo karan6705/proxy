@@ -86,8 +86,13 @@ export function createWebRoutes(deps: WebDeps): RouteHandler[] {
           return { status: 400, body: { ok: false, message: "invalid JSON" } };
         }
         // "1" or "2" answers Proxy's question about the intent ("You wrote 3/11 ..."); it has no chain yet.
+        // KEEP PUSHING answers an open offer question: Proxy pushes the merchant once more if a round is left.
+        if (body.kind === "keep_pushing") {
+          const result = await deps.channel!.handleInbound({ from: deps.humanNumber!, body: "KEEP PUSHING", via: "sms" });
+          return { status: 200, body: { ok: true, result } };
+        }
         if (body.kind === "choice") {
-          if (body.choice !== 1 && body.choice !== 2) return { status: 400, body: { ok: false, message: "choice must be 1 or 2" } };
+          if (!Number.isInteger(body.choice) || (body.choice as number) < 1 || (body.choice as number) > 9) return { status: 400, body: { ok: false, message: "choice must be 1 to 9" } };
           const result = await deps.channel!.handleInbound({ from: deps.humanNumber!, body: String(body.choice), via: "sms" });
           return { status: 200, body: { ok: true, result } };
         }
