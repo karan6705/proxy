@@ -1,6 +1,7 @@
 // The demo's human workflows end to end, on the real runtime: Dhwanil's logic and mock merchants, Sarah's
 // human channel, webhook routes and demo page, fake Stripe and a recording Inkbox. Numbers match the QA list.
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { logic } from "../logic/index.js";
 import { createMemoryStore } from "../db/index.js";
 import { createToolHandlers } from "../tools/handlers.js";
 import type { Action, DenyMsg, MerchantProtocolMessage, RouteRequest, SimulatedClock } from "../types.js";
@@ -320,6 +321,34 @@ describe("QA workflows", () => {
     expect(await refunded(flight)).toBeLessThan(41_200);
     expect(await actionState(host)).toBe("accepted");
     expect(texts().at(-1)?.body).toContain("Still open: Flight (change it with the airline for a $75 fee)");
+  });
+
+  it("10b. A step the plan keeps (route keep) stays open in the summary, with the fee fix still possible", async () => {
+    // What Dhwanil's plan_undo will return for the airline after its 24-hour window.
+    const original = logic.plan_undo;
+    const spy = vi.spyOn(logic, "plan_undo").mockImplementation((chain, actions, prefs, now) =>
+      original(chain, actions, prefs, now).map((p) => {
+        const a = actions.find((x) => x.action_id === p.action_id);
+        return a?.merchant === "airline" ? { ...p, route: "keep" as const, option: "keep" as const, cost: a.amount, deadline: null } : p;
+      }),
+    );
+    try {
+      await booked("host", "Arrival email", 0, "message", { start: "2026-11-03" });
+      rt.proxy.deps.sessions.end(task_id);
+      const flight = await booked("airline", "Flight SFO to JFK, Nov 3", 41_200, "flight", { start: "2026-11-03" });
+      clock.advance(3 * 24 * 3600_000);
+      await rt.proxy.alertChains(task_id);
+      const [chain] = await rt.store.listChains(task_id);
+      await imessageIn("UNDO ALL");
+      await settle(async () => (await chainState(chain!.chain_id)) === "partial");
+      expect(await actionState(flight)).toBe("kept");
+      expect(rt.fakePayments!.refunds.size).toBe(0);
+      expect(texts().at(-1)?.body).toBe(
+        "Partly done. $0 of $412 back, confirmed in Stripe. Host told the right dates. Still open: Flight (change it with the airline for a $75 fee). Reply KEEP to accept the rest.",
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("11. The same button twice never refunds twice", async () => {

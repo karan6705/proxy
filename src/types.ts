@@ -166,7 +166,9 @@ export type RouteKind =
   /** A message the agent sent: send a correction. */
   | "correction"
   /** Last resort: Stripe dispute with the evidence packet. */
-  | "stripe_dispute";
+  | "stripe_dispute"
+  /** Nothing is worth doing (fixing costs more than it recovers): accept the loss. Pairs with FixOption "keep". */
+  | "keep";
 
 /** The damage minimizer's choice for one action. */
 export type FixOption = "cancel" | "change" | "keep";

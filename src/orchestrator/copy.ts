@@ -113,6 +113,8 @@ export interface SummaryLine {
   refunded: Cents;
   /** For an action still open: what the human can do next, e.g. "dispute the $640 charge with your card". */
   next?: string;
+  /** Kept by the plan (fixing it costs more than it recovers), not by the human: still listed as open. */
+  still_open?: boolean;
 }
 
 /**
@@ -127,7 +129,7 @@ export function chainSummary(
 ): string {
   const back = lines.reduce((s, l) => s + (l.action.state === "verified" ? l.refunded : 0), 0);
   const total = lines.reduce((s, l) => s + l.action.amount, 0);
-  const open = lines.filter((l) => !["verified", "accepted", "kept"].includes(l.action.state));
+  const open = lines.filter((l) => l.still_open || !["verified", "accepted", "kept"].includes(l.action.state));
   const corrected = lines.filter((l) => l.action.state === "accepted" && l.action.amount === 0).map((l) => noun(l.action));
   const byAgent = already.length ? ` (${already.map((d) => `${noun(d.action).toLowerCase()} ${money(d.amount)} refunded by your agent`).join(", ")})` : "";
   const parts = [`${money(back)} of ${money(total)} back, confirmed in ${paymentsName}${byAgent}.`];
