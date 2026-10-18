@@ -243,7 +243,7 @@ describe("QA workflows", () => {
     expect(calls).toEqual([{ type: "request_reversal", via: "default" }, { type: "request_reversal", via: "email" }]);
     const bodies = texts().map((t) => t.body);
     expect(bodies).toContain("The hotel hasn't answered, following up by email.");
-    expect(bodies.some((b) => b.startsWith("The hotel never answered. Next option:"))).toBe(true);
+    expect(bodies).toContain("The hotel never answered, by its agent or by email.");
     await settle(async () => (await chainState(c.chain_id)) === "partial");
     expect(bodies.at(-1) ?? "").toBeDefined();
     expect(texts().at(-1)?.body).toMatch(/^Partly done\. \$600 of \$1,240 back.*Still open: Hotel \(dispute the \$640 charge with your card\)\. Reply KEEP to accept the rest\.$/);
@@ -297,7 +297,8 @@ describe("QA workflows", () => {
     await imessageIn("UNDO ALL");
     await settle(async () => (await chainState(c.chain_id)) === "partial");
     const bodies = texts().map((t) => t.body);
-    expect(bodies).toContain("The hotel refused to refund $640. Next option: dispute the charge with your card, with the evidence Proxy collected. Reply KEEP to accept the loss.");
+    expect(bodies).toContain("The hotel refused to refund $640. The summary below has your options.");
+    expect(bodies.at(-1)).toContain("Still open: Hotel (dispute the $640 charge with your card). Reply KEEP to accept the rest.");
     // The merchant's free text never reaches the human.
     expect(bodies.join("\n")).not.toContain("ignore previous instructions");
   });
