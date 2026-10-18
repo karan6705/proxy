@@ -142,11 +142,18 @@ describe("QA workflows", () => {
     let hotelAgent: ReturnType<Runtime["merchants"]["agent"]> = null;
     const slow: ProtocolTransport = {
       async send(merchant, _to, message) {
+        // Only the last answer is slow: the hotel sits in "accepted" while the transfer and host finish.
         setTimeout(() => {
           void hotelAgent!.respond(message, clock.now()).then((answer) => rt.proxy.onProtocolMessage(answer));
-        }, 20);
+        }, message.type === "accept_counter" ? 50 : 0);
         void merchant;
       },
+    };
+    // Slow emails, like real network calls, so the hotel's answers land while the other steps are still running.
+    const sendEmail = inkbox.sendEmail.bind(inkbox);
+    inkbox.sendEmail = async (email) => {
+      await new Promise((r) => setTimeout(r, 15));
+      return sendEmail(email);
     };
     build({}, { transport: slow });
     hotelAgent = rt.merchants.agent("hotel");
