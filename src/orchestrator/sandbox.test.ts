@@ -94,4 +94,21 @@ describe("try_proxy_demo sandbox", () => {
     expect(feed.find((e) => e.kind === "text_out")?.text).toMatch(/^Your agent signed up for the annual plan, not monthly\./);
     expect(feed.filter((e) => e.kind === "redo").map((e) => [e.data.category, e.data.amount])).toEqual([["saas", 9_900]]);
   });
+
+  it("one merchant at a time in the demo: Proxy's plan first, the hotel negotiation finished before the transfer is emailed", async () => {
+    const sandboxes = createSandboxes();
+    const r = await sandboxes.run("show_trip", "trip");
+    expect(r.finished).toBe(true);
+    const feed = sandboxes.forTask("show_trip")!.feed.list("show_trip");
+    const plan = feed.find((e) => e.kind === "plan")!;
+    expect(JSON.parse(String(plan.data.steps)).map((s: { route: string }) => s.route)).toEqual(["reversal_protocol", "email_support", "correction"]);
+    const firstProtocol = feed.findIndex((e) => e.kind === "protocol_out");
+    const hotelDone = feed.findIndex((e) => e.kind === "stripe_refund" && e.data.merchant === "hotel");
+    const transferAsked = feed.findIndex((e) => e.kind === "email_out" && e.data.merchant === "transfer");
+    const hostAsked = feed.findIndex((e) => e.kind === "email_out" && e.data.merchant === "host");
+    expect(feed.indexOf(plan)).toBeLessThan(firstProtocol);
+    expect(hotelDone).toBeLessThan(transferAsked);
+    expect(transferAsked).toBeLessThan(hostAsked);
+    expect(r.summary).toContain("$1,144 of $1,240 is back");
+  });
 });
