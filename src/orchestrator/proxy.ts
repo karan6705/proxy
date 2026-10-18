@@ -357,6 +357,13 @@ export function createProxy(deps: ProxyDeps): Proxy {
       .sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category))
       .map((a) => `${a.category} ${money(a.amount)}`)
       .join(", ");
+    // A subscription has no dates: the redo is the right billing term.
+    if (needed.length === 1 && needed[0] === "saas") {
+      const plan = fresh.find((a) => a.category === "saas")!;
+      note({ task_id: chain.task_id, chain_id: chain.chain_id, actor: "proxy", kind: "chain", text: `Proxy: redo checked against the intent. ${plan.summary}, ${money(plan.amount)}.`, data: { state: "redone" } });
+      await textHuman(chain.chain_id, "result", `Re-subscribed: ${plan.summary}, ${money(plan.amount)}. It matches what you asked for.`);
+      return;
+    }
     note({ task_id: chain.task_id, chain_id: chain.chain_id, actor: "proxy", kind: "chain", text: `Proxy: redo checked against the intent. ${list}, all for ${d ? humanDate(d.start) : "the right dates"}.`, data: { state: "redone" } });
     await textHuman(chain.chain_id, "result", `Rebooked for ${d ? `${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""}` : "the right dates"}: ${list}. Each confirmation matches what you asked for.`);
   }
@@ -479,7 +486,10 @@ export function createProxy(deps: ProxyDeps): Proxy {
             chain_id: redoing?.chain_id ?? null,
             actor: "agent",
             kind: redoing ? "redo" : "booking",
-            text: `Agent ${redoing ? "rebooked" : "booked"} the ${saved.category} with ${merchantName(saved.merchant)} for ${when(saved.dates)}, ${money(saved.amount)}. Confirmation reached the task inbox.`,
+            text:
+              saved.category === "saas"
+                ? `Agent ${redoing ? "re-subscribed" : "signed up"} with ${merchantName(saved.merchant)}: ${saved.summary}, ${money(saved.amount)}. Confirmation reached the task inbox.`
+                : `Agent ${redoing ? "rebooked" : "booked"} the ${saved.category} with ${merchantName(saved.merchant)} for ${when(saved.dates)}, ${money(saved.amount)}. Confirmation reached the task inbox.`,
             data,
           });
         }

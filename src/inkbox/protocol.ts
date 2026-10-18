@@ -42,6 +42,16 @@ function envelope(o: Record<string, unknown>, fallbackNow: Timestamp) {
 
 /** A merchant's answer: accept, counter or deny. Null for anything else. */
 export function parseMerchantMessage(raw: unknown, now: Timestamp = new Date().toISOString()): MerchantProtocolMessage | null {
+  const parsed = parseTypedMerchantMessage(raw, now);
+  const o = json(raw);
+  // The merchant's own one-line `message` rides along for display only (the show page). negotiate_step never acts
+  // on it; it reads the typed fields and reports anything else as ignored text.
+  if (!parsed || !isObj(o) || typeof o.message !== "string") return parsed;
+  const line = clean(o.message).replace(/\s+/g, " ").trim().slice(0, 200);
+  return line ? ({ ...parsed, message: line } as unknown as MerchantProtocolMessage) : parsed;
+}
+
+function parseTypedMerchantMessage(raw: unknown, now: Timestamp): MerchantProtocolMessage | null {
   const o = json(raw);
   if (!isObj(o)) return null;
   const env = envelope(o, now);

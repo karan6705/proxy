@@ -195,6 +195,7 @@ export async function runScriptedDemo(options: ScriptedDemoOptions): Promise<Scr
         must_haves: ["Conference on Nov 13"],
       },
       preferences: DEMO_PREFERENCES,
+      original_request: "Book my NYC trip for the Nov 13 conference, under $1,500",
       idempotency_key: "demo:nyc-conference:2026-11-13",
     });
     assertOk(result, "log_intent");

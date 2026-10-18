@@ -100,7 +100,7 @@ describe("UNDO ALL after the agent has left", () => {
     expect("_meta" in view && view._meta.recovered[hotel.action_id]).toBe(54_400);
     expect("_meta" in view && view._meta.recovered[flight.action_id]).toBe(41_200);
     const sent = store.events().map((e) => e.outcome).filter((o) => o?.startsWith("out:"));
-    expect(sent).toEqual(["out:request_reversal", "out:push_back", "out:accept_counter"]);
+    expect(sent).toEqual(["out:request_reversal", "out:push_back", "out:push_back", "out:accept_counter"]);
   });
 
   it("the demo order: the agent self-undoes the flight, then UNDO ALL handles the rest of the chain", async () => {

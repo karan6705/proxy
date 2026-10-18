@@ -1,7 +1,8 @@
 // Mock hotel with its own agent. The rate is non-refundable, so the only way out is a goodwill refund negotiated
-// over the Reversal Protocol. The default behavior is the demo: counter with store credit, then, once Proxy pushes
-// back, counter with an 85% partial refund, and refund that on accept_counter. At most three rounds are ever needed.
-// The agent only ever replies with typed protocol messages, never free text.
+// over the Reversal Protocol. The default behavior is the demo: counter with store credit (citing the policy), then,
+// once Proxy pushes back, counter with an 85% partial refund; if Proxy asks again, hold at 85% as the final offer,
+// and refund that on accept_counter. At most four of Proxy's rounds are ever needed. The decision is always in the
+// typed fields; the persona's one-line `message` next to them is for people reading the exchange, never for Proxy.
 
 import { MS_PER_HOUR, dateToMs, timestampToMs } from "../logic/dates.js";
 import { HOTEL_NEGOTIATION_CUTOFF_HOURS } from "../logic/rules.js";
@@ -43,6 +44,8 @@ export const HOTEL_INFO: MerchantInfo = {
 
 const ADDRESS = { street: "12 Pier Street", locality: "New York", region: "NY", postalCode: "10004", telephone: "+1-212-555-0142" };
 const ROOM = "Standard King Room";
+/** The hotel's stated policy window, as its agent quotes it. */
+const HOTEL_POLICY_DAYS = 7;
 
 /**
  * credit_then_partial: store credit first, then a partial refund after one push back (the demo).
@@ -169,7 +172,7 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           negotiations.set(message.negotiation_id, { ref: order.ref, phase: "credit_offered", offer });
           return say(
             counter(message, now, offer.kind, offer.amount),
-            `Rate is non-refundable. We can offer store credit of ${formatMoney(offer.amount)}.`,
+            `Our policy: this rate is non-refundable within ${HOTEL_POLICY_DAYS} days of check-in. We can offer ${formatMoney(offer.amount)} in store credit.`,
           );
         }
 
@@ -182,11 +185,15 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           if (negotiation.phase === "credit_offered") {
             negotiation.phase = "partial_offered";
             negotiation.offer = { kind: "partial_refund", amount: Math.round((order.amount * partialPct) / 100) };
+            return say(
+              counter(message, now, negotiation.offer.kind, negotiation.offer.amount),
+              `As a one-time goodwill exception we can refund ${partialPct}%, ${formatMoney(negotiation.offer.amount)}, to the original card.`,
+            );
           }
-          // Asked again after the partial offer: the same offer stands.
+          // Asked again after the partial offer: the same offer stands, as the final one.
           return say(
             counter(message, now, negotiation.offer.kind, negotiation.offer.amount),
-            `As a one-time goodwill exception we can refund ${partialPct}%, ${formatMoney(negotiation.offer.amount)}.`,
+            `${partialPct}% (${formatMoney(negotiation.offer.amount)}) is our final offer.`,
           );
         }
 
@@ -204,7 +211,7 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           }
           // The hotel agrees to the partial refund. The orchestrator issues and verifies it through Payments.
           agreeRefund(ctx, order, negotiation.offer.amount);
-          return say(accept(message, now, negotiation.offer.amount), `Agreed: refunding ${formatMoney(negotiation.offer.amount)}.`);
+          return say(accept(message, now, negotiation.offer.amount), `Confirmed: refunding ${formatMoney(negotiation.offer.amount)} to the original card.`);
         }
 
         case "ask_human": {
