@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CAVEAT, isComprehensionTask, layer2ByTask, renderLatestResults, renderResults, type Episode, type Layer1Results, type Layer2Results } from "../../evals/report.js";
+import { CAVEAT, isComprehensionTask, layer2ByTask, renderLatestResults, renderPitchNumbers, renderResults, type Episode, type Layer1Results, type Layer2Results } from "../../evals/report.js";
 
 const usage = { input_tokens: 10, output_tokens: 5 };
 const episode = (task_id: string, arm: "naive" | "proxy", mistakes: number, extra: Partial<Episode> = {}): Episode => ({
@@ -98,5 +98,52 @@ describe("RESULTS.md", () => {
     expect(out).toContain("layer1-2026-10-18T10-00-00-000Z.json");
     expect(out).not.toContain("layer1-2026-10-17T10-00-00-000Z.json");
     expect(out).toContain("No Layer 2 results yet");
+  });
+});
+
+describe("the intent check rerun and the pitch numbers", () => {
+  const intentRun: Layer2Results = {
+    run_id: "intentcheck-2026-10-18T02-37-52-316Z",
+    model: "claude-haiku-4-5-20251001",
+    summary: { trials_per_task_arm: 3, naive: { episodes: 3, episodes_with_real_mistakes: 3, self_detected: 0, false_done_claims: 3, tokens: 1 }, proxy: { episodes: 3, episodes_with_real_mistakes: 3, mistakes: 9, caught: 0, false_alarms: 0, refund_agreed: 0, tokens: 1 } },
+    episodes: [
+      episode("C1", "naive", 3, { false_done_claim: true }),
+      ...[1, 2, 3].map(() => episode("C1", "proxy", 3, { proxy: { caught: 0, false_alarms: [], agreed_refund_total: 0, intent_check: { status: "agrees", original_request_passed: true } } })),
+    ],
+  };
+  const md = renderResults({ data: layer1, file: "layer1-x.json" }, { data: layer2, file: "layer2-y.json" }, { data: intentRun, file: "intentcheck-z.json" });
+
+  it("reports the rerun count as it came out, with the reason and how it was measured", () => {
+    expect(md).toContain("## Layer 2 rerun: the intent check from the human's own words");
+    expect(md).toContain("**Result: Proxy caught 0 / 9 of the real mistakes with the human's words passed in**");
+    expect(md).toContain("the check disagreed in 0 of 3 episodes");
+    expect(md).toContain("the human's answer is not measured");
+    expect(md).toContain("(results/intentcheck-z.json)");
+    expect(md).not.toMatch(/\d\s?%/);
+  });
+
+  it("leaves the section out when there is no rerun", () => {
+    expect(renderResults({ data: layer1, file: "a.json" }, { data: layer2, file: "b.json" })).not.toContain("Layer 2 rerun");
+  });
+
+  it("the pitch numbers trace each number to a file and carry the caveats and the do-not-say list", () => {
+    const pitch = renderPitchNumbers({ data: layer1, file: "layer1-x.json" }, { data: layer2, file: "layer2-y.json" }, { data: intentRun, file: "intentcheck-z.json" });
+    expect(pitch).toContain("`evals/results/layer1-x.json`");
+    expect(pitch).toContain("`evals/results/layer2-y.json`");
+    expect(pitch).toContain("`evals/results/intentcheck-z.json`");
+    expect(pitch).toContain("Proxy caught 39 of 44 real mistakes; 5 are documented known misses");
+    expect(pitch).toContain("never quote it as how often agents miss things");
+    expect(pitch).toContain("## Do not say");
+    expect(pitch).toContain("4.8 to 9.3 times");
+    expect(pitch).toContain("UCP Checker");
+    expect(pitch).toContain("did not catch those two misreadings: Proxy caught 0 / 9");
+    expect(pitch).not.toMatch(/\d\s?%/);
+  });
+
+  it("the pitch numbers say nothing about a layer that has no results", () => {
+    const pitch = renderPitchNumbers(null, null);
+    expect(pitch).not.toContain("evals/results/layer");
+    expect(pitch).not.toContain("evals/results/intentcheck");
+    expect(pitch).toContain("## Do not say");
   });
 });

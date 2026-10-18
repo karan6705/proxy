@@ -170,6 +170,11 @@ Pills: show the merchant (Hotel, Transfer, Host) and a plain icon or word for th
 
 **What I changed on my side:** the push-back reasons (mine, in `negotiate_step`) now read "The customer does not accept store credit. Please refund the original payment." and "That refund is below the minimum the customer accepts. Please improve the offer." And `narrateExchange(..., { style: "speakers", merchant: "Hotel" })` prints `Proxy: ...` and `Hotel: ...` instead of arrows. Use `style: "speakers"` in `scripts/hotel-agent.ts` for the video; arrows stay the default.
 
+### From Dhwanil: the intent check, measured (2026-10-18)
+I reran only the two misread tasks (C1 stale calendar, C2 "3/11") with the agent passing the human's words as `original_request`: **Proxy caught 0 of 18** (3 trials per arm; `evals/results/intentcheck-2026-10-18T02-37-52-316Z.json`, written up in `evals/RESULTS.md`). The agent passed the words in 6 of 6 runs; `checkIntent` said "agrees" in 6 of 6 because it had nothing it could read: C1's words contain no date ("it's on my calendar"), and C2 writes "3/11", which the parser does not read. The same check does catch "November 13" against a logged Nov 3 (`tests/evals/live-intent.test.ts`), so it works when the words are readable. The human's answer is simulated as "their own words", and `checkIntent` ran in process, not over the server.
+Two suggestions, both in `src/orchestrator/intent-words.ts` (yours): (1) a day/month slash date like `3/11` is ambiguous (3 November or March 11), so instead of ignoring it, treat it as "disagrees" whenever the agent's logged date is a reading of it and the other reading is a real date, and ask the human; (2) a request with no date cannot be checked, so there is nothing to catch there, and that stays a documented limit.
+Also done: `plan_undo` keep steps now use `route: "keep"`, and the airline after 24 hours is kept (your test 10b passes). `evals/PITCH_NUMBERS.md` is generated from the raw logs and lists what can be said with its caveat and what not to say. `SUBMISSION.md`'s claims table has new rows for the eval claims, including the ones we cannot make.
+
 ## Sarah
 
 ### From Dhwanil: the `/web` feed wording
