@@ -272,15 +272,20 @@ describe("the hotel agent's persona lines", () => {
     const request = requestReversal(ref, "hotel", 64000);
     const first = await agent.respond(request, DEMO_NOW);
     expect(first).toMatchObject({ type: "counter", kind: "store_credit", amount: 64000 });
-    expect(lineOf(first)).toBe("Rate is non-refundable. We can offer store credit of $640.00.");
+    expect(lineOf(first)).toBe("Our policy: this rate is non-refundable within 7 days of check-in. We can offer $640.00 in store credit.");
 
     const second = await agent.respond({ ...ids, round: 2, type: "push_back", reason: "no store credit" }, DEMO_NOW);
     expect(second).toMatchObject({ type: "counter", kind: "partial_refund", amount: 54400 });
-    expect(lineOf(second)).toBe("As a one-time goodwill exception we can refund 85%, $544.00.");
+    expect(lineOf(second)).toBe("As a one-time goodwill exception we can refund 85%, $544.00, to the original card.");
 
-    const third = await agent.respond({ ...ids, round: 3, type: "accept_counter" }, DEMO_NOW);
-    expect(third).toMatchObject({ type: "accept", refund_amount: 54400 });
-    expect(lineOf(third)).toBe("Agreed: refunding $544.00.");
+    // Asked again for the full amount, it holds at 85%: the same typed counter, as its final offer.
+    const third = await agent.respond({ ...ids, round: 3, type: "push_back", reason: "full amount, please" }, DEMO_NOW);
+    expect(third).toMatchObject({ type: "counter", kind: "partial_refund", amount: 54400 });
+    expect(lineOf(third)).toBe("85% ($544.00) is our final offer.");
+
+    const fourth = await agent.respond({ ...ids, round: 4, type: "accept_counter" }, DEMO_NOW);
+    expect(fourth).toMatchObject({ type: "accept", refund_amount: 54400 });
+    expect(lineOf(fourth)).toBe("Confirmed: refunding $544.00 to the original card.");
   });
 
   it("says so when it approves a full refund", async () => {

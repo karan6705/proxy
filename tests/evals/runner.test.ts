@@ -36,16 +36,18 @@ describe("the proxy arm", () => {
     }
   });
 
-  it("S01: runs the demo end to end, with the hotel negotiated in three rounds", async () => {
+  it("S01: runs the demo end to end, with the hotel negotiated in four rounds", async () => {
     const result = await runScenario(scenario("S01"), "proxy");
     expect(result.alert_sent).toBe(true);
     expect(result.chains).toEqual([{ actions: ["flight", "transfer", "host_email", "hotel"], root: "flight", money_at_risk: 124000 }]);
     expect(result.outcomes).toEqual({ flight: "refund_agreed", transfer: "refund_agreed", host_email: "corrected", hotel: "refund_agreed" });
     expect(result.agreed_refund_total).toBe(41200 + 54400 + 18800);
-    expect(result.negotiation_rounds).toEqual({ hotel: 3 });
+    expect(result.negotiation_rounds).toEqual({ hotel: 4 });
     const log = result.transcript.join("\n");
     expect(log).toContain("hotel: Proxy request_reversal -> merchant counter store_credit 64000");
     expect(log).toContain("hotel: Proxy push_back -> merchant counter partial_refund 54400");
+    // Proxy asks once for the full amount; the hotel holds at 85%.
+    expect(log.match(/hotel: Proxy push_back -> merchant counter partial_refund 54400/g)).toHaveLength(2);
     expect(log).toContain("hotel: Proxy accept_counter -> merchant accept 54400");
   });
 

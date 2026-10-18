@@ -197,6 +197,11 @@ Also done: `plan_undo` keep steps now use `route: "keep"`, and the airline after
 
 ## Sarah
 
+### From Karan's agent: /web/show, the presentation page (2026-10-17, while you were offline)
+- `src/inkbox/protocol.ts`: `parseMerchantMessage` keeps the merchant's one-line `message` (cleaned, one line, at most 200 characters) next to the typed fields, so the show page can display the hotel's own words on a live run. It is display only: `negotiate_step` never reads it (it is reported as ignored text), and it is never texted to the human. Test in `src/inkbox/protocol.test.ts`.
+- `src/capture/capture.ts`: the sender map now knows Acme Cloud (`acmecloud.example` -> `saas`, and `saas` as a category fallback), so the plan story's receipt is the `saas` merchant and its undo emails billing instead of falling back to a card dispute.
+- New in your folder: `src/web/show.ts` (the page) and `src/web/show.test.ts`; `src/web/routes.ts` serves `GET /web/show` and `POST /web/reply` also takes `{kind: "choice", choice: 1 | 2}` (it answers Proxy's intent question exactly like a "1" or "2" text). `/web/stage` is unchanged and stays the fallback.
+
 ### From Dhwanil: the `/web` feed wording
 `src/web/page.ts` renders the event feed as `kind` plus `tool_name: outcome`. The suggested plain wording for each event is in the table under Karan ("review of the demo feed's agent-to-agent lines"). If you own the page text, a small lookup from `(kind, outcome prefix)` to a sentence is all it needs; the events do not change.
 
@@ -470,6 +475,10 @@ Found in Karan's live run on port 3000, read from `/web/state`:
 - The phone alert now uses your multi-line layout (the mistake, what the agent already undid, a blank line, the numbers, the window, a blank line, the choice). The tests no longer pin your "Got it" acknowledgement's wording, beyond `/^Got it/` in the rehearsal and test 1's check that it arrives before any progress text, so you can switch it to two lines.
 
 ## Dhwanil
+
+### From Karan's agent: changes in your folders while you were offline (2026-10-17)
+- **The richer hotel negotiation (Karan's ask):** `src/logic/negotiate-step.ts` now allows 2 push backs and 4 rounds (`MAX_ROUNDS = 4`, `MAX_PUSH_BACKS = 2`). The new rule: an offer that meets the human's minimum but is below the full price gets one push back for the full amount (the anchor), only while a round is left to accept in; once anchored (the last push back was on an acceptable partial refund), it accepts. An acceptable offer after the limit still goes to the human, and only typed fields are read. `src/merchants/hotel.ts`: the store-credit counter cites the 7-day policy, a second push back gets the same 85% as "our final offer", and the persona lines are reworded. The demo outcome is unchanged ($544 of $640; $1,144 of $1,240). Tests updated to the new sequence: `tests/logic/negotiate-step.test.ts`, `tests/merchants/hotel.test.ts`, `tests/merchants/narrate.test.ts`, `tests/evals/runner.test.ts` (S01 now uses 4 rounds; rounds are only a raw field, no score changes).
+- `evals/scoreboard.ts`: a light theme for `/scoreboard` to match the new `/web/show` page. Only the colour tokens, font stack and panel shadow changed; the rendered body (every number and caveat) is byte-for-byte the same, checked against the previous snapshot. `src/scoreboard-snapshot.ts` was regenerated with `npm run scoreboard:snapshot`.
 
 ### From Karan: numeric dates in the intent check are on main (2026-10-17)
 - `checkIntent` (`src/orchestrator/intent-words.ts`) now reads `M/D`, `D/M`, `M/D/YYYY` (and two-digit years), ISO, "the 13th" (the agent's month, or the current one), "13th of November" and "Nov 13", including ranges.

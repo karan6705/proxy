@@ -1,12 +1,14 @@
 // negotiate_step(state, message, preferences): one pure decision in the Reversal Protocol.
 //
 // Given the merchant's accept, counter or deny, return the next NegotiationState and, if Proxy has to answer, its
-// reply (accept_counter, push_back or ask_human). The orchestrator owns transport, timers, the 3-round limit and the
-// hard deadline. This function never exceeds 3 rounds on its own and pushes back at most once.
+// reply (accept_counter, push_back or ask_human). The orchestrator owns transport, timers and the hard deadline.
+// This function never exceeds MAX_ROUNDS (4) on its own and pushes back at most twice.
 //
 // Rules (preferences are the human's):
-//   store-credit counter     pushed back when no_store_credit is set (once), then the human is asked
-//   partial-refund counter   accepted at or above min_partial_refund_pct of the price, otherwise pushed back (once)
+//   store-credit counter     pushed back when no_store_credit is set, then the human is asked
+//   partial-refund counter   below min_partial_refund_pct of the price: pushed back. At or above it but short of the
+//                            full price: one push back for the full amount (the anchor) while a round is left to
+//                            accept afterwards; if the merchant holds, accepted. Otherwise accepted.
 //   exchange counter         the human decides
 //   accept                   a refund amount is only real money if it is > 0 and not more than the price
 //   deny                     the protocol ends; the orchestrator moves to the next route
@@ -29,8 +31,9 @@ import type {
 } from "../types.js";
 import { timestampToMs } from "./dates.js";
 
-export const MAX_ROUNDS = 3;
-export const MAX_PUSH_BACKS = 1;
+// Request, push back on store credit, anchor for the full amount, accept: four of Proxy's messages at most.
+export const MAX_ROUNDS = 4;
+export const MAX_PUSH_BACKS = 2;
 
 export interface IgnoredText {
   /** Where it came from: "reason" on a deny, or the name of an unexpected field. */
@@ -87,7 +90,7 @@ export function negotiateStep(
   const unchanged = (): NegotiateStepOutcome => ({ next_state: state, ignored_text });
   const next = (patch: Partial<NegotiationState>): NegotiationState => ({ ...state, ...patch });
   // The round Proxy counts from. Proxy's own record wins when the merchant's claimed round is lower, so a merchant
-  // cannot hold the negotiation inside the 3-round limit by repeating "round 1".
+  // cannot hold the negotiation inside the round limit by repeating "round 1".
   const currentRound = Math.max(state.round, message.round);
 
   // Not this negotiation, or Proxy is not waiting on the merchant: nothing to decide.
@@ -120,7 +123,7 @@ export function negotiateStep(
 
   const pushBack = (counter: { kind: CounterKind; amount: number }, reason: string): NegotiateStepOutcome => {
     const round = currentRound + 1;
-    // Push back at most once, and never past the round limit. After that the human decides.
+    // Push back at most twice, and never past the round limit. After that the human decides.
     if (state.push_backs_used >= MAX_PUSH_BACKS || round > MAX_ROUNDS) {
       return askHuman(counter);
     }
@@ -132,13 +135,24 @@ export function negotiateStep(
     };
   };
 
-  /** A refund offer for part of the price: accept it if it meets the human's minimum, otherwise push back. */
+  // amount / order_amount >= min / 100, compared with integers so there is no rounding at the threshold.
+  const meetsMinimum = (amount: number) => amount * 100 >= preferences.min_partial_refund_pct * state.order_amount;
+
+  /**
+   * A refund offer for part of the price. Below the human's minimum: push back. At or above it: ask once for the
+   * full amount (the anchor) if a push back and two rounds are left, so there is still a round to accept in; once
+   * Proxy has anchored (its last push back was on an acceptable partial refund), accept.
+   */
   const judgePartialRefund = (counter: { kind: CounterKind; amount: number }): NegotiateStepOutcome => {
-    // amount / order_amount >= min / 100, compared with integers so there is no rounding at the threshold.
-    const meetsMinimum = counter.amount * 100 >= preferences.min_partial_refund_pct * state.order_amount;
-    return meetsMinimum
-      ? acceptCounter(counter)
-      : pushBack(counter, "That refund is below the minimum the customer accepts. Please improve the offer.");
+    if (!meetsMinimum(counter.amount)) {
+      return pushBack(counter, "That refund is below the minimum the customer accepts. Please improve the offer.");
+    }
+    const anchored = state.state === "pushed_back" && state.last_counter?.kind === "partial_refund" && meetsMinimum(state.last_counter.amount);
+    const roomToAnchor = state.push_backs_used < MAX_PUSH_BACKS && currentRound + 2 <= MAX_ROUNDS;
+    if (counter.amount < state.order_amount && !anchored && roomToAnchor) {
+      return pushBack(counter, "The mistake was our agent's, and we are rebooking with you. Please refund the full amount.");
+    }
+    return acceptCounter(counter);
   };
 
   switch (message.type) {

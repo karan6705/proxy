@@ -222,14 +222,14 @@ describe("QA workflows", () => {
     expect(texts().map((t) => t.body)).toContain("Got it: Nov 13. Starting the undo.");
   });
 
-  it("7. The hotel negotiates: store credit, push back, 85%, accept_counter, $544 verified", async () => {
+  it("7. The hotel negotiates: store credit, push back, 85%, ask for the full amount, 85% final, accept_counter, $544 verified", async () => {
     const c = await demoChain();
     await imessageIn("UNDO ALL");
     await settle(async () => (await chainState(c.chain_id)) === "redo_requested");
     const sent = store.events().map((e) => e.outcome).filter((o) => o?.startsWith("out:"));
-    expect(sent).toEqual(["out:request_reversal", "out:push_back", "out:accept_counter"]);
+    expect(sent).toEqual(["out:request_reversal", "out:push_back", "out:push_back", "out:accept_counter"]);
     const states = (await rt.store.getChain(c.chain_id))!.steps.filter((s) => s.action_id === c.hotel.action_id).map((s) => s.message);
-    expect(states.join("\n")).toMatch(/counter \$640; now pushed_back[\s\S]*counter \$544; now accepted[\s\S]*accept \$544; now refund_pending/);
+    expect(states.join("\n")).toMatch(/counter \$640; now pushed_back[\s\S]*counter \$544; now pushed_back[\s\S]*counter \$544; now accepted[\s\S]*accept \$544; now refund_pending/);
     expect(await refunded(c.hotel)).toBe(54_400);
     expect(await actionState(c.hotel)).toBe("verified");
   });
@@ -450,18 +450,20 @@ describe("QA workflows", () => {
       "proxy|mismatch|Proxy: the flight with Skyline Demo Air has the wrong dates (Nov 3, not Nov 13).",
       "agent|self_undo|Agent undid its own flight with Skyline Demo Air (free under the airline's 24-hour rule).",
       "human|text_in|Human: UNDO ALL",
-      "proxy|protocol_out|Proxy: our agent booked this hotel for the wrong dates (Nov 3, not Nov 13). Please cancel it and refund $640.",
+      /^proxy\|protocol_out\|Proxy: our agent booked this hotel for the wrong dates \(Nov 3, not Nov 13\), and we caught it within hours\. Please cancel HTL-[A-Z0-9]+ and refund the full \$640\. Attached: the original request, your receipt and the timeline\.$/,
       "hotel_agent|protocol_in|Harborview Hotel agent: we can offer store credit of $640.",
-      "proxy|protocol_out|Proxy: our human doesn't accept store credit; requesting a refund.",
+      "proxy|protocol_out|Proxy: we can't take store credit; our human's rule is money back to the card. The error was our agent's, caught within hours. Please refund the $640.",
       "hotel_agent|protocol_in|Harborview Hotel agent: we can refund 85%, $544.",
-      "proxy|protocol_out|Proxy: we accept the $544 refund.",
+      "proxy|protocol_out|Proxy: thank you. We're rebooking with you for Nov 13 to Nov 16, so we're asking for the full $640 back on this booking.",
+      "hotel_agent|protocol_in|Harborview Hotel agent: we can refund 85%, $544.",
+      "proxy|protocol_out|Proxy: accepted. We'll take the $544 refund.",
       "hotel_agent|protocol_in|Harborview Hotel agent: confirmed, refunding $544.",
       "stripe|stripe_refund|Stripe: $544 refunded on the Harborview Hotel charge, confirmed.",
     ];
     let at = -1;
     for (const line of order) {
-      const i = lines.findIndex((l, n) => n > at && l === line);
-      expect(i, line).toBeGreaterThan(at);
+      const i = lines.findIndex((l, n) => n > at && (typeof line === "string" ? l === line : line.test(l)));
+      expect(i, String(line)).toBeGreaterThan(at);
       at = i;
     }
     expect(lines).toContain("agent|redo|Agent rebooked the hotel with Harborview Hotel for Nov 13 to Nov 16, $640. Confirmation reached the task inbox.");
@@ -476,7 +478,7 @@ describe("QA workflows", () => {
     const hotelTalk = stage.conversations.find((c) => c.with === "hotel")!;
     expect(hotelTalk.name).toBe("Harborview Hotel agent");
     expect(hotelTalk.entries.map((e) => `${e.from}:${e.kind}`)).toEqual([
-      "proxy:request", "merchant:counter", "proxy:push_back", "merchant:counter", "proxy:accept_counter", "merchant:accept", "stripe:stripe",
+      "proxy:request", "merchant:counter", "proxy:push_back", "merchant:counter", "proxy:push_back", "merchant:counter", "proxy:accept_counter", "merchant:accept", "stripe:stripe",
     ]);
     expect(hotelTalk.entries[1]!.text).toBe("We can offer store credit of $640.");
     expect(stage.conversations.map((c) => c.with)).toEqual(["hotel", "transfer", "host"]);

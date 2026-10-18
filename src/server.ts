@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createSimulatedClock } from "./orchestrator/clock.js";
 import { DEFAULT_PARAMS } from "./orchestrator/params.js";
 import { createRuntime, isCloud, routesFor, startProtocolInbox, type Runtime } from "./orchestrator/runtime.js";
-import { createSandboxes } from "./orchestrator/sandbox.js";
+import { createSandboxes, SCENARIOS, type SandboxResult, type Scenario } from "./orchestrator/sandbox.js";
 import { BUILD_COMMIT } from "./build-info.js";
 import { execSync } from "node:child_process";
 import type { Action, HttpMethod, Preferences, RouteHandler, RouteRequest } from "./types.js";
@@ -489,7 +489,30 @@ if (process.env.PROXY_DEMO_ROUTES === "1" || cloud) {
       },
     },
   ];
-  mountRoutes(cloud ? demoRoutes.filter((r) => r.path === "/demo/feed") : demoRoutes);
+  // /web/show's recordings: each scenario runs once in its own sandbox (simulated payments, nothing sent), and the
+  // page then reads it from /demo/feed?task_id=show_<scenario> and reveals it scene by scene.
+  const recordings = new Map<Scenario, Promise<SandboxResult>>();
+  demoRoutes.push({
+    method: "GET",
+    path: "/web/show/run",
+    handle: async (req) => {
+      const scenario = (req.query.scenario || "trip") as Scenario;
+      if (!SCENARIOS.includes(scenario)) return bad(`scenario must be one of ${SCENARIOS.join(", ")}`);
+      let run = recordings.get(scenario);
+      if (!run) {
+        run = sandboxes.run(`show_${scenario}`, scenario);
+        recordings.set(scenario, run);
+        run.catch(() => recordings.delete(scenario));
+      }
+      try {
+        const r = await run;
+        return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true, scenario, task_id: r.task_id, chain_id: r.chain_id, finished: r.finished } };
+      } catch (e) {
+        return { status: 503, body: { ok: false, message: `The ${scenario} scenario did not run: ${e instanceof Error ? e.message : String(e)}` } };
+      }
+    },
+  });
+  mountRoutes(cloud ? demoRoutes.filter((r) => r.path === "/demo/feed" || r.path === "/web/show/run") : demoRoutes);
 }
 
 // The cloud judge copy starts with one finished example, so get_chain and list_chains have data right away (and after any restart).

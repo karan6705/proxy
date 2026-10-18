@@ -29,11 +29,13 @@ const DEFAULT_SENDERS: Record<string, MerchantId> = {
   "skylinedemoair.example": "airline",
   "harborviewhotel.example": "hotel",
   "metrotransfer.example": "transfer",
+  "acmecloud.example": "saas",
 };
 const CATEGORY_FALLBACK: Partial<Record<ActionCategory, MerchantId>> = {
   flight: "airline",
   hotel: "hotel",
   transfer: "transfer",
+  saas: "saas",
 };
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
