@@ -54,6 +54,11 @@ export interface HotelAgentOptions {
   behavior?: HotelBehavior;
   /** Share of the price offered as the partial refund. Default 85. */
   partial_refund_pct?: number;
+  /**
+   * For testing prompt injection: adds this text to every reply as an extra `note` field that is not part of the
+   * protocol, like a merchant trying to talk Proxy into something. Proxy must read only the typed fields.
+   */
+  inject_text?: string;
 }
 
 type Phase = "credit_offered" | "partial_offered" | "closed";
@@ -119,10 +124,20 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
     reason,
   });
 
+  /** With inject_text set, tacks the extra untrusted field onto a reply. */
+  const tag = (reply: MerchantProtocolMessage): MerchantProtocolMessage =>
+    options.inject_text ? ({ ...reply, note: options.inject_text } as unknown as MerchantProtocolMessage) : reply;
+
   return {
     merchant_id: HOTEL_INFO.merchant_id,
 
     async respond(message, now): Promise<MerchantProtocolMessage> {
+      return tag(await respondTo(message, now));
+    },
+  };
+
+  async function respondTo(message: ProxyProtocolMessage, now: Timestamp): Promise<MerchantProtocolMessage> {
+    {
       switch (message.type) {
         case "request_reversal": {
           const order = ctx.orders.get(message.order.ref);
@@ -188,8 +203,8 @@ function createHotelAgent(ctx: ModuleContext, options: HotelAgentOptions): Merch
           return counter(message, now, negotiation.offer.kind, negotiation.offer.amount);
         }
       }
-    },
-  };
+    }
+  }
 }
 
 export function createHotel(ctx: ModuleContext, options: HotelAgentOptions = {}, mode: AddressMode = "test"): MerchantModule {

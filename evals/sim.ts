@@ -98,6 +98,17 @@ export function actionFromJsonLd(
         ref: ld.reservationNumber,
         source: "email",
       };
+    case "Order": {
+      const offer = ld.acceptedOffer;
+      return {
+        ...common,
+        category: meta.merchant === "saas" ? "saas" : "store",
+        summary: String(offer.itemOffered.name),
+        amount: cents(offer.price),
+        ref: ld.orderNumber,
+        source: "email",
+      };
+    }
     case "EmailMessage":
       return {
         ...common,
@@ -115,7 +126,7 @@ export function actionFromJsonLd(
 
 /** The ref inside an email's JSON-LD: a reservation number, or the identifier of a message. */
 function refOf(ld: JsonLd): string {
-  return String(ld.reservationNumber ?? ld.identifier);
+  return String(ld.reservationNumber ?? ld.orderNumber ?? ld.identifier);
 }
 
 export async function simulateBookings(options: {
