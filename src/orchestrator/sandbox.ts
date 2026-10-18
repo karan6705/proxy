@@ -74,6 +74,8 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
         PROXY_ALERT_SETTLE_MS: "0",
         // A sandbox answers a tool call: never paced for the screen.
         DEMO_PACE_MS: "0",
+        // ...but one merchant at a time, so /web/show's recordings show the negotiation start to finish.
+        PROXY_DEMO_SEQUENTIAL: "1",
         INKBOX_DEMO_TASK_ID: task_id,
       },
     });
