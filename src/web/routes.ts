@@ -3,12 +3,12 @@
 //   GET  /web/state           JSON the page polls
 //   POST /web/reply           {chain_id, kind: "undo_all" | "pick" | "keep", picks?: number[]}  (only when controls are on)
 //   GET  /web/stage           the full-screen 16:9 view for screen recording (reads GET /demo/feed)
-//   GET  /web/stage-fixture   a built-in demo story for the stage page: ?step=N, or it advances by itself
+//   GET  /web/stage-fixture   a built-in demo story for the stage page: ?step=N, or it advances by itself; ?long=1 is a long run
 import type { EventReader } from "../db/memory.js";
 import type { HumanChannel } from "../inkbox/human.js";
 import type { Clock, EventRow, RouteHandler, Store } from "../types.js";
 import { PAGE_HTML } from "./page.js";
-import { FIXTURE_STEPS, fixtureFeed } from "./stage-feed.js";
+import { fixtureFeed, fixtureSteps } from "./stage-feed.js";
 import { STAGE_HTML } from "./stage.js";
 
 export interface WebDeps {
@@ -111,7 +111,9 @@ export function createWebRoutes(deps: WebDeps): RouteHandler[] {
           step = Math.floor((Date.now() - fixtureStartedAt) / 2500);
         }
         if (!Number.isFinite(step)) return { status: 400, body: { ok: false, message: "step must be a number" } };
-        return { status: 200, headers: { "cache-control": "no-store" }, body: { ...fixtureFeed(step), step: Math.min(step, FIXTURE_STEPS.length), steps: FIXTURE_STEPS.length } };
+        const long = req.query.long === "1";
+        const total = fixtureSteps(long).length;
+        return { status: 200, headers: { "cache-control": "no-store" }, body: { ...fixtureFeed(step, long), step: Math.min(step, total), steps: total } };
       },
     },
   ];
