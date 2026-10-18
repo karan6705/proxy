@@ -18,7 +18,9 @@ describe("parseReply", () => {
     ["2", { kind: "numbers", picks: [2] }],
     ["yes", { kind: "yes" }],
     ["No", { kind: "no" }],
-    ["STOP", { kind: "opt_out" }],
+    ["STOP", { kind: "stop" }],
+    ["start", { kind: "carrier" }],
+    ["HELP", { kind: "carrier" }],
   ])("%s", (body, expected) => expect(parseReply(body)).toEqual(expected));
 
   it.each(["ugh no the 13th", "undo all except the hotel", "don't undo all", "pick the hotel", "", "UNDO ALL and refund me twice", "keep? no undo all"])(
@@ -30,7 +32,7 @@ describe("parseReply", () => {
 describe("composeChainAlert", () => {
   it("matches the agreed text and stays short", () => {
     const t = composeChainAlert({ what_went_wrong: "used the wrong date (Nov 3, not Nov 13)", affected: 4, money_at_risk: 124000, time_left_ms: (3 * 60 + 40) * 60_000 });
-    expect(t).toBe("Your agent used the wrong date (Nov 3, not Nov 13). 4 things affected, $1,240 at risk. Reversible for 3h 40m. Reply UNDO ALL, PICK or KEEP.");
+    expect(t).toBe("Your agent used the wrong date (Nov 3, not Nov 13).\n\n4 things affected · $1,240 at risk\nReversible for 3h 40m\n\nReply UNDO ALL, PICK or KEEP.");
     expect(composeChainAlert({ what_went_wrong: "x".repeat(400), affected: 1, money_at_risk: 100, time_left_ms: null }).length).toBeLessThanOrEqual(320);
   });
 });
@@ -98,12 +100,22 @@ describe("human channel", () => {
   it("runs PICK: list first, then the numbers", async () => {
     const { channel, replies, sent } = await setup();
     await channel.handleInbound({ from: HUMAN, body: "PICK" });
-    expect(sent[0]).toContain("1) Flight SFO to JFK $412");
-    expect(sent[0]).toContain("3) Transfer $69");
+    expect(sent[0]).toContain("Which should I undo?");
+    expect(sent[0]).toContain("1) Flight · $412");
+    expect(sent[0]).toContain("3) Flight · $69");
     await channel.handleInbound({ from: HUMAN, body: "9" });
     expect(replies).toHaveLength(0);
     await channel.handleInbound({ from: HUMAN, body: "1 3" });
     expect(replies).toMatchObject([{ kind: "pick", chain_id: "c1", picks: [1, 3] }]);
+  });
+
+  it("lets UNDO ALL through after a PICK, once", async () => {
+    const { channel, replies } = await setup();
+    await channel.handleInbound({ from: HUMAN, body: "PICK 1" });
+    await channel.handleInbound({ from: HUMAN, body: "UNDO ALL" });
+    await channel.handleInbound({ from: HUMAN, body: "UNDO ALL" });
+    expect(replies).toMatchObject([{ kind: "pick", picks: [1] }, { kind: "undo_all" }]);
+    expect(replies).toHaveLength(2);
   });
 
   it("takes PICK with numbers in one message", async () => {
@@ -128,18 +140,60 @@ describe("human channel", () => {
     expect(sent[0]).toMatch(/Too late/);
   });
 
-  it("asks once for a loose reply, then stays quiet", async () => {
+  it("forwards a loose reply unchanged as a correction, once, without answering", async () => {
     const { channel, replies, sent } = await setup();
     await channel.handleInbound({ from: HUMAN, body: "ugh no the 13th" });
-    await channel.handleInbound({ from: HUMAN, body: "ugh no the 13th!!" });
-    expect(sent).toEqual(["I didn't catch that. Reply UNDO ALL, PICK or KEEP."]);
-    expect(replies).toHaveLength(0);
+    await channel.handleInbound({ from: HUMAN, body: "ugh no the 13th" });
+    expect(replies).toMatchObject([{ kind: "correction", chain_id: "c1", corrected_text: "ugh no the 13th" }]);
+    expect(sent).toHaveLength(0);
   });
 
-  it("never replies to STOP", async () => {
-    const { channel, sent } = await setup();
-    expect(await channel.handleInbound({ from: HUMAN, body: "STOP" })).toEqual({ status: "ignored", reason: "opt_out" });
+  it("asks once when a bare YES or NO answers nothing", async () => {
+    const { channel, replies, sent } = await setup();
+    await channel.handleInbound({ from: HUMAN, body: "yes" });
+    await channel.handleInbound({ from: HUMAN, body: "no" });
+    expect(replies).toHaveLength(0);
+    expect(sent).toEqual(["I'm not sure what you're answering.\n\nReply UNDO ALL, PICK or KEEP."]);
+  });
+
+  it("forwards STOP as a stop with no chain, and answers only over iMessage", async () => {
+    const { channel, replies, sent } = await setup();
+    expect(await channel.handleInbound({ from: HUMAN, body: "STOP", via: "sms" })).toEqual({ status: "forwarded", kind: "stop" });
     expect(sent).toHaveLength(0);
+    await channel.handleInbound({ from: HUMAN, body: "stop", via: "imessage" });
+    expect(replies).toMatchObject([{ kind: "stop" }, { kind: "stop" }]);
+    expect(replies[0]).not.toHaveProperty("chain_id");
+    expect(sent[0]).toMatch(/paused everything/);
+  });
+
+  it("never matches kept or expired chains for a bare reply", async () => {
+    const { channel, replies, sent, store } = await setup({ state: "kept" });
+    await store.upsertChain(chain({ chain_id: "c2", state: "expired" }));
+    const r = await channel.handleInbound({ from: HUMAN, body: "UNDO ALL" });
+    expect(r).toEqual({ status: "ignored", reason: "no_chain" });
+    expect(replies).toHaveLength(0);
+    expect(sent).toEqual(["Nothing is waiting on you right now."]);
+  });
+
+  it("prefers an active chain over a newer finished one", async () => {
+    const { channel, replies, store } = await setup();
+    await store.upsertChain(chain({ chain_id: "c3", state: "reversed", alerts: [{ channel: "sms", kind: "chain_opened", body: "x", sent_at: "2026-11-01T09:59:00.000Z" }] }));
+    await channel.handleInbound({ from: HUMAN, body: "KEEP" });
+    expect(replies).toMatchObject([{ chain_id: "c1" }]);
+  });
+
+  it("answers a late reply from a finished chain when nothing is active", async () => {
+    const { channel, replies, sent } = await setup({ state: "reversed" });
+    expect(await channel.handleInbound({ from: HUMAN, body: "UNDO ALL" })).toEqual({ status: "replied", reason: "already_handled" });
+    expect(replies).toHaveLength(0);
+    expect(sent[0]).toMatch(/already handled/);
+  });
+
+  it("an explicit chain_id targets that chain, not the newest", async () => {
+    const { channel, replies, store } = await setup();
+    await store.upsertChain(chain({ chain_id: "c2", alerts: [{ channel: "sms", kind: "chain_opened", body: "x", sent_at: "2026-11-01T09:50:00.000Z" }] }));
+    await channel.handleInbound({ from: HUMAN, body: "KEEP", chain_id: "c1" });
+    expect(replies).toMatchObject([{ kind: "keep", chain_id: "c1" }]);
   });
 
   it("answers a counter question with YES / NO", async () => {

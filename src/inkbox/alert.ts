@@ -19,9 +19,25 @@ export function formatTimeLeft(ms: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+/**
+ * The one text per chain, laid out for a phone: the mistake, the numbers, then the choice, each on its own line.
+ * Kept under about 320 characters (two SMS segments).
+ */
 export function composeChainAlert(f: AlertFacts): string {
   const things = f.affected === 1 ? "1 thing" : `${f.affected} things`;
-  const window = f.time_left_ms === null ? "No deadline known." : `Reversible for ${formatTimeLeft(f.time_left_ms)}.`;
-  const text = `Your agent ${f.what_went_wrong}. ${things} affected, ${money(f.money_at_risk)} at risk. ${window} Reply UNDO ALL, PICK or KEEP.`;
-  return text.length <= 320 ? text : `Your agent made a mistake. ${things} affected, ${money(f.money_at_risk)} at risk. ${window} Reply UNDO ALL, PICK or KEEP.`;
+  const window = f.time_left_ms === null ? "No deadline known" : `Reversible for ${formatTimeLeft(f.time_left_ms)}`;
+  const body = (what: string) => `Your agent ${what}.\n\n${things} affected · ${money(f.money_at_risk)} at risk\n${window}\n\nReply UNDO ALL, PICK or KEEP.`;
+  const text = body(f.what_went_wrong);
+  return text.length <= 320 ? text : body("made a mistake");
+}
+
+const NOUN: Record<string, string> = { flight: "Flight", hotel: "Hotel", transfer: "Transfer", saas: "Subscription", store: "Order", message: "Message" };
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** One line of the PICK list: "Flight, Nov 3 · $412". Short enough for one line on a phone. */
+export function pickLine(a: { category: string; amount: Cents; dates?: { start: string }; merchant?: string }): string {
+  const noun = a.merchant === "host" ? "Host email" : NOUN[a.category] ?? a.category;
+  const m = a.dates ? /^\d{4}-(\d{2})-(\d{2})/.exec(a.dates.start) : null;
+  const when = m ? `, ${MONTHS[Number(m[1]) - 1]} ${Number(m[2])}` : "";
+  return `${noun}${when} · ${a.amount === 0 ? "no charge" : money(a.amount)}`;
 }

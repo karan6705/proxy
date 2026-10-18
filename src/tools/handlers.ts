@@ -2,7 +2,7 @@
 // orchestrator. Each returns ok(...) or fail(...), so every error follows the error contract.
 import { createHash } from "node:crypto";
 import { expectedRefund } from "../orchestrator/refunds.js";
-import { humanDate } from "../orchestrator/copy.js";
+import { actionLabel, humanDate, money, payments } from "../orchestrator/copy.js";
 import { checkSelfUndo } from "../orchestrator/self-undo.js";
 import { runSelfServeRoute } from "../orchestrator/routes/self-serve.js";
 import type { Proxy } from "../orchestrator/proxy.js";
@@ -49,6 +49,10 @@ export interface LiveChainMeta {
   recovered: Record<string, number>;
   /** Message actions whose correction was sent and acknowledged; their rows are done (green) with no money. */
   corrected: string[];
+  /** Short row titles, e.g. "Hotel · Harborview Hotel · Nov 3 to Nov 6" (receipt summaries can be long). */
+  labels: Record<string, string>;
+  /** The last few agent-to-agent lines for this chain, in plain English (from the demo feed). */
+  protocol: Array<{ at: string; actor: string; text: string }>;
 }
 
 /** "Rebook the flight, hotel and transfer for Nov 13 to Nov 16, using <task email>. The host already has the right dates." */
@@ -61,9 +65,13 @@ function redoInstruction(intent: { task_email: string; constraints: { dates?: { 
   return `Rebook the ${list}${when}, using ${intent.task_email}.${told}`;
 }
 
+const merchantName = (p: Proxy, id: string) => p.deps.merchants?.get?.(id)?.name ?? id;
+
 export function createToolHandlers(getProxy: () => Proxy) {
   // Refunded amounts don't change once Stripe verified them, so each is fetched once.
   const recoveredCache = new Map<string, number>();
+  /** Mismatches already written to each runtime's demo feed, so repeated reviews don't repeat them. */
+  const notedBy = new WeakMap<Proxy, Set<string>>();
   /** Which mismatched actions the agent may undo itself right now. */
   function fixable(p: Proxy, task_id: string, actions: Action[], mismatches: Mismatch[], plan: PlanStep[]): ActionId[] {
     const { logic, sessions, clock } = p.deps;
@@ -115,7 +123,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
         }
       }
       if (demo && (await store.getIntent(task_id))) {
-        return fail("upstream_unavailable", `Demo run ${task_id} already has a task. Reset the demo (POST /demo/reset) first.`, false, "stop");
+        return fail("upstream_unavailable", `Demo run ${task_id} already has a task. Ask the operator to reset the demo (POST /demo/reset), then call log_intent again.`, false, "stop");
       }
       let task_email: string;
       try {
@@ -128,6 +136,15 @@ export function createToolHandlers(getProxy: () => Proxy) {
       await store.putIntent(intent, key);
       sessions.touch(task_id);
       await p.logEvent({ kind: "tool", tool_name: "log_intent", task_id, outcome: "ok" });
+      const d = input.constraints.dates;
+      p.note?.({
+        task_id,
+        chain_id: null,
+        actor: "agent",
+        kind: "intent",
+        text: `Agent started a task: ${input.goal}${d ? ` (${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""})` : ""}.`,
+        data: { goal: input.goal, start: d?.start ?? null, end: d?.end ?? null, budget_total: input.constraints.budget_total ?? null },
+      });
       return ok({ task_id, task_email });
     },
 
@@ -160,6 +177,22 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const actions = await store.listActions(task_id);
       const plan = planFor(p, chains, actions, intent.preferences);
       await p.logEvent({ kind: "tool", tool_name: "review", task_id, outcome: mismatches.length ? "chain_open" : "clean" });
+      const noted = notedBy.get(p) ?? new Set<string>();
+      notedBy.set(p, noted);
+      for (const m of mismatches) {
+        const key = `${m.action_id}:${m.field}`;
+        if (noted.has(key)) continue;
+        noted.add(key);
+        const a = actions.find((x) => x.action_id === m.action_id);
+        p.note?.({
+          task_id,
+          chain_id: chains.find((c) => c.action_ids.includes(m.action_id))?.chain_id ?? null,
+          actor: "proxy",
+          kind: "mismatch",
+          text: `Proxy: ${a ? (a.category === "message" ? `the email to ${merchantName(p, a.merchant)}` : `the ${a.category} with ${merchantName(p, a.merchant)}`) : m.action_id} has the wrong ${m.field} (${humanDate(m.actual)}, not ${humanDate(m.expected)}).`,
+          data: { action_id: m.action_id, field: m.field, expected: String(m.expected), actual: String(m.actual) },
+        });
+      }
       return ok({
         status: mismatches.length > 0 ? ("chain_open" as const) : ("clean" as const),
         mismatches,
@@ -237,7 +270,11 @@ export function createToolHandlers(getProxy: () => Proxy) {
           at: clock.now(),
         });
         if (merchants) {
-          await runSelfServeRoute({ merchants, payments: p.deps.payments, store, clock }, chain, { ...action, state: "planned" });
+          p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "agent", kind: "self_undo", text: `Agent undid its own ${action.category} with ${merchantName(p, action.merchant)} (free under the airline's 24-hour rule).`, data: { action_id: id, amount: action.amount } });
+          const r = await runSelfServeRoute({ merchants, payments: p.deps.payments, store, clock }, chain, { ...action, state: "planned" });
+          if (r.action.state === "verified") {
+            p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "stripe", kind: "stripe_refund", text: `${payments()}: ${money(action.amount)} refunded on the ${p.deps.merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, data: { action_id: id, merchant: action.merchant, amount: action.amount, of: action.amount, refund_id: r.step.stripe_ref } });
+          }
         }
         // The agent's undo covers only this action. If anything else in the chain is still open, the chain goes
         // back to waiting for the human (and gets its alert); if everything is settled, it is reversed.
@@ -264,7 +301,12 @@ export function createToolHandlers(getProxy: () => Proxy) {
         if (a) members.push(a);
       }
       const plan = intent ? logic.plan_undo(chain, members, intent.preferences, clock.now()) : [];
-      const routeOf = new Map(plan.map((s) => [s.action_id, s.route]));
+      // Settled actions drop out of a fresh plan; show the route each one actually took.
+      const routeOf = new Map<string, PlanStep["route"]>([
+        ...chain.steps.map((s) => [s.action_id, s.route] as const),
+        ...chain.plan.map((s) => [s.action_id, s.route] as const),
+        ...plan.map((s) => [s.action_id, s.route] as const),
+      ]);
       const next_action: NextAction =
         chain.state === "reversed" || chain.state === "redo_requested"
           ? "redo"
@@ -321,7 +363,13 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const corrected = members
         .filter((a) => a.amount === 0 && a.state === "accepted" && chain.steps.some((s) => s.action_id === a.action_id && s.route === "correction" && s.outcome === "succeeded"))
         .map((a) => a.action_id);
-      const meta: LiveChainMeta = { server_now: now, windows, recovered, corrected };
+      const protocol = (p.feed?.list(chain.task_id) ?? [])
+        .filter((e) => e.chain_id === chain.chain_id && (e.kind === "protocol_in" || e.kind === "protocol_out" || (e.kind === "stripe_refund" && e.data.action_id && members.some((a) => a.action_id === e.data.action_id && a.merchant === "hotel"))))
+        .slice(-6)
+        .map((e) => ({ at: e.at, actor: e.actor, text: e.text }));
+      const labels: LiveChainMeta["labels"] = {};
+      for (const a of members) labels[a.action_id] = actionLabel(a, merchantName(p, a.merchant));
+      const meta: LiveChainMeta = { server_now: now, windows, recovered, corrected, labels, protocol };
       return withMeta(ok({
         chain_id: chain.chain_id,
         state: chain.state,

@@ -62,6 +62,10 @@ function post(chain,kind,picks){
 function render(s){
   $("clock").textContent="Sim time "+new Date(s.now).toISOString().replace("T"," ").slice(0,16)+" UTC";
   var box=$("chains");box.textContent="";
+  if(s.hidden_chains>0){
+    var hid=el("div","mute","Showing the current run. "+s.hidden_chains+" chain"+(s.hidden_chains===1?"":"s")+" from earlier runs hidden. ");
+    var a=el("a",null,"Show all");a.href="?all=1";a.style.color="inherit";hid.appendChild(a);box.appendChild(hid);
+  }
   if(!s.chains.length)box.appendChild(el("div","empty","No chains yet. Nothing has gone wrong."));
   var ordered=s.chains.slice().reverse();
   var active=ordered.filter(function(c){return OPEN.indexOf(c.state)>=0});
@@ -120,7 +124,7 @@ function render(s){
   var sc=$("score");sc.textContent="";
   if(s.scoreboard){var card=el("div","card");card.appendChild(el("h2","","Scoreboard"));card.appendChild(el("pre","",JSON.stringify(s.scoreboard,null,2)));sc.appendChild(card)}
 }
-function tick(){fetch("/web/state",{cache:"no-store"}).then(function(r){return r.json()}).then(render).catch(function(){}).then(function(){setTimeout(tick,2000)})}
+function tick(){fetch("/web/state"+location.search,{cache:"no-store"}).then(function(r){return r.json()}).then(render).catch(function(){}).then(function(){setTimeout(tick,2000)})}
 tick();
 })();
 </script>

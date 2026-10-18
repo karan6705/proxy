@@ -57,9 +57,9 @@ function safeThrownError(error: unknown): ReturnType<typeof fail> {
     return fail("upstream_unavailable", "The payment service is temporarily unavailable. Retry shortly.", true, "retry");
   }
   if (code === "stripe_authentication_failed" || code === "stripe_invalid_request") {
-    return fail("internal", "The payment service could not complete the request.", false, "stop");
+    return fail("internal", "The payment service could not complete the request. Don't retry: tell the human the refund step failed, and call get_chain later to see what Stripe shows.", false, "stop");
   }
-  return fail("internal", "The tool could not complete the request.", false, "stop");
+  return fail("internal", "The tool could not complete the request. Don't retry in a loop: tell the human Proxy hit an error, and give them the task_id or chain_id.", false, "stop");
 }
 
 export function handler<S extends z.ZodType, R>(
@@ -71,7 +71,7 @@ export function handler<S extends z.ZodType, R>(
     const r = schema.safeParse(raw);
     if (!r.success) {
       const detail = r.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
-      return fail("invalid_input", `Invalid arguments: ${detail}`, false, "fix_now");
+      return fail("invalid_input", `Invalid arguments: ${detail}. Fix them using the tool's input schema and call again.`, false, "fix_now");
     }
     try {
       return await fn(r.data);

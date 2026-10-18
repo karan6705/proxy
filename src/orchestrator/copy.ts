@@ -1,7 +1,17 @@
 // Every text Proxy sends the human is written here, so alerts and progress read the same way:
 // human dates ("Nov 3"), windows from the (simulated) clock in days past 48 hours, and money as
 // "$828 at risk of $1,240" once part of a chain is undone.
-import type { Action, Cents, Chain, DateRange, Intent, Mismatch } from "../types.js";
+import type { Action, Cents, Chain, DateRange, Intent, MerchantProtocolMessage, Mismatch, ProxyProtocolMessage } from "../types.js";
+
+/**
+ * Where refunds are confirmed. "Stripe" everywhere except the offline recording (PROXY_SIMULATED_PAYMENTS=1),
+ * where payments are simulated and the texts must say so.
+ */
+let paymentsName = "Stripe";
+export function setPaymentsName(name: string): void {
+  paymentsName = name;
+}
+export const payments = () => paymentsName;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -41,7 +51,17 @@ export function whatWentWrong(mismatch: Mismatch | undefined): string {
   return `used the wrong ${field} (${humanDate(mismatch.actual)}, not ${humanDate(mismatch.expected)})`;
 }
 
+/** Actions the agent already undid itself during its session, e.g. the flight. */
+export interface AlreadyUndone {
+  action: Pick<Action, "category" | "merchant">;
+  amount: Cents;
+}
+
+const alreadyLine = (done: AlreadyUndone[]) =>
+  done.length ? `${done.map((d) => `${noun(d.action)} already refunded by your agent (${money(d.amount)})`).join(", ")}. ` : "";
+
 export interface AlertCopy {
+  already?: AlreadyUndone[];
   mismatch: Mismatch | undefined;
   affected: number;
   at_risk: Cents;
@@ -52,9 +72,10 @@ export interface AlertCopy {
 
 /** The one text per chain. Kept under 320 characters (two SMS segments). */
 export function chainAlert(a: AlertCopy): string {
-  const things = a.affected === 1 ? "1 thing" : `${a.affected} things`;
+  const more = a.already?.length ? " more" : "";
+  const things = a.affected === 1 ? `1${more} thing` : `${a.affected}${more} things`;
   const window = a.time_left_ms === null ? "No deadline known." : a.time_left_ms <= 0 ? "The window has closed." : `Reversible for ${timeLeft(a.time_left_ms)}.`;
-  const text = `Your agent ${whatWentWrong(a.mismatch)}. ${things} affected, ${atRisk(a.at_risk, a.total)}. ${window} Reply UNDO ALL, PICK or KEEP.`;
+  const text = `Your agent ${whatWentWrong(a.mismatch)}. ${alreadyLine(a.already ?? [])}${things} affected, ${atRisk(a.at_risk, a.total)}. ${window} Reply UNDO ALL, PICK or KEEP.`;
   return text.length <= 320 ? text : `Your agent made a mistake. ${things} affected, ${atRisk(a.at_risk, a.total)}. ${window} Reply UNDO ALL, PICK or KEEP.`;
 }
 
@@ -72,7 +93,7 @@ export const noun = (a: Pick<Action, "category" | "merchant">) => (a.merchant ==
 /** One step confirmed: "Flight refunded, $412, confirmed in Stripe", or "Hotel refunded, $544 of $640, confirmed in Stripe". */
 export function refundedStep(a: Pick<Action, "category" | "merchant" | "amount">, refunded: Cents): string {
   const amount = refunded < a.amount ? `${money(refunded)} of ${money(a.amount)}` : money(refunded);
-  return `${noun(a)} refunded, ${amount}, confirmed in Stripe.`;
+  return `${noun(a)} refunded, ${amount}, confirmed in ${paymentsName}.`;
 }
 
 export function correctionStep(a: Pick<Action, "category" | "merchant">, dates: { start: string; end?: string } | undefined): string {
@@ -98,12 +119,18 @@ export interface SummaryLine {
  * The final text for a chain. Open items name their next option in the same text. `untouched` are actions
  * the human didn't pick: they are left as they are, not reported as failures.
  */
-export function chainSummary(lines: SummaryLine[], redoDates: { start: string; end?: string } | undefined, untouched: Pick<Action, "category" | "merchant">[] = []): string {
+export function chainSummary(
+  lines: SummaryLine[],
+  redoDates: { start: string; end?: string } | undefined,
+  untouched: Pick<Action, "category" | "merchant">[] = [],
+  already: AlreadyUndone[] = [],
+): string {
   const back = lines.reduce((s, l) => s + (l.action.state === "verified" ? l.refunded : 0), 0);
   const total = lines.reduce((s, l) => s + l.action.amount, 0);
   const open = lines.filter((l) => !["verified", "accepted", "kept"].includes(l.action.state));
   const corrected = lines.filter((l) => l.action.state === "accepted" && l.action.amount === 0).map((l) => noun(l.action));
-  const parts = [`${money(back)} of ${money(total)} back, confirmed in Stripe.`];
+  const byAgent = already.length ? ` (${already.map((d) => `${noun(d.action).toLowerCase()} ${money(d.amount)} refunded by your agent`).join(", ")})` : "";
+  const parts = [`${money(back)} of ${money(total)} back, confirmed in ${paymentsName}${byAgent}.`];
   if (corrected.length) parts.push(`${corrected.join(", ")} told the right dates.`);
   if (open.length) {
     parts.unshift("Partly done.");
@@ -152,4 +179,41 @@ export function correctedDates(text: string, intent: Pick<Intent, "constraints">
   if (!current?.end) return { start: iso(start) };
   const length = Date.parse(`${current.end}T00:00:00Z`) - base.getTime();
   return { start: iso(start), end: iso(new Date(start.getTime() + length)) };
+}
+
+// --- the demo feed's lines ---
+
+const pct = (part: Cents, whole: Cents) => (whole > 0 ? Math.round((part * 100) / whole) : 0);
+
+/** A merchant agent's answer as one line, from typed fields only (a deny's free-text reason is never shown). */
+export function merchantLine(who: string, m: MerchantProtocolMessage, orderAmount: Cents): string {
+  if (m.type === "accept") return m.refund_amount > 0 ? `${who}: confirmed, refunding ${money(m.refund_amount)}.` : `${who}: confirmed, as store credit.`;
+  if (m.type === "deny") return `${who}: declined to refund.`;
+  if (m.kind === "store_credit") return `${who}: we can offer store credit of ${money(m.amount)}.`;
+  if (m.kind === "partial_refund") return `${who}: we can refund ${pct(m.amount, orderAmount)}%, ${money(m.amount)}.`;
+  return `${who}: we can move the booking to other dates instead.`;
+}
+
+/** One of Proxy's protocol messages as one line. `lastCounter` explains a push back. */
+export function proxyLine(
+  m: ProxyProtocolMessage,
+  ctx: { summary: string; amount: Cents; lastCounter: { kind: string; amount: Cents } | null; minPct: number; mismatch?: Mismatch },
+): string {
+  if (m.type === "request_reversal") {
+    const why = ctx.mismatch ? ` for the wrong ${ctx.mismatch.field} (${humanDate(ctx.mismatch.actual)}, not ${humanDate(ctx.mismatch.expected)})` : " by mistake";
+    return `Proxy: our agent booked ${ctx.summary}${why}. Please cancel it and refund ${money(ctx.amount)}.`;
+  }
+  if (m.type === "push_back") {
+    if (ctx.lastCounter?.kind === "store_credit") return "Proxy: our human doesn't accept store credit; requesting a refund.";
+    return `Proxy: that's below our human's minimum of ${ctx.minPct}%; requesting a better refund.`;
+  }
+  if (m.type === "accept_counter") return `Proxy: we accept${ctx.lastCounter ? ` the ${money(ctx.lastCounter.amount)} ${ctx.lastCounter.kind === "store_credit" ? "store credit" : "refund"}` : " your offer"}.`;
+  return "Proxy: checking with our human.";
+}
+
+/** A short title for an action, e.g. "Hotel · Harborview Hotel · Nov 3 to Nov 6" or "Email to Alex Rivera (host) · Nov 3". */
+export function actionLabel(a: Pick<Action, "category" | "dates">, merchantName: string): string {
+  const d = a.dates ? `${humanDate(a.dates.start)}${a.dates.end ? ` to ${humanDate(a.dates.end)}` : ""}` : "";
+  const what = a.category === "message" ? `Email to ${merchantName}` : `${a.category[0]!.toUpperCase()}${a.category.slice(1)} · ${merchantName}`;
+  return [what, d].filter(Boolean).join(" · ");
 }
