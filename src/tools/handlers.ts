@@ -135,7 +135,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
       sessions.touch(task_id);
       await p.logEvent({ kind: "tool", tool_name: "log_intent", task_id, outcome: "ok" });
       const d = input.constraints.dates;
-      p.note({
+      p.note?.({
         task_id,
         chain_id: null,
         actor: "agent",
@@ -182,7 +182,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
         if (noted.has(key)) continue;
         noted.add(key);
         const a = actions.find((x) => x.action_id === m.action_id);
-        p.note({
+        p.note?.({
           task_id,
           chain_id: chains.find((c) => c.action_ids.includes(m.action_id))?.chain_id ?? null,
           actor: "proxy",
@@ -268,10 +268,10 @@ export function createToolHandlers(getProxy: () => Proxy) {
           at: clock.now(),
         });
         if (merchants) {
-          p.note({ task_id: action.task_id, chain_id: chain.chain_id, actor: "agent", kind: "self_undo", text: `Agent undid its own ${action.category} with ${merchantName(p, action.merchant)} (free under the airline's 24-hour rule).`, data: { action_id: id, amount: action.amount } });
+          p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "agent", kind: "self_undo", text: `Agent undid its own ${action.category} with ${merchantName(p, action.merchant)} (free under the airline's 24-hour rule).`, data: { action_id: id, amount: action.amount } });
           const r = await runSelfServeRoute({ merchants, payments: p.deps.payments, store, clock }, chain, { ...action, state: "planned" });
           if (r.action.state === "verified") {
-            p.note({ task_id: action.task_id, chain_id: chain.chain_id, actor: "stripe", kind: "stripe_refund", text: `Stripe: ${money(action.amount)} refunded on the ${p.deps.merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, data: { action_id: id, amount: action.amount, of: action.amount, refund_id: r.step.stripe_ref } });
+            p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "stripe", kind: "stripe_refund", text: `Stripe: ${money(action.amount)} refunded on the ${p.deps.merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, data: { action_id: id, amount: action.amount, of: action.amount, refund_id: r.step.stripe_ref } });
           }
         }
         // The agent's undo covers only this action. If anything else in the chain is still open, the chain goes
@@ -356,8 +356,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
       const corrected = members
         .filter((a) => a.amount === 0 && a.state === "accepted" && chain.steps.some((s) => s.action_id === a.action_id && s.route === "correction" && s.outcome === "succeeded"))
         .map((a) => a.action_id);
-      const protocol = p.feed
-        .list(chain.task_id)
+      const protocol = (p.feed?.list(chain.task_id) ?? [])
         .filter((e) => e.chain_id === chain.chain_id && (e.kind === "protocol_in" || e.kind === "protocol_out" || (e.kind === "stripe_refund" && e.data.action_id && members.some((a) => a.action_id === e.data.action_id && a.merchant === "hotel"))))
         .slice(-6)
         .map((e) => ({ at: e.at, actor: e.actor, text: e.text }));
