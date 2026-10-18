@@ -7,7 +7,8 @@ import { DEFAULT_PARAMS } from "./orchestrator/params.js";
 import { createRuntime, startProtocolInbox, type Runtime } from "./orchestrator/runtime.js";
 import type { Action, HttpMethod, Preferences, RouteHandler, RouteRequest } from "./types.js";
 import { MISTAKES_RESOURCE_URI } from "./types.js";
-import { createToolHandlers } from "./tools/handlers.js";
+import { createToolHandlers, type LiveChainMeta } from "./tools/handlers.js";
+import { toStageFeed, type StageChainInput } from "./orchestrator/stage.js";
 import { advertise, handler } from "./tools/result.js";
 import {
   getChainInput,
@@ -361,34 +362,29 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
       path: "/demo/feed",
       handle: async (req) => {
         const task_id = req.query.task_id || runtime.proxy.deps.demo?.current;
-        if (!task_id) return { status: 200, body: { ok: true, task_id: null, now: clock.now(), chain: null, entries: [] } };
+        if (!task_id) return { status: 404, body: { ok: false, message: "No demo run yet. POST /demo/reset first." } };
+        const entries = runtime.proxy.feed.list(task_id);
         const chainRow = (await runtime.store.listChains(task_id)).sort((a, b) => b.action_ids.length - a.action_ids.length)[0];
-        let chain = null;
+        let chain: StageChainInput | null = null;
+        let labels: Record<string, string> = {};
         if (chainRow) {
           const view = await tools.get_chain({ chain_id: chainRow.chain_id });
-          const sc = view.structuredContent as { ok: boolean; state?: string; actions?: Array<{ action_id: string; amount: number; summary: string; category: string; state: string; stripe_verified: boolean }> };
-          const meta = ("_meta" in view ? view._meta : undefined) as { recovered: Record<string, number>; corrected: string[]; windows: Record<string, string | null> } | undefined;
-          if (sc.ok && sc.actions) {
-            chain = {
-              chain_id: chainRow.chain_id,
-              state: sc.state,
-              total: sc.actions.reduce((t, a) => t + a.amount, 0),
-              recovered: Object.values(meta?.recovered ?? {}).reduce((t, n) => t + n, 0),
-              window_ends_at: chainRow.window_ends_at,
-              actions: sc.actions.map((a) => ({
-                action_id: a.action_id,
-                summary: a.summary,
-                category: a.category,
-                amount: a.amount,
-                state: a.state,
-                done: a.stripe_verified || (meta?.corrected ?? []).includes(a.action_id),
-                recovered: meta?.recovered[a.action_id] ?? 0,
-                window_ends_at: meta?.windows[a.action_id] ?? null,
-              })),
-            };
+          const meta = ("_meta" in view ? view._meta : undefined) as LiveChainMeta | undefined;
+          labels = meta?.labels ?? {};
+          if (view.structuredContent.ok) {
+            const rows = [];
+            for (const a of view.structuredContent.actions) {
+              const action = await runtime.store.getAction(a.action_id);
+              if (action) rows.push({ action, label: labels[a.action_id] ?? a.summary, recovered: meta?.recovered[a.action_id] ?? 0, verified: a.stripe_verified });
+            }
+            chain = { chain_id: chainRow.chain_id, state: view.structuredContent.state, window_ends_at: chainRow.window_ends_at, rows };
           }
         }
-        return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true, task_id, now: clock.now(), chain, entries: runtime.proxy.feed.list(task_id) } };
+        const intent = await runtime.store.getIntent(task_id);
+        const flagged = intent ? runtime.proxy.deps.logic.compare(intent, await runtime.store.listActions(task_id)).map((m) => m.action_id) : [];
+        const stage = toStageFeed(task_id, clock.now(), intent, entries, chain, labels, flagged);
+        // `entries` is the full plain-English timeline; the rest is the StageFeed the stage page reads.
+        return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true, ...stage, entries } };
       },
     },
   ]);
