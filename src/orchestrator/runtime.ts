@@ -161,7 +161,16 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
       return deliverToCapture(capture)(email);
     },
   };
-  const merchants = createMerchants(merchantDeps, { addresses: mode });
+  // The simulated carrier scans a returned package PROXY_CARRIER_SCAN_MS after its label (default 4 s; at once in
+  // the cloud sandbox), and moves a simulated clock to the next day first, like a real drop-off.
+  const simulated = "advance" in clock ? (clock as Clock & { advance(ms: number): void }) : null;
+  const merchants = createMerchants(merchantDeps, {
+    addresses: mode,
+    carrier: {
+      scan_delay_ms: env.PROXY_CARRIER_SCAN_MS ? Number(env.PROXY_CARRIER_SCAN_MS) : cloud ? 0 : 4_000,
+      ...(simulated ? { advance: (ms: number) => simulated.advance(ms) } : {}),
+    },
+  });
 
   // Real Inkbox carries the protocol; without it (no key, or INKBOX_DRY_RUN=1) the in-process mock merchant
   // agent answers instead, so the whole negotiation still runs. PROXY_PROTOCOL_LOOPBACK=1 or 0 forces either.
@@ -236,6 +245,9 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     onRedoRequested: demoOn && env.PROXY_DEMO_REDO !== "0" ? (chain) => demoRedo(chain) : undefined,
   });
   proxyRef = proxy;
+  merchants.onCarrierScan((scan) => {
+    proxy.undo.onCarrierScan(scan).catch((e) => console.error("[returns] carrier scan failed:", e instanceof Error ? e.message : e));
+  });
 
   /**
    * Demo only: what the buying agent does with the redo instruction. It rebooks each reversed booking for the
@@ -257,6 +269,13 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
           await merchants.book({ merchant_id: a.merchant, task_id: intent.task_id, task_email: intent.task_email, item, amount: Math.round(a.amount / 12), booked_at: clock.now() });
           continue;
         }
+        // A wrong item is ordered again as the item the task asked for, at the merchant's price.
+        if (a.category === "store") {
+          const wanted = (intent.constraints.must_haves ?? []).map((m) => /^\s*item\s*:\s*(.+?)\s*$/i.exec(m)?.[1]).find(Boolean);
+          if (!wanted) continue;
+          await merchants.book({ merchant_id: a.merchant, task_id: intent.task_id, task_email: intent.task_email, item: wanted, amount: merchants.quote(a.merchant, wanted) ?? a.amount, booked_at: clock.now() });
+          continue;
+        }
         if (!dates) continue;
         const from = a.dates?.start ? shortDate(a.dates.start) : null;
         const item = from ? a.summary.replace(new RegExp(`\\b${from}\\b`), shortDate(dates.start)) : a.summary;
@@ -273,6 +292,8 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     store: captureSide.store,
     hooks: captureSide.hooks,
     clock,
+    // Northwind Market's receipts come from its own domain (capture knows the other mock merchants already).
+    senderMerchants: { "northwindmarket.example": "northwind" },
     ...(anthropicKey ? { llm: createAnthropicExtractor({ apiKey: anthropicKey }) } : {}),
   });
   // Every message to the human goes on the alert channel and from Proxy's identity, whatever channel the
