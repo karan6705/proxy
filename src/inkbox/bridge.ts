@@ -54,6 +54,8 @@ export function createMerchantBridge(opts: MerchantBridgeOptions) {
         }
         const request = parseProxyMessage(jsonFromParts(m.parts), opts.clock.now());
         if (!request) {
+          // Never silent: an unreadable request is logged on the merchant's terminal as well as recorded.
+          log(`dropped an invalid request on task ${m.taskId}`);
           await record("dropped:invalid_request");
           continue;
         }
@@ -77,7 +79,11 @@ export function createMerchantBridge(opts: MerchantBridgeOptions) {
         seen.add(m.id);
         if (String(m.fromAddress).toLowerCase() !== opts.proxyEmail.toLowerCase()) continue;
         const request = parseProxyMessage((await identity.getMessage(m.id)).bodyText ?? "", opts.clock.now());
-        if (!request) continue;
+        if (!request) {
+          log(`dropped an invalid request by email (${m.subject})`);
+          await record("dropped:invalid_request:email");
+          continue;
+        }
         const reply = await opts.agent.respond(request, opts.clock.now());
         await identity.sendEmail({ to: [opts.proxyEmail], subject: protocolSubject(reply.type, reply.negotiation_id), bodyText: JSON.stringify(reply) });
         await record(`answered:email:${reply.type}`, { chain_id: request.chain_id, action_id: request.action_id });
