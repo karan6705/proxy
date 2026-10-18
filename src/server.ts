@@ -4,7 +4,7 @@ import { MCPServer } from "mcp-use";
 import { z } from "zod";
 import { createSimulatedClock } from "./orchestrator/clock.js";
 import { DEFAULT_PARAMS } from "./orchestrator/params.js";
-import { createRuntime, isCloud, startProtocolInbox, type Runtime } from "./orchestrator/runtime.js";
+import { createRuntime, isCloud, routesFor, startProtocolInbox, type Runtime } from "./orchestrator/runtime.js";
 import { createSandboxes } from "./orchestrator/sandbox.js";
 import { BUILD_COMMIT } from "./build-info.js";
 import { execSync } from "node:child_process";
@@ -322,7 +322,7 @@ mountRoutes([
 // They delegate to the current runtime, which /demo/reset replaces.
 // In cloud mode the Inkbox webhooks and the mock merchants' endpoints are not mounted at all (404).
 mountRoutes(
-  runtime.routes.filter((r) => !cloud || !(r.path.startsWith("/inkbox/") || r.path.startsWith("/merchants"))).map((r) => ({
+  routesFor(runtime.routes, cloud).map((r) => ({
     method: r.method,
     path: r.path,
     handle: (req: RouteRequest) => {
