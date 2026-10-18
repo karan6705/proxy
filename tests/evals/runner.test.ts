@@ -218,10 +218,10 @@ describe("the scenario set", () => {
 });
 
 describe("the newer scenarios", () => {
-  it("S04: a flight booked 4 days out has only a change fee, and the airline has no desk, so it is kept", async () => {
+  it("S04: a flight booked 4 days out has only a change fee, and the airline has no desk to ask", async () => {
     const result = await runScenario(scenario("S04"), "proxy");
-    expect(result.outcomes).toEqual({ flight: "kept" });
-    expect(result.agreed_refund_total).toBe(0);
+    expect(result.outcomes).toEqual({ flight: "not_undone" });
+    expect(result.transcript.join("\n")).toContain("no support desk to email");
   });
 
   it("S09: PICK undoes only the chosen plan and leaves the other alone", async () => {

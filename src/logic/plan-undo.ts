@@ -10,8 +10,6 @@
 //   return, no fee     route from the table, option "cancel", cost 0
 //   change / return    the window has closed on the cheap fix and only a fee fix is left. Take it only when the fee is
 //   with a fee         strictly less than the money lost by keeping (the action's amount); otherwise "keep"
-//                      Exception: a merchant with no agent and no support desk (the airline) cannot be asked for a fee
-//                      fix, so it is "keep" and the human changes it themselves.
 //   correct_message    route "correction", option "change", cost 0
 //   none               nothing is reversible any more: "keep", cost = the amount, route "stripe_dispute" as the
 //                      last resort the orchestrator may still try
@@ -26,9 +24,6 @@ import { getRule, ruleKeyForAction } from "./rules-table.js";
 
 /** Actions already refunded or deliberately kept need no more planning. */
 const SETTLED_STATES: ReadonlySet<ActionState> = new Set(["verified", "kept"]);
-
-/** Merchants with no agent and no support desk, so a fee fix after the free window cannot be requested. */
-const NO_FEE_FIX_ROUTE: ReadonlySet<string> = new Set(["airline"]);
 
 function keep(action: Action): PlanStep {
   return { action_id: action.action_id, route: "stripe_dispute", option: "keep", cost: action.amount, deadline: null };
@@ -50,9 +45,8 @@ function stepFor(action: Action, now: Timestamp): PlanStep {
       if (rev.kind === "return" && rev.cost_to_reverse === 0) {
         return { action_id: action.action_id, route: rule.route, option: "cancel", cost: 0, deadline: rev.window_ends_at };
       }
-      // Only a fee fix is left. Worth it only if the fee is strictly less than the loss from keeping, and only if
-      // Proxy has a way to ask for it: the airline has no agent and no support desk, so the human changes it themselves.
-      if (rev.cost_to_reverse < action.amount && !NO_FEE_FIX_ROUTE.has(action.merchant)) {
+      // Only a fee fix is left. Worth it only if the fee is strictly less than the loss from keeping.
+      if (rev.cost_to_reverse < action.amount) {
         return {
           action_id: action.action_id,
           route: rule.after_window?.route ?? rule.route,
