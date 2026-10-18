@@ -126,6 +126,11 @@ export interface MerchantModule {
   handleSupportEmail: ((email: SupportEmail, now: Timestamp) => Promise<SupportReply>) | null;
   /** A web return form, when the merchant takes returns that way. */
   returns?: ReturnsPortal;
+  /**
+   * Simulated in this process only, on every server: its agent, emails, return form and carrier never go through
+   * Inkbox (it has no Inkbox identity), even when the rest of the server uses real Inkbox.
+   */
+  in_process?: boolean;
   /** What the merchant would charge for an item, for a buying agent that orders again. */
   quote?(item: string): Cents | null;
 }

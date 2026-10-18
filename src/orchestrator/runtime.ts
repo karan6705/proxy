@@ -156,7 +156,8 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
       return { charge_id: result.charge_id };
     },
     async deliver(email) {
-      if (liveDeliver) return liveDeliver(email);
+      // An in-process merchant (Northwind Market) has no Inkbox identity: its emails go straight to capture.
+      if (liveDeliver && !(email.identity && merchants.inProcess(email.identity))) return liveDeliver(email);
       if (!capture) throw new Error("Capture is not ready for merchant email delivery");
       return deliverToCapture(capture)(email);
     },
@@ -175,10 +176,12 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   // Real Inkbox carries the protocol; without it (no key, or INKBOX_DRY_RUN=1) the in-process mock merchant
   // agent answers instead, so the whole negotiation still runs. PROXY_PROTOCOL_LOOPBACK=1 or 0 forces either.
   const realInkbox = !cloud && Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
-  const loopback = cloud || (env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !realInkbox);
+  const loopbackAll = cloud || (env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !realInkbox);
   let proxyRef: Proxy | null = null;
   const transport: ProtocolTransport = overrides.transport ?? {
     async send(merchant, to_identity, message, via = "default") {
+      // An in-process merchant's agent always answers here, even when the other merchants are on real Inkbox.
+      const loopback = loopbackAll || merchants.inProcess(merchant);
       if (!loopback && via === "email") {
         // Follow-up when the agent hasn't answered: the same JSON by email; the merchant bridge reads it.
         await inkbox.sendEmail({ to: `${to_identity}@inkboxmail.com`, subject: protocolSubject(message.type, message.negotiation_id), body: JSON.stringify(message) });
@@ -353,7 +356,8 @@ export async function startProtocolInbox(
   if (!real || loopback) return null;
   const rt = getRuntime();
   const handle = env.INKBOX_PROXY_HANDLE?.trim() || "proxy-agent";
-  const identities = rt.merchants.list().flatMap((m) => (m.agent_identity ? [m.agent_identity] : []));
+  // In-process merchants never send over Inkbox, so nothing from their handle is trusted.
+  const identities = rt.merchants.list().flatMap((m) => (m.agent_identity && !rt.merchants.inProcess(m.merchant_id) ? [m.agent_identity] : []));
   const last = await rt.proxy.undo.lastProcessedAt();
   const since = new Date((last ? Date.parse(last) : Date.now()) - 2 * 60_000).toISOString();
   const state = createRateLimitState();

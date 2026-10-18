@@ -243,6 +243,7 @@ export function createNorthwind(ctx: ModuleContext, options: NorthwindOptions = 
     info: NORTHWIND_INFO,
     agent: createAgent(ctx),
     handleSupportEmail: null,
+    in_process: true,
     returns,
     quote: (item) => NORTHWIND_CATALOG.find((p) => norm(p.name) === norm(item))?.price ?? null,
     book: (request) => placeOrder(ctx, spec, request),

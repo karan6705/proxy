@@ -76,6 +76,8 @@ export interface MerchantsImpl extends Merchants {
   returnPortal(merchant_id: MerchantId): ReturnsPortal | null;
   /** What the merchant charges for an item, or null when it does not sell it. */
   quote(merchant_id: MerchantId, item: string): Cents | null;
+  /** True for a merchant simulated only in this process (Northwind Market): never reached through Inkbox. */
+  inProcess(merchant_id: MerchantId): boolean;
   /** Calls `listener` whenever the simulated carrier scans a returned package. */
   onCarrierScan(listener: (scan: CarrierScan) => void): void;
 }
@@ -136,6 +138,7 @@ export function createMerchants(deps: MerchantDeps, options: CreateMerchantsOpti
     },
     hasSupportDesk: (merchant_id) => Boolean(byId.get(merchant_id)?.handleSupportEmail),
     getOrder: (ref) => ctx.orders.get(ref),
+    inProcess: (merchant_id) => byId.get(merchant_id)?.in_process === true,
     returnPortal: (merchant_id) => byId.get(merchant_id)?.returns ?? null,
     quote: (merchant_id, item) => byId.get(merchant_id)?.quote?.(item) ?? null,
     onCarrierScan: (listener) => {
