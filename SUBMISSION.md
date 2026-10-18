@@ -57,7 +57,7 @@ Do not say anything in the video, the form or at the live demo that this table d
 
 | Claim | Where it is true | Status and evidence |
 |---|---|---|
-| MCP server with six tools (seven with `try_proxy_demo`), a `mistakes` resource and a live-chain view | Cloud copy and laptop | Verified over MCP on the cloud URL: `initialize` answers as "proxy", `tools/list` returns six. The seventh tool and the sandbox example arrive with Karan's `demo-v1` change; **re-verify after the redeploy** |
+| MCP server with seven tools (the six plus `try_proxy_demo`), a `mistakes` resource and a live-chain view | Cloud copy and laptop | Verified over MCP on the cloud URL at commit `51feb13`: `initialize` answers as "proxy", `tools/list` returns seven, `list_chains` shows `sandbox_example` |
 | Error contract (`retryable`, `next_action`) | Cloud copy and laptop | Verified on the cloud URL with a real call |
 | A unique Inkbox address per task | Laptop only | Verified live: a task address was created and an email with schema.org markup parsed into the right Action. Not on the cloud copy (stand-in addresses) |
 | Capture reads structured data first, an LLM only as a fallback | Laptop; tested in code | JSON-LD, microdata and the LLM path are covered by tests, and the demo fixtures parse exactly. The LLM path has not been exercised live in this build |
@@ -71,7 +71,7 @@ Do not say anything in the video, the form or at the live demo that this table d
 | Reversal Protocol limited to three rounds, with a hard deadline | Code and tests | Enforced in the state machine and unit-tested; live runs used 3 messages from Proxy |
 | Deployed on Manufact Cloud | Cloud copy | Verified: running, reachable over HTTPS, no runtime errors. A managed upload, not linked to GitHub: pushes to `main` do not redeploy it; redeploy steps are in HANDOFF.md |
 | Works in several MCP clients | Not yet shown | Name only the clients you actually recorded |
-| Cloud copy's end-to-end sandbox demo (`try_proxy_demo`) | Cloud copy | **Pending Karan's `demo-v1`.** Verify that it ends at $1,144 of $1,240 on the redeployed URL before claiming it |
+| Cloud copy's end-to-end sandbox demo (`try_proxy_demo`) | Cloud copy | **Verified** at `51feb13`: it ends at $1,144 of $1,240 in under a second. Everything in it is simulated (Inkbox, payments, the merchants); its Stripe lines say "(simulated)" |
 | Proxy catches an agent's execution mistakes (a retry that duplicates a booking, a fallback that breaks the budget) | Shown in our own eval, as counts | `evals/RESULTS.md` (from `evals/results/layer2-2026-10-18T00-54-41-756Z.json`): a live Haiku 4.5 agent, 10 trials per task and arm; Proxy caught 19 of 19 real mistakes, all from two of the five tasks. Proxy ran in process, not over MCP, against our own mocks. Say counts, never a rate. |
 | Proxy catches an agent's misreading of the task | **Not shown. Do not claim.** | The same run: 0 of 60 on the two chain tasks, because the agent logged the same misreading in `log_intent`. Say it as the honest limit. |
 | Passing the human's own words (`original_request`) catches that | **Not shown. Keep it out of the pitch until a rerun shows it working** (the numeric-date change is pending). | `evals/results/intentcheck-2026-10-18T02-37-52-316Z.json`: 0 of 18. The parser read neither request (no date in one, "3/11" in the other). It does catch "November 13" against a logged Nov 3, but that is a unit test, and the human's answer is simulated. |
@@ -81,7 +81,8 @@ Do not say anything in the video, the form or at the live demo that this table d
 ## Before you submit
 
 - [x] The server is deployed and answers `tools/list` over MCP (checked, and re-checked after a test redeploy).
-- [ ] After Karan's `demo-v1` merges: redeploy with `PROXY_MODE=cloud`, `PROXY_DEMO_ROUTES=1`, `INKBOX_DRY_RUN=1` and still no keys, then re-verify seven tools, `sandbox_example` in `list_chains`, `try_proxy_demo` ending at $1,144 of $1,240, and the Inkbox webhook routes returning 404. Update the "Pending" rows above.
+- [x] Redeployed from `main` at `51feb13` with `PROXY_MODE=cloud`, `PROXY_DEMO_ROUTES=1`, `INKBOX_DRY_RUN=1` and no keys; seven tools, `sandbox_example`, `try_proxy_demo` at $1,144 of $1,240, and the Inkbox webhook routes returning 404 are all verified (`src/inkbox/cloud-verify.ts --health /status`). Redeploy if `main` changes again.
+- [ ] Run Manufact's dashboard checklist (Publish, Checklist, Run; $0.10, private) and note the score here.
 - [ ] The demo video is public, shows more than one MCP client, and the link works in a private window.
 - [ ] Nothing in the text says more than the claims table allows. Merchants are mocks, the clock is simulated, the cloud copy is a dry-run sandbox, SMS and calls are scoped as the table says.
 - [ ] Ask an organizer or Inkbox whether the Inkbox track needs its own submission (the event page does not say).
