@@ -23,6 +23,7 @@ import { createSessions } from "./sessions.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
 import type { ProtocolTransport } from "./undo.js";
 import { frontHumanChannel } from "./human-front.js";
+import { setPaymentsName } from "./copy.js";
 import { protocolSubject } from "../inkbox/index.js";
 
 /** Stands in for the human's number in the demo when HUMAN_PHONE isn't set. Nothing is ever sent to it. */
@@ -97,6 +98,8 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   const inkbox = overrides.inkbox ?? (useInkbox ? createInkbox({ store, clock }) : createStandInInkbox());
   const useStripe = (env.STRIPE_SECRET_KEY ?? "").startsWith("sk_test_");
   const fakePayments = useStripe ? null : createFakePayments();
+  // The offline recording runs on simulated payments; every text then says so instead of "Stripe".
+  setPaymentsName(fakePayments && env.PROXY_SIMULATED_PAYMENTS === "1" ? "Stripe (simulated)" : "Stripe");
   const fakeChargesByKey = new Map<string, string>();
   let fakeChargeSequence = 0;
   let capture: Capture | null = null;

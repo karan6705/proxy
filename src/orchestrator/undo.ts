@@ -31,7 +31,7 @@ import type {
 import { expectedRefund, refundOnce } from "./refunds.js";
 import { humanDate, type AlreadyUndone } from "./copy.js";
 import { runSelfServeRoute } from "./routes/self-serve.js";
-import { chainSummary, correctionStep, deniedStep, merchantLine, nextOption, noAnswerYet, proxyLine, refundedStep } from "./copy.js";
+import { payments as paymentsLabel, chainSummary, correctionStep, deniedStep, merchantLine, nextOption, noAnswerYet, proxyLine, refundedStep } from "./copy.js";
 import type { FeedActor, FeedEntry } from "./feed.js";
 
 /** What a support desk answers: whether it approved and the refund it agreed. */
@@ -114,7 +114,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   const note = (chain: Pick<Chain, "task_id" | "chain_id">, actor: FeedActor, kind: FeedEntry["kind"], text: string, data: FeedEntry["data"] = {}) =>
     deps.note?.({ task_id: chain.task_id, chain_id: chain.chain_id, actor, kind, text, data });
   const stripeNote = (chain: Chain, action: Action, refunded: Cents, ref: string | null) =>
-    note(chain, "stripe", "stripe_refund", `Stripe: ${money(refunded)} refunded on the ${merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, {
+    note(chain, "stripe", "stripe_refund", `${paymentsLabel()}: ${money(refunded)} refunded on the ${merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, {
       action_id: action.action_id,
       merchant: action.merchant,
       amount: refunded,
