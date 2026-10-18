@@ -1,11 +1,15 @@
 // The live demo page: event feed, chain list, and fallback buttons for UNDO ALL / PICK / KEEP.
-//   GET  /web          the page
-//   GET  /web/state    JSON the page polls
-//   POST /web/reply    {chain_id, kind: "undo_all" | "pick" | "keep", picks?: number[]}  (only when controls are on)
+//   GET  /web                 the reply page (current run only; ?all=1 shows every run, ?task_id=<id> picks one)
+//   GET  /web/state           JSON the page polls
+//   POST /web/reply           {chain_id, kind: "undo_all" | "pick" | "keep", picks?: number[]}  (only when controls are on)
+//   GET  /web/stage           the full-screen 16:9 view for screen recording (reads GET /demo/feed)
+//   GET  /web/stage-fixture   a built-in demo story for the stage page: ?step=N, or it advances by itself
 import type { EventReader } from "../db/memory.js";
 import type { HumanChannel } from "../inkbox/human.js";
 import type { Clock, EventRow, RouteHandler, Store } from "../types.js";
 import { PAGE_HTML } from "./page.js";
+import { FIXTURE_STEPS, fixtureFeed } from "./stage-feed.js";
+import { STAGE_HTML } from "./stage.js";
 
 export interface WebDeps {
   store: Store & EventReader;
@@ -15,6 +19,8 @@ export interface WebDeps {
   humanNumber?: string;
   /** Buttons are off unless this is true (the server passes PROXY_DEMO_ROUTES === "1"). */
   controls?: boolean;
+  /** The current demo run's task id (for example `() => proxy.deps.demo?.current`). /web shows only this run. */
+  currentTask?: () => string | null | undefined;
   /** Optional shared secret for POST /web/reply, sent as the x-demo-token header. */
   token?: string;
   /** Latest scoreboard JSON, written by the eval runner. Shown as-is if present. */
@@ -22,8 +28,10 @@ export interface WebDeps {
 }
 
 const EVENT_LIMIT = 80;
+const lastAlertMs = (c: { alerts: { sent_at: string }[] }) => c.alerts.reduce((t, a) => Math.max(t, Date.parse(a.sent_at)), 0);
 
 export function createWebRoutes(deps: WebDeps): RouteHandler[] {
+  let fixtureStartedAt: number | null = null;
   const controls = Boolean(deps.controls && deps.channel && deps.humanNumber);
 
   return [
@@ -35,8 +43,13 @@ export function createWebRoutes(deps: WebDeps): RouteHandler[] {
     {
       method: "GET",
       path: "/web/state",
-      async handle() {
-        const chains = await deps.store.listChains();
+      async handle(req) {
+        const all = await deps.store.listChains();
+        // Only the current run: an explicit ?task_id, else the run the server says is current, else the newest.
+        const newestTask = [...all].sort((a, b) => lastAlertMs(b) - lastAlertMs(a))[0]?.task_id ?? null;
+        const task_id = req.query.task_id || deps.currentTask?.() || newestTask;
+        const showAll = req.query.all === "1";
+        const chains = showAll || !task_id ? all : all.filter((c) => c.task_id === task_id);
         const withActions = await Promise.all(
           chains.map(async (c) => ({
             chain_id: c.chain_id,
@@ -51,10 +64,10 @@ export function createWebRoutes(deps: WebDeps): RouteHandler[] {
             ),
           })),
         );
-        const events = (await deps.store.recentEvents(EVENT_LIMIT)).map((e: EventRow) => ({
+        const events = (await deps.store.recentEvents(EVENT_LIMIT * 4)).filter((e: EventRow) => showAll || !task_id || !e.task_id || e.task_id === task_id).slice(0, EVENT_LIMIT).map((e: EventRow) => ({
           timestamp: e.timestamp, kind: e.kind, outcome: e.outcome, tool_name: e.tool_name, chain_id: e.chain_id, task_id: e.task_id,
         }));
-        return { status: 200, headers: { "cache-control": "no-store" }, body: { now: deps.clock.now(), controls, chains: withActions, events, scoreboard: (await deps.scoreboard?.()) ?? null } };
+        return { status: 200, headers: { "cache-control": "no-store" }, body: { now: deps.clock.now(), controls, task_id: showAll ? null : task_id, hidden_chains: all.length - chains.length, chains: withActions, events, scoreboard: (await deps.scoreboard?.()) ?? null } };
       },
     },
     {
@@ -72,11 +85,33 @@ export function createWebRoutes(deps: WebDeps): RouteHandler[] {
         const picks = Array.isArray(body.picks) && body.picks.every((n) => Number.isInteger(n) && n >= 1 && n <= 99) ? (body.picks as number[]) : undefined;
         const text = body.kind === "undo_all" ? "UNDO ALL" : body.kind === "keep" ? "KEEP" : body.kind === "pick" ? (picks?.length ? `PICK ${picks.join(" ")}` : "PICK") : null;
         if (!text || typeof body.chain_id !== "string") return { status: 400, body: { ok: false, message: "chain_id and kind (undo_all, pick, keep) are required" } };
-        // The channel answers for the most recently alerted chain; refuse a button for any other chain.
+        // The button names its own chain, so a tap always lands on the chain it was drawn for.
         const chain = await deps.store.getChain(body.chain_id);
         if (!chain) return { status: 404, body: { ok: false, message: "unknown chain" } };
-        const result = await deps.channel!.handleInbound({ from: deps.humanNumber!, body: text, via: "sms" });
+        const result = await deps.channel!.handleInbound({ from: deps.humanNumber!, body: text, via: "sms", chain_id: body.chain_id });
         return { status: 200, body: { ok: true, result } };
+      },
+    },
+    {
+      method: "GET",
+      path: "/web/stage",
+      handle: async () => ({ status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: STAGE_HTML }),
+    },
+    {
+      method: "GET",
+      path: "/web/stage-fixture",
+      async handle(req) {
+        // ?step=N shows exactly N steps. Otherwise the story advances by itself every 2.5 s from the first request
+        // (?restart=1 starts it again), which is what a rehearsal or a screen recording wants.
+        if (req.query.restart === "1") fixtureStartedAt = null;
+        let step: number;
+        if (req.query.step !== undefined && req.query.step !== "") step = Number(req.query.step);
+        else {
+          fixtureStartedAt ??= Date.now();
+          step = Math.floor((Date.now() - fixtureStartedAt) / 2500);
+        }
+        if (!Number.isFinite(step)) return { status: 400, body: { ok: false, message: "step must be a number" } };
+        return { status: 200, headers: { "cache-control": "no-store" }, body: { ...fixtureFeed(step), step: Math.min(step, FIXTURE_STEPS.length), steps: FIXTURE_STEPS.length } };
       },
     },
   ];
