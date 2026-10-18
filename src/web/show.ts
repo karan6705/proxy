@@ -341,8 +341,9 @@ footer .hint{color:var(--faint)}
   function card(b,opts){
     var c=el("div","card"), icon=el("div","icon",ICONS[b.category]||"•"), mid=el("div"), amt=el("div","amt");
     // The line below shows the dates, so the title drops a trailing " · Nov 3" or " · Nov 3 to Nov 6".
-    mid.appendChild(el("div","what",String(b.summary||"").replace(/\s·\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?: to (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})?$/,"")));
-    var when=el("div","when",b.category==="saas"?(/annual/i.test(b.summary)?"Billed annually":"Billed monthly"):range(b.dates));
+    mid.appendChild(el("div","what",(b.category==="saas"?"Team plan · "+String(b.summary||"").replace(/^Saas · /i,""):String(b.summary||"")).replace(/\s·\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?: to (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})?$/,"")));
+    var annual=/annual|yearly/i.test(String(b.raw||b.summary));
+    var when=el("div","when",b.category==="saas"?(annual?"Billed annually":"Billed monthly"):range(b.dates));
     mid.appendChild(when);
     if(b.category==="message"){amt.textContent=opts.corrected?"Corrected":"Sent";if(opts.corrected)amt.style.color="var(--green)"}
     else if(opts.refunded!==undefined){var s=el("s",null,money(b.amount));amt.appendChild(s);amt.appendChild(el("span","back","Refunded "+money(opts.refunded)))}
@@ -372,14 +373,14 @@ footer .hint{color:var(--faint)}
     frag.appendChild(el("div","you",d.request||("Book my "+String(d.goal||"").replace(/^[A-Z](?=[a-z])/,function(c){return c.toLowerCase()}))));
     var made=es.filter(function(e){return e.kind==="booking"||e.kind==="message"});
     var redo=es.filter(function(e){return e.kind==="redo"});
-    var asB=function(e){return byId[e.data.action_id]||{id:e.data.action_id,category:e.data.category,summary:strip(e.text),amount:Number(e.data.amount||0),dates:e.data.start?{start:e.data.start,end:e.data.end||undefined}:undefined}};
+    var asB=function(e){var b=byId[e.data.action_id];if(b)return Object.assign({raw:e.text},b);return {raw:e.text,id:e.data.action_id,category:e.data.category,summary:strip(e.text),amount:Number(e.data.amount||0),dates:e.data.start?{start:e.data.start,end:e.data.end||undefined}:undefined}};
     if(story==="ambiguous"){
       var showRead=(LIVE&&!PRESENT)||scene>=2;
       if(showRead)frag.appendChild(bot("On it. I read that as "+range({start:d.start,end:d.end})+", so I'll book that."));
-      if(es.some(function(e){return e.kind==="mismatch"}))frag.appendChild(el("div","sys","Proxy paused your agent to check the date with you"));
+      if(es.some(function(e){return e.kind==="mismatch"}))frag.appendChild(el("div","sys","Proxy told your agent to wait while it checks the date with you"));
       if(made.length){
-        var r=made[0]&&made[0].data;
-        frag.appendChild(bot("Done! Booked for "+range({start:r.start,end:(made.filter(function(e){return e.data.end})[0]||{data:{}}).data.end})+" ✅",made.map(function(e){return card(asB(e),{good:true})})));
+        var end=made.filter(function(e){return e.data.end})[0];
+        frag.appendChild(bot("Done! Booked for "+range({start:made[0].data.start,end:end?end.data.end:undefined})+" ✅",made.map(function(e){return card(asB(e),{good:true})})));
       }
     }else{
       if(made.length){
@@ -511,6 +512,8 @@ footer .hint{color:var(--faint)}
         var c=el("div","check");c.appendChild(el("div","check-head","Intent check: your words against the plan"));
         var said=String(d.said||""), agent=String(d.understood||"");
         var rows=[["You wrote",said.replace(/\s*\(.*$/,"")],["Your agent read",agent],["It could also mean",(said.match(/\((.*)\)/)||["",""])[1].replace(agent.replace(/ to .*/,""),"").replace(/^ or | or $/,"")]];
+        var got=es.filter(function(x){return x.kind==="text_out"&&/^Got it: /.test(x.text)})[0];
+        if(got)rows.push(["You meant",got.text.replace(/^Got it: /,"").replace(/\. .*$/,"")+" ✅"]);
         rows.forEach(function(x){var r2=el("div","reading");r2.appendChild(el("span","r",x[0]));r2.appendChild(el("span",null,x[1]));c.appendChild(r2)});
         frag.appendChild(c);any=true;
       }

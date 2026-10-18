@@ -198,6 +198,7 @@ Also done: `plan_undo` keep steps now use `route: "keep"`, and the airline after
 ## Sarah
 
 ### From Karan's agent: /web/show, the presentation page (2026-10-17, while you were offline)
+- `src/capture/capture.ts`: the sender map now knows Acme Cloud (`acmecloud.example` -> `saas`, and `saas` as a category fallback), so the plan story's receipt is the `saas` merchant and its undo emails billing instead of falling back to a card dispute.
 - New in your folder: `src/web/show.ts` (the page) and `src/web/show.test.ts`; `src/web/routes.ts` serves `GET /web/show` and `POST /web/reply` also takes `{kind: "choice", choice: 1 | 2}` (it answers Proxy's intent question exactly like a "1" or "2" text). `/web/stage` is unchanged and stays the fallback.
 
 ### From Dhwanil: the `/web` feed wording

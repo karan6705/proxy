@@ -28,13 +28,14 @@ async function post<T>(url: URL, body: unknown, fetchImpl: typeof fetch): Promis
   return response.json() as Promise<T>;
 }
 
-export function createHttpMerchants(mcpUrl: string, fetchImpl: typeof fetch = fetch): DemoBookingMerchants {
+/** `defer`: which merchants hold their confirmation until releaseConfirmation (the late confirmation). Default: the hotel. */
+export function createHttpMerchants(mcpUrl: string, fetchImpl: typeof fetch = fetch, defer: (merchant_id: string) => boolean = (id) => id === "hotel"): DemoBookingMerchants {
   const refs = new Map<string, ConfirmationRef>();
   return {
     async book(request) {
       const result = await post<BookingResult>(
         endpoint(mcpUrl, `/merchants/${encodeURIComponent(request.merchant_id)}/book`),
-        { ...request, defer_confirmation: request.merchant_id === "hotel" },
+        { ...request, defer_confirmation: defer(request.merchant_id) },
         fetchImpl,
       );
       refs.set(result.ref, { merchant_id: request.merchant_id, ref: result.ref });

@@ -69,4 +69,29 @@ describe("try_proxy_demo sandbox", () => {
       for (const k of ["INKBOX_API_KEY", "STRIPE_SECRET_KEY", "HUMAN_PHONE"]) if (before[k] === undefined) delete process.env[k];
     }
   });
+
+  it("the ambiguous story asks before booking and books the dates the human meant, with nothing at risk", async () => {
+    const sandboxes = createSandboxes();
+    const r = await sandboxes.run("show_ambiguous", "ambiguous");
+    expect(r).toMatchObject({ task_id: "show_ambiguous", chain_id: "", finished: true });
+    const feed = sandboxes.forTask("show_ambiguous")!.feed.list("show_ambiguous");
+    const kinds = feed.map((e) => e.kind);
+    // The question comes before the first booking.
+    expect(kinds.indexOf("text_out")).toBeLessThan(kinds.indexOf("booking"));
+    expect(feed.find((e) => e.kind === "text_out")?.text).toBe("You wrote 3/11. Your agent read it as Mar 11. Did you mean Nov 3 or Mar 11? Reply 1 or 2.");
+    expect(feed.filter((e) => e.kind === "booking").map((e) => e.data.start)).toEqual(["2026-11-03", "2026-11-03", "2026-11-03"]);
+    expect(kinds).not.toContain("stripe_refund");
+    // /web/show's recordings are not chains an agent is told about.
+    expect(await sandboxes.chains()).toEqual([]);
+  });
+
+  it("the plan story refunds the annual plan in full and re-subscribes monthly", async () => {
+    const sandboxes = createSandboxes();
+    const r = await sandboxes.run("show_plan", "plan");
+    expect(r.finished).toBe(true);
+    expect(r.summary).toContain("$1,188 of $1,188 is back, confirmed on simulated payments.");
+    const feed = sandboxes.forTask("show_plan")!.feed.list("show_plan");
+    expect(feed.find((e) => e.kind === "text_out")?.text).toMatch(/^Your agent signed up for the annual plan, not monthly\./);
+    expect(feed.filter((e) => e.kind === "redo").map((e) => [e.data.category, e.data.amount])).toEqual([["saas", 9_900]]);
+  });
 });
