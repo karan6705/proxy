@@ -1,0 +1,201 @@
+// The scoreboard page: one self-contained HTML file (no network, no scripts) styled as a dark 16:9 slide.
+//
+//   npx tsx evals/scoreboard.ts      writes evals/scoreboard/index.html from the latest Layer 1 and Layer 2 results
+//
+// Counts, never percentages. Every number comes from a results file written by an actual run. The caveat line is
+// part of the page, not a footnote to remove. Karan's server can serve renderLatestScoreboard() at /scoreboard.
+
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+export const RESULTS_DIR = join(HERE, "results");
+export const SCOREBOARD_FILE = join(HERE, "scoreboard", "index.html");
+
+interface Layer1Summary {
+  arm: "naive" | "proxy";
+  scenarios: number;
+  passed: number;
+  mistakes_expected: number;
+  mistakes_caught: number;
+  known_misses: number;
+  false_alarms: number;
+  known_false_alarms: number;
+  chain_members_expected: number;
+  chain_members_found: number;
+  outcomes_expected: number;
+  outcomes_correct: number;
+  refund_agreed: number;
+  refund_expected: number;
+  false_done_claims: number;
+}
+
+export interface Layer1Results {
+  run_id: string;
+  note?: string;
+  not_measured?: { name: string; why: string }[];
+  summaries: Layer1Summary[];
+}
+
+export interface Layer2Results {
+  run_id: string;
+  model: string;
+  summary: {
+    trials_per_task_arm: number;
+    naive: { episodes: number; episodes_with_real_mistakes: number; self_detected: number; false_done_claims: number; tokens: number };
+    proxy: {
+      episodes: number;
+      episodes_with_real_mistakes: number;
+      mistakes: number;
+      caught: number;
+      false_alarms: number;
+      refund_agreed: number;
+      tokens: number;
+    };
+  };
+}
+
+const escapeHtml = (value: unknown): string =>
+  String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char);
+
+const dollars = (cents: number): string => {
+  const whole = cents % 100 === 0;
+  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 })}`;
+};
+/** The date part of a run id such as layer1-2026-10-17T23-22-35-970Z. */
+const runDate = (runId: string): string => runId.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? runId;
+const outOf = (value: number, total: number): string => `${value} / ${total}`;
+const NA = "n/a";
+
+interface Row {
+  label: string;
+  naive: string;
+  proxy: string;
+  /** A short second line under the label. */
+  hint?: string;
+}
+
+function layer1Rows(results: Layer1Results): Row[] {
+  const naive = results.summaries.find((item) => item.arm === "naive");
+  const proxy = results.summaries.find((item) => item.arm === "proxy");
+  if (!naive || !proxy) {
+    return [];
+  }
+  const rows: Row[] = [
+    { label: "Scenarios passed", naive: outOf(naive.passed, naive.scenarios), proxy: outOf(proxy.passed, proxy.scenarios) },
+    {
+      label: "Real mistakes caught",
+      naive: outOf(naive.mistakes_caught, naive.mistakes_expected),
+      proxy: outOf(proxy.mistakes_caught, proxy.mistakes_expected),
+      hint: `${proxy.known_misses} are documented known misses`,
+    },
+    { label: "False alarms", naive: String(naive.false_alarms), proxy: String(proxy.false_alarms), hint: `${proxy.known_false_alarms} documented` },
+    { label: "Chain members found", naive: outOf(naive.chain_members_found, naive.chain_members_expected), proxy: outOf(proxy.chain_members_found, proxy.chain_members_expected) },
+    { label: "Undo outcomes correct", naive: outOf(naive.outcomes_correct, naive.outcomes_expected), proxy: outOf(proxy.outcomes_correct, proxy.outcomes_expected) },
+    {
+      label: "Refunds agreed",
+      naive: `${dollars(naive.refund_agreed)} / ${dollars(naive.refund_expected)}`,
+      proxy: `${dollars(proxy.refund_agreed)} / ${dollars(proxy.refund_expected)}`,
+      hint: "merchant-agreed, not Stripe-verified",
+    },
+  ];
+  return rows;
+}
+
+/** The metrics this layer cannot measure, listed explicitly as n/a so nothing is implied. */
+function notMeasured(results: Layer1Results): string {
+  return (results.not_measured ?? []).map((metric) => metric.name).join(" · ");
+}
+
+function layer2Rows(results: Layer2Results): Row[] {
+  const { naive, proxy } = results.summary;
+  return [
+    { label: "Episodes with a real mistake", naive: outOf(naive.episodes_with_real_mistakes, naive.episodes), proxy: outOf(proxy.episodes_with_real_mistakes, proxy.episodes), hint: "separate live runs per arm" },
+    { label: "Mistakes noticed or caught", naive: outOf(naive.self_detected, naive.episodes_with_real_mistakes), proxy: outOf(proxy.caught, proxy.mistakes), hint: "agent said PROBLEM / Proxy flagged" },
+    { label: "False “done” claims", naive: String(naive.false_done_claims), proxy: NA },
+    { label: "False alarms", naive: NA, proxy: String(proxy.false_alarms) },
+    { label: "Refunds agreed", naive: NA, proxy: dollars(proxy.refund_agreed), hint: "merchant-agreed, not Stripe-verified" },
+    { label: "Agent tokens", naive: naive.tokens.toLocaleString("en-US"), proxy: proxy.tokens.toLocaleString("en-US") },
+  ];
+}
+
+function table(rows: Row[], naiveLabel: string, na: string): string {
+  const body = rows
+    .map(
+      (row) => `<tr>
+        <th scope="row">${escapeHtml(row.label)}${row.hint ? `<small>${escapeHtml(row.hint)}</small>` : ""}</th>
+        <td class="${row.naive === NA ? "na" : ""}">${escapeHtml(row.naive)}</td>
+        <td class="proxy ${row.proxy === NA ? "na" : ""}">${escapeHtml(row.proxy)}</td>
+      </tr>`,
+    )
+    .join("");
+  return `<table><thead><tr><th></th><th>${escapeHtml(naiveLabel)}</th><th class="proxy">Proxy</th></tr></thead><tbody>${body}</tbody></table><p class="nalist"><b>n/a here:</b> ${escapeHtml(na)}</p>`;
+}
+
+const CSS = `
+:root{--bg:#0a0c10;--panel:#12151c;--line:#232834;--text:#e8ebf2;--muted:#8a93a6;--accent:#5eead4;--warn:#fbbf24;--u:min(1vw,1.7778vh)}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+body{display:grid;place-items:center;min-height:100vh}
+.slide{width:calc(var(--u)*100);height:calc(var(--u)*56.25);padding:calc(var(--u)*3.2) calc(var(--u)*4);display:flex;flex-direction:column;gap:calc(var(--u)*1.6);overflow:hidden}
+header{display:flex;align-items:baseline;justify-content:space-between}
+h1{font-size:calc(var(--u)*3.4);margin:0;letter-spacing:-.02em}h1 span{color:var(--accent)}
+.sub{color:var(--muted);font-size:calc(var(--u)*1.35)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:calc(var(--u)*2);flex:1;min-height:0}
+section{background:var(--panel);border:1px solid var(--line);border-radius:calc(var(--u)*1);padding:calc(var(--u)*1.6) calc(var(--u)*1.8);display:flex;flex-direction:column;min-height:0}
+h2{margin:0 0 calc(var(--u)*.3);font-size:calc(var(--u)*1.8)}
+.tag{color:var(--muted);font-size:calc(var(--u)*1);margin-bottom:calc(var(--u)*.8)}
+table{width:100%;border-collapse:collapse;font-size:calc(var(--u)*1.25)}
+thead th{color:var(--muted);font-weight:500;text-align:right;padding:0 0 calc(var(--u)*.6)}
+thead th:first-child{text-align:left}
+tbody th{text-align:left;font-weight:500;padding:calc(var(--u)*.5) 0;border-top:1px solid var(--line)}
+tbody th small{display:block;color:var(--muted);font-weight:400;font-size:calc(var(--u)*.95)}
+td{text-align:right;padding:calc(var(--u)*.5) 0 calc(var(--u)*.5) calc(var(--u)*1);border-top:1px solid var(--line);font-variant-numeric:tabular-nums;white-space:nowrap}
+thead th:not(:first-child){white-space:nowrap;padding-left:calc(var(--u)*1)}
+.nalist{margin:calc(var(--u)*.9) 0 0;color:var(--muted);font-size:calc(var(--u)*1)}.nalist b{font-weight:600}
+.proxy{color:var(--accent);font-weight:600}.na{color:var(--muted);font-weight:400}
+.caveat{margin:0;color:var(--warn);font-size:calc(var(--u)*1.1);line-height:1.45;border-top:1px solid var(--line);padding-top:calc(var(--u)*1)}
+.empty{color:var(--muted);font-size:calc(var(--u)*1.3);margin:auto}
+`;
+
+export function renderScoreboard(layer1: Layer1Results | null, layer2: Layer2Results | null): string {
+  const first = layer1
+    ? `<h2>Scripted scenarios</h2><div class="tag">${escapeHtml(layer1.summaries[0]?.scenarios ?? 0)} scenarios · Layer 1 · scripted · ${escapeHtml(runDate(layer1.run_id))}</div>${table(layer1Rows(layer1), "Naive (scripted)", notMeasured(layer1))}`
+    : `<h2>Scripted scenarios</h2><p class="empty">No Layer 1 results yet. Run: npx tsx evals/run.ts</p>`;
+  const second = layer2
+    ? `<h2>Live agent</h2><div class="tag">${escapeHtml(layer2.model)} · ${escapeHtml(layer2.summary.trials_per_task_arm)} trials per task and arm · Layer 2 · live · ${escapeHtml(runDate(layer2.run_id))}</div>${table(layer2Rows(layer2), "Naive (self-check)", "time to alert · Stripe-verified money · redo correctness")}`
+    : `<h2>Live agent</h2><p class="empty">No Layer 2 results yet. Run: npx tsx --env-file=.env evals/live/run.ts</p>`;
+  const caveat =
+    "Counts from actual runs, not rates. Layer 1 is scripted: its naive column is a scripted self-review, not a measured miss rate. " +
+    "Layer 2 is a live model on five faulty tasks, with separate runs per arm and Proxy running in process. " +
+    "Refunds are amounts the merchants agreed; Stripe verification and time to alert are not measured here. Merchants and the clock are our own simulations.";
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proxy scoreboard</title><style>${CSS}</style></head>
+<body><main class="slide">
+<header><h1><span>Proxy</span> scoreboard</h1><div class="sub">the undo layer for AI agents</div></header>
+<div class="grid"><section>${first}</section><section>${second}</section></div>
+<p class="caveat">${escapeHtml(caveat)}</p>
+</main></body></html>
+`;
+}
+
+function latest<T>(prefix: string, dir: string): T | null {
+  if (!existsSync(dir)) {
+    return null;
+  }
+  const names = readdirSync(dir).filter((name) => name.startsWith(prefix) && name.endsWith(".json")).sort();
+  const newest = names.at(-1);
+  return newest ? (JSON.parse(readFileSync(join(dir, newest), "utf8")) as T) : null;
+}
+
+/** The page built from the newest Layer 1 and Layer 2 result files. */
+export function renderLatestScoreboard(dir: string = RESULTS_DIR): string {
+  return renderScoreboard(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  mkdirSync(dirname(SCOREBOARD_FILE), { recursive: true });
+  writeFileSync(SCOREBOARD_FILE, renderLatestScoreboard());
+  console.log(`Wrote ${SCOREBOARD_FILE}`);
+}
