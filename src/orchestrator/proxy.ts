@@ -18,7 +18,7 @@ import type {
   Store,
   TaskId,
 } from "../types.js";
-import { composeChainAlert } from "../inkbox/alert.js";
+import { chainAlert, chainMoney, correctedDates, humanDate } from "./copy.js";
 import { createUndoExecutor, type ProtocolTransport, type UndoExecutor, type UndoMerchants } from "./undo.js";
 
 export interface ProxyDeps {
@@ -76,6 +76,12 @@ export interface Proxy extends OrchestratorHooks {
   alertChains(task_id: TaskId): Promise<void>;
   /** Merchant protocol messages and human decisions are applied by this. */
   undo: UndoExecutor;
+  /** RESUME after STOP: lifts the freeze and carries on with paused work. */
+  resume(): Promise<void>;
+  /** Answer to "Just to check..." after a correction text. False when no correction was waiting. */
+  confirmCorrection(chain_id: ChainId, accept: boolean): Promise<boolean>;
+  /** Demo only: closes open chains of earlier demo runs as expired, so nothing waits on them. */
+  expireOtherDemoChains(current: TaskId): Promise<number>;
   /** Demo only: starts a new demo run with the next unused task id (task_demo_1, task_demo_2, ...). */
   startDemoTask(): Promise<TaskId>;
 }
@@ -99,7 +105,15 @@ export function createProxy(deps: ProxyDeps): Proxy {
   const { store, logic, clock } = deps;
   let frozen = false;
   let humanChannel: HumanChannelLink | null = null;
+  // One writer at a time per chain (alerts, plan, state); steps go to their own table.
+  const chainQueues = new Map<ChainId, Promise<unknown>>();
+  function lockChain<T>(chain_id: ChainId, fn: () => Promise<T>): Promise<T> {
+    const run = (chainQueues.get(chain_id) ?? Promise.resolve()).then(fn, fn);
+    chainQueues.set(chain_id, run.catch(() => undefined));
+    return run;
+  }
   const undo = createUndoExecutor({
+    lockChain,
     store,
     logic,
     inkbox: deps.inkbox,
@@ -198,13 +212,27 @@ export function createProxy(deps: ProxyDeps): Proxy {
     } else {
       await logEvent({ kind: channel === "imessage" ? "imessage_out" : "sms_out", chain_id, task_id: chain.task_id, outcome: `${kind}:not_sent_no_human_number` });
     }
-    const alert: Alert = { channel, kind, body, sent_at: clock.now() };
-    const latest = (await store.getChain(chain_id)) ?? chain;
-    await store.upsertChain({
-      ...latest,
-      alerts: [...latest.alerts, alert],
-      state: latest.state === "detected" && kind === "chain_opened" ? "alerted" : latest.state,
+    await lockChain(chain_id, async () => {
+      const alert: Alert = { channel, kind, body, sent_at: await alertTime() };
+      const latest = (await store.getChain(chain_id)) ?? chain;
+      await store.upsertChain({
+        ...latest,
+        alerts: [...latest.alerts, alert],
+        state: latest.state === "detected" && kind === "chain_opened" ? "alerted" : latest.state,
+      });
     });
+  }
+
+  // Alert times only move forward. A demo reset sets the simulated clock back, and replies go to the chain
+  // with the latest alert, so a new run's alert must never look older than an earlier run's.
+  let lastAlertMs: number | null = null;
+  async function alertTime(): Promise<string> {
+    if (lastAlertMs === null) {
+      lastAlertMs = 0;
+      for (const c of await store.listChains()) for (const a of c.alerts) lastAlertMs = Math.max(lastAlertMs, Date.parse(a.sent_at));
+    }
+    lastAlertMs = Math.max(clock.nowMs(), lastAlertMs + 1);
+    return new Date(lastAlertMs).toISOString();
   }
 
   const alertTimers = new Map<TaskId, ReturnType<typeof setTimeout>>();
@@ -215,15 +243,14 @@ export function createProxy(deps: ProxyDeps): Proxy {
     for (const chain of chains) {
       if (chain.state !== "detected" || chain.alerts.length > 0) continue;
       const mine = mismatches.filter((m) => chain.action_ids.includes(m.action_id));
-      const first = mine[0];
-      const what = first
-        ? `used the wrong ${first.field} (${String(first.actual)}, not ${String(first.expected)})`
-        : "made a mistake";
+      const actions = await store.listActions(task_id);
+      const { at_risk, total } = chainMoney(chain, actions);
       const left = chain.window_ends_at ? Date.parse(chain.window_ends_at) - clock.nowMs() : null;
-      await textHuman(chain.chain_id, "chain_opened", composeChainAlert({
-        what_went_wrong: what,
-        affected: chain.action_ids.length,
-        money_at_risk: chain.money_at_risk,
+      await textHuman(chain.chain_id, "chain_opened", chainAlert({
+        mismatch: mine[0],
+        affected: chain.action_ids.filter((id) => actions.find((a) => a.action_id === id && !["verified", "kept"].includes(a.state))).length,
+        at_risk,
+        total,
         time_left_ms: left,
       }));
     }
@@ -238,6 +265,37 @@ export function createProxy(deps: ProxyDeps): Proxy {
     }, ms);
     t.unref?.();
     alertTimers.set(task_id, t);
+  }
+
+  async function taskIntent(chain_id: ChainId) {
+    const chain = await store.getChain(chain_id);
+    return chain ? store.getIntent(chain.task_id) : null;
+  }
+
+  /** The human confirmed (or not) a correction they texted. YES fixes the intent's dates if needed, then undoes the chain. */
+  async function confirmCorrection(chain_id: ChainId, accept: boolean) {
+    const pending = pendingCorrections.get(chain_id);
+    if (!pending) return false;
+    pendingCorrections.delete(chain_id);
+    await logEvent({ kind: "sms_in", chain_id, outcome: accept ? "correction_confirmed" : "correction_declined" });
+    if (!accept) {
+      await textHuman(chain_id, "reminder", "Okay, nothing changed. Reply UNDO ALL, PICK or KEEP.");
+      return true;
+    }
+    const intent = await taskIntent(chain_id);
+    const dates = intent ? correctedDates(pending.corrected_text, intent) : null;
+    if (intent && dates && (dates.start !== intent.constraints.dates?.start || dates.end !== intent.constraints.dates?.end)) {
+      try {
+        await store.putIntent({ ...intent, constraints: { ...intent.constraints, dates } }, `correction:${chain_id}`);
+        await refreshChains(intent.task_id);
+      } catch (e) {
+        // The Supabase store can't update an intent yet (requested from Sarah); the undo still runs.
+        console.error("[correction] could not update the intent:", e instanceof Error ? e.name : e);
+      }
+    }
+    await textHuman(chain_id, "reminder", `Got it${dates ? `: ${humanDate(dates.start)}` : ""}. Starting the undo.`);
+    await undo.start(chain_id);
+    return true;
   }
 
   async function askHumanAboutCounter(chain_id: ChainId, negotiation_id: string, body: string) {
@@ -264,6 +322,24 @@ export function createProxy(deps: ProxyDeps): Proxy {
     textHuman,
     alertChains,
     undo,
+    confirmCorrection,
+    async resume() {
+      if (!frozen) return;
+      frozen = false;
+      await logEvent({ kind: "sms_in", outcome: "resume" });
+      await undo.resume();
+    },
+    async expireOtherDemoChains(current) {
+      const demo = deps.demo;
+      if (!demo) return 0;
+      let n = 0;
+      for (const c of await store.listChains()) {
+        if (c.task_id === current || !c.task_id.startsWith(demo.identityTaskId) || !OPEN_STATES.has(c.state)) continue;
+        await store.upsertChain({ ...c, state: "expired" });
+        n += 1;
+      }
+      return n;
+    },
     setHumanChannel(channel) {
       humanChannel = channel;
     },
@@ -290,7 +366,9 @@ export function createProxy(deps: ProxyDeps): Proxy {
       let reply = incoming;
       if (reply.kind !== "stop") {
         const named = await store.getChain(reply.chain_id);
-        if (!named || !OPEN_STATES.has(named.state)) {
+        // In the demo, a reply always belongs to the current run, never to a chain left from an earlier one.
+        const otherRun = Boolean(deps.demo?.current && named && named.task_id !== deps.demo.current);
+        if (!named || !OPEN_STATES.has(named.state) || otherRun) {
           const current = await mostRecentlyAlertedOpenChain();
           if (current) reply = { ...reply, chain_id: current.chain_id };
         }
@@ -301,16 +379,32 @@ export function createProxy(deps: ProxyDeps): Proxy {
         frozen = true;
         return;
       }
-      // Any later reply from the human lifts a STOP.
-      frozen = false;
-      if (reply.kind === "correction") {
-        // Confirmed once with the human before acting; sending that confirmation lands with the alerts flow.
-        pendingCorrections.set(reply.chain_id, { corrected_text: reply.corrected_text, received_at: reply.received_at });
+      // Any later reply from the human lifts a STOP, and work paused by it carries on.
+      if (frozen) {
+        frozen = false;
+        await undo.resume();
       }
-      if (reply.kind === "undo_all") await undo.start(reply.chain_id);
-      else if (reply.kind === "pick") await undo.start(reply.chain_id, reply.picks);
+      if (reply.kind === "correction") {
+        // Confirmed once with the human before acting on it.
+        pendingCorrections.set(reply.chain_id, { corrected_text: reply.corrected_text, received_at: reply.received_at });
+        const intent = await taskIntent(reply.chain_id);
+        const dates = intent ? correctedDates(reply.corrected_text, intent) : null;
+        await textHuman(
+          reply.chain_id,
+          "reminder",
+          dates
+            ? `Just to check: the right dates are ${humanDate(dates.start)}${dates.end ? ` to ${humanDate(dates.end)}` : ""}? Reply YES to fix everything for those dates, or NO.`
+            : `Just to check: you want this fixed? Reply YES to undo it, or NO.`,
+        );
+        return;
+      }
+      // The undo runs after this returns, so the channel's "Got it" reaches the human before any progress text.
+      const later = (work: () => Promise<void>) =>
+        setImmediate(() => work().catch((e) => console.error("[undo] failed:", e)));
+      if (reply.kind === "undo_all") later(() => undo.start(reply.chain_id));
+      else if (reply.kind === "pick") later(() => undo.start(reply.chain_id, reply.picks));
       else if (reply.kind === "keep") await undo.keep(reply.chain_id);
-      else if (reply.kind === "counter_decision") await undo.decideCounter(reply.chain_id, reply.negotiation_id, reply.accept);
+      else if (reply.kind === "counter_decision") later(() => undo.decideCounter(reply.chain_id, reply.negotiation_id, reply.accept));
     },
 
     async onProtocolMessage(message) {
