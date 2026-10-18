@@ -49,7 +49,7 @@ createServer(async (req, res) => {
   if (!route) { res.writeHead(404).end("not found"); return; }
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
-  const out = await route.handle({ method: req.method as "GET", path: url.pathname, headers: Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, String(v)])), query: {}, rawBody: Buffer.concat(chunks).toString() });
+  const out = await route.handle({ method: req.method as "GET", path: url.pathname, headers: Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, String(v)])), query: Object.fromEntries(url.searchParams), rawBody: Buffer.concat(chunks).toString() });
   const body = out.body === undefined ? "" : typeof out.body === "string" ? out.body : JSON.stringify(out.body);
   res.writeHead(out.status, { ...(typeof out.body === "object" ? { "content-type": "application/json" } : {}), ...out.headers }).end(body);
 }).listen(4173, () => console.log("Demo page preview: http://localhost:4173/web"));

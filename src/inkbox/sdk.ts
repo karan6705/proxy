@@ -8,7 +8,7 @@ export type InkboxSdk = any;
 let cached: Promise<InkboxSdk> | undefined;
 
 export function loadSdk(): Promise<InkboxSdk> {
-  cached ??= import(SDK).catch((err) => {
+  cached ??= import(/* @vite-ignore */ SDK).catch((err) => {
     cached = undefined;
     throw new Error(`@inkbox/sdk is not installed (ask Karan to add it to package.json): ${(err as Error).message}`);
   });
