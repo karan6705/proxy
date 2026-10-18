@@ -26,7 +26,9 @@ import {
   undoOutput,
 } from "./tools/schemas.js";
 import { DEMO_LATE_AT, DEMO_NOW } from "./tools/stubs.js";
-import { renderLatestScoreboard } from "../evals/scoreboard.js";
+import { existsSync } from "node:fs";
+import { RESULTS_DIR, renderLatestScoreboard } from "../evals/scoreboard.js";
+import { SCOREBOARD_HTML } from "./scoreboard-snapshot.js";
 
 const server = new MCPServer({
   name: "proxy",
@@ -236,12 +238,14 @@ mountRoutes([
     method: "GET",
     path: "/scoreboard",
     handle: async () => {
+      const html = (body: string) => ({ status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body });
+      // Live from evals/results/ when the files are there (a checkout); the bundled snapshot otherwise (a deployed build).
       try {
-        return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: renderLatestScoreboard() };
+        if (existsSync(RESULTS_DIR)) return html(renderLatestScoreboard());
       } catch (e) {
-        console.error("[scoreboard] could not render:", e instanceof Error ? e.message : e);
-        return { status: 503, body: { ok: false, message: "No eval results yet. Run npm run evals:layer1." } };
+        console.error("[scoreboard] could not render from results, serving the snapshot:", e instanceof Error ? e.message : e);
       }
+      return html(SCOREBOARD_HTML);
     },
   },
 ]);
