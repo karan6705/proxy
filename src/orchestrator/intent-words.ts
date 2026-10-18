@@ -34,11 +34,27 @@ const real = (year: number, month: number, day: number) => {
 };
 const fullYear = (y: string | undefined, fallback: number) => (y === undefined ? fallback : y.length === 2 ? 2000 + +y : +y);
 
-/** The two readings of a numeric date or range: month first, then day first. Either is null when not a real date. */
-function numericReadings(m: RegExpExecArray, year: number): [DateRange | null, DateRange | null] {
+/**
+ * The two readings of a numeric date or range: month first, then day first. Either is null when not a real date.
+ * With `today`, a reading written without a year is its next occurrence, so "3/11" in October is Nov 3 this year
+ * or Mar 11 next year.
+ */
+function numericReadings(m: RegExpExecArray, year: number, today?: string): [DateRange | null, DateRange | null] {
   const parts = [[m[1], m[2], m[3]], ...(m[4] ? [[m[4], m[5], m[6]]] : [])] as [string, string, string | undefined][];
   const read = (monthFirst: boolean): DateRange | null => {
-    const days = parts.map(([a, b, y]) => (monthFirst ? real(fullYear(y, year), +a, +b) : real(fullYear(y, year), +b, +a)));
+    const [a0, b0, y0] = parts[0]!;
+    const [m0, d0] = monthFirst ? [+a0, +b0] : [+b0, +a0];
+    let base = year;
+    if (y0 === undefined && today) {
+      base = +today.slice(0, 4);
+      if ((real(base, m0, d0) ?? "9999") < today.slice(0, 10)) base += 1;
+    }
+    const days = parts.map(([a, b, y], i) => {
+      const [mm, dd] = monthFirst ? [+a, +b] : [+b, +a];
+      // A range's end in an earlier month than its start is in the next year.
+      const yy = y !== undefined ? fullYear(y, base) : i > 0 && mm < m0 ? base + 1 : base;
+      return real(yy, mm, dd);
+    });
     if (days.some((d) => d === null)) return null;
     return { start: days[0]!, ...(days[1] ? { end: days[1] } : {}) };
   };
@@ -49,7 +65,7 @@ function numericReadings(m: RegExpExecArray, year: number): [DateRange | null, D
  * Dates and a budget from the human's words. `year` fills in a date written without one. `ref` (YYYY-MM-DD) gives
  * the month for a bare day like "the 13th": its month, or the next one if that day has already passed.
  */
-export function parseRequest(text: string, year: number, ref?: string): SaidIntent {
+export function parseRequest(text: string, year: number, ref?: string, today?: string): SaidIntent {
   const said: SaidIntent = {};
   const t = text.toLowerCase();
 
@@ -97,7 +113,7 @@ export function parseRequest(text: string, year: number, ref?: string): SaidInte
     found.push({
       index: numeric.index,
       read: () => {
-        const [md, dm] = numericReadings(numeric, year);
+        const [md, dm] = numericReadings(numeric, year, today);
         const first = md ?? dm;
         if (!first) return;
         said.dates = first;
@@ -176,7 +192,7 @@ function withLength(said: DateRange, agent: DateRange | undefined): DateRange {
 export function checkIntent(constraints: IntentConstraints, original_request: string | undefined, year: number, today?: string): IntentCheck {
   if (!original_request?.trim()) return { status: "absent" };
   const agent = constraints.dates;
-  const said = parseRequest(original_request, agent ? Number(agent.start.slice(0, 4)) : year, agent ? `${agent.start.slice(0, 8)}01` : today?.slice(0, 10));
+  const said = parseRequest(original_request, agent ? Number(agent.start.slice(0, 4)) : year, agent ? `${agent.start.slice(0, 8)}01` : today?.slice(0, 10), today);
   if (!said.dates && said.budget_total === undefined) return { status: "absent", checkable: false };
 
   const understood: string[] = [];
@@ -189,13 +205,14 @@ export function checkIntent(constraints: IntentConstraints, original_request: st
     const matches = (r: DateRange) => agent?.start === r.start && (!r.end || agent.end === r.end);
     const hit = readings.findIndex(matches);
     if (said.ambiguous && hit !== -1 && !budgetDiffers) {
-      // "3/11" and the agent took one reading: ask which one the human meant.
-      const choices = readings.map((r, i) => ({ label: range(r), ...(i === hit ? {} : { corrected: { dates: withLength(r, agent) } }) })) as [IntentChoice, IntentChoice];
+      // "3/11" and the agent took one reading: ask which one the human meant. Reply 1 is the reading the agent
+      // didn't take (as in the plain question, where 1 is the human's words), 2 is the agent's.
+      const choices = [1 - hit, hit].map((i) => ({ label: range(readings[i]), ...(i === hit ? {} : { corrected: { dates: withLength(readings[i]!, agent) } }) })) as [IntentChoice, IntentChoice];
       return {
         status: "disagrees",
         understood: range(agent),
-        said: `${said.ambiguous.written} (${choices[0].label} or ${choices[1].label})`,
-        corrected: choices[1 - hit]!.corrected!,
+        said: `${said.ambiguous.written} (${range(readings[0])} or ${range(readings[1])})`,
+        corrected: choices[0].corrected!,
         ambiguous: { written: said.ambiguous.written, agent_reading: range(readings[hit]), choices },
       };
     }

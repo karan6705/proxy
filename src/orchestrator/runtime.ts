@@ -244,13 +244,20 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   async function demoRedo(chain: Chain) {
     const intent = await store.getIntent(chain.task_id);
     const dates = intent?.constraints.dates;
-    if (!intent || !dates) return;
+    if (!intent) return;
     const old = (await Promise.all(chain.action_ids.map((id) => store.getAction(id)))).filter((a): a is Action => a !== null);
     const seen = new Set<string>();
     const todo = old.filter((a) => a.category !== "message" && a.state === "verified" && !seen.has(a.category) && seen.add(a.category));
     const run = async () => {
       for (const a of todo) {
         await new Promise((r) => setTimeout(r, Number(env.PROXY_DEMO_REDO_GAP_MS ?? 1500)));
+        // A subscription is redone on the monthly plan, at a twelfth of the annual price.
+        if (a.category === "saas") {
+          const item = a.summary.replace(/,?\s*(?:billed\s+)?(?:annually|annual|yearly)\b/i, ", billed monthly");
+          await merchants.book({ merchant_id: a.merchant, task_id: intent.task_id, task_email: intent.task_email, item, amount: Math.round(a.amount / 12), booked_at: clock.now() });
+          continue;
+        }
+        if (!dates) continue;
         const from = a.dates?.start ? shortDate(a.dates.start) : null;
         const item = from ? a.summary.replace(new RegExp(`\\b${from}\\b`), shortDate(dates.start)) : a.summary;
         const range = a.category === "hotel" ? { start: dates.start, ...(dates.end ? { end: dates.end } : {}) } : { start: dates.start };

@@ -40,6 +40,7 @@ export function atRisk(atRiskCents: Cents, totalCents: Cents): string {
 /** What went wrong, from the first mismatch: "used the wrong dates (Nov 3, not Nov 13)". */
 export function whatWentWrong(mismatch: Mismatch | undefined): string {
   if (!mismatch) return "made a mistake";
+  if (mismatch.field === "term") return `signed up for the ${String(mismatch.actual)} plan, not ${String(mismatch.expected)}`;
   const field = mismatch.field === "dates" ? "dates" : mismatch.field;
   return `used the wrong ${field} (${humanDate(mismatch.actual)}, not ${humanDate(mismatch.expected)})`;
 }

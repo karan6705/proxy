@@ -65,6 +65,10 @@ describe("numeric and day-only dates", () => {
       ambiguous: { written: "3/11", agent_reading: "Nov 3", choices: [{ label: "Mar 11", corrected: { dates: { start: "2026-03-11", end: "2026-03-14" } } }, { label: "Nov 3" }] },
     });
     expect(intentQuestion(check)).toBe("You wrote 3/11. Your agent read it as Nov 3. Did you mean Mar 11 or Nov 3? Reply 1 or 2.");
+    // The other way round, reply 1 is still the reading the agent didn't take; with today, each reading is its next occurrence.
+    const misread = checkIntent({ dates: { start: "2027-03-11", end: "2027-03-14" } }, "landing 3/11", 2026, "2026-10-25T14:00:00.000Z");
+    expect(misread).toMatchObject({ said: "3/11 (Mar 11 or Nov 3)", corrected: { dates: { start: "2026-11-03", end: "2026-11-06" } } });
+    expect(intentQuestion(misread)).toBe("You wrote 3/11. Your agent read it as Mar 11. Did you mean Nov 3 or Mar 11? Reply 1 or 2.");
   });
 
   it("an ambiguous date that matches neither reading is a plain disagreement", () => {
@@ -131,8 +135,9 @@ describe("log_intent with original_request", () => {
     await reply("1");
     expect(texts().at(-1)).toBe("Got it: Mar 11 to Mar 14. Your agent will use that.");
     if (!r.ok) throw new Error("log_intent failed");
-    expect((await rt.store.getIntent(r.task_id))?.constraints.dates).toEqual({ start: "2026-03-11", end: "2026-03-14" });
-    expect((await log("the conference is 3/11")).structuredContent).toMatchObject({ intent_check: { status: "confirmed_human", said: "Mar 11 to Mar 14" }, constraints: { dates: { start: "2026-03-11", end: "2026-03-14" } } });
+    // Mar 11 has passed on Oct 25, 2026, so the reading is next year's.
+    expect((await rt.store.getIntent(r.task_id))?.constraints.dates).toEqual({ start: "2027-03-11", end: "2027-03-14" });
+    expect((await log("the conference is 3/11")).structuredContent).toMatchObject({ intent_check: { status: "confirmed_human", said: "Mar 11 to Mar 14" }, constraints: { dates: { start: "2027-03-11", end: "2027-03-14" } } });
   });
 
   it("an ambiguous 3/11: reply 2 confirms the agent's Nov 3", async () => {
