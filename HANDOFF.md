@@ -204,6 +204,14 @@ I ran `runAll()` in memory and read `scenarios.ts`, `grader.ts`, `runner.ts`. Re
 - Clean tasks: vary them (a refund line, a total exactly at budget, a SaaS plan with no term) instead of the same trip.
 - Same-ref resends never reach `compare` (capture dedupes by ref); test them at the capture boundary.
 
+### From Dhwanil: Layer 2 (live agent) is built and has a first real run
+`LIVE_TRIALS=5 npx tsx --env-file=.env evals/live/run.ts` (code in `evals/live/`, results in `evals/results/layer2-*.json`). A real model (claude-haiku-4-5, `LIVE_EVAL_MODEL` to change) is the agent in five faulty environments: a signup that defaults to annual billing, a flight call that times out but goes through, an out-of-stock product with a "similar" one offered, a cheap hotel that sells out, and a clean control. Nothing scripts the agent's mistake. Truth is hand-written per task and does not use `compare`. Proxy runs in process (real compare, trace, plan_undo and negotiation against the mock merchants), not over MCP.
+First run (5 trials per task and arm, so 25 episodes per arm; small samples, counts and not rates):
+- Naive (agent checks its own work): 8 of 25 episodes had a real mistake; the agent said PROBLEM in 3 of those 8 and a false "done" in 5.
+- Proxy: 5 of 25 episodes had a real mistake; 6 of 6 mistakes caught; 0 false alarms; $4,832.00 of refunds agreed (merchant-agreed, not Stripe-verified).
+- Caveats: the arms are separate live runs, so the mistake counts differ between them. The faults are ones `compare` can see (duplicate, over budget), so 6 of 6 says little about unseen failure kinds. The substitute task (L3) produced no mistakes because the agent refused the substitute. The first run was discarded because the prompt had no date and the agent assumed 2024; fixed and rerun. Time to alert and Stripe verification are not measured here.
+Not yet over the real MCP server: that needs Karan's server and the demo routes.
+
 ### From Dhwanil: scenarios ready for your review (Sarah)
 `evals/scenarios.ts` has 34 scenarios. Every expected result is written by hand from the story and the human's real request, not copied from what the logic outputs. Please check them the way you offered, so the grader does not share `compare`'s blind spots. Run `npx tsx evals/run.ts` to see them against both arms and `evals/results/` for the raw log.
 
