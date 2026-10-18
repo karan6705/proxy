@@ -35,7 +35,7 @@
 - Every tool now answers in plain English first (with the next step) and the JSON second, so clients without structured output or MCP Apps still get the answer.
 
 ### Public mirror for judges: karan6705/proxy (2026-10-18)
-- The team repo (karan6705/tripwire) stays private and is never rewritten. Judges get **https://github.com/karan6705/proxy**: the same history, `main` only (plus the `demo-v1` tag once it exists), with three phone numbers replaced everywhere in history by fictional ones (the two Inkbox lines and Karan's personal number, which were in early HANDOFF.md and test commits). Commit dates, authors and messages are unchanged.
+- The team repo (karan6705/tripwire) stays private and is never rewritten. Judges get **https://github.com/karan6705/proxy**: the same history, `main` only (plus the `demo-v1` and `demo-v2` tags), with three phone numbers replaced everywhere in history by fictional ones (the two Inkbox lines and Karan's personal number, which were in early HANDOFF.md and test commits). Commit dates, authors and messages are unchanged.
 - **Refresh it right before submitting:** `scripts/publish-mirror.sh` (needs `git filter-repo` and `gh`). It clones main fresh into a temp folder, redacts, runs `scripts/secret-scan.py` on the result (no push unless it is clean), checks dates, authors and messages, then force-pushes to the mirror only. `scripts/publish-mirror.sh --dry-run` does everything but the push.
 - `python3 -I scripts/secret-scan.py <repo>` scans every ref's history for keys, tokens and real-looking phone numbers (with `HUMAN_PHONE` in the environment, that number too) and prints commit, file and kind only, never a value.
 - Never put a real phone number in a file, test or log. Use 555 numbers (`+15555550100`), as the tests do.
