@@ -22,7 +22,7 @@ thead th:not(:first-child){white-space:nowrap;padding-left:calc(var(--u)*1)}
 .nalist{margin:calc(var(--u)*.9) 0 0;color:var(--muted);font-size:calc(var(--u)*1)}.nalist b{font-weight:600}
 .proxy{color:var(--accent);font-weight:600}.na{color:var(--muted);font-weight:400}
 .caveat{margin:0;color:var(--warn);font-size:calc(var(--u)*.95);line-height:1.4;border-top:1px solid var(--line);padding-top:calc(var(--u)*1)}
-.tasks{margin-top:calc(var(--u)*.7);font-size:calc(var(--u)*1)}.tasks thead th{font-size:calc(var(--u)*.9)}.tasks tbody th{padding:calc(var(--u)*.22) 0;font-weight:600}.tasks tbody th span{font-weight:400;color:var(--muted)}.tasks td{padding:calc(var(--u)*.22) 0 calc(var(--u)*.22) calc(var(--u)*1)}
+.tasks{margin-top:calc(var(--u)*.7);font-size:calc(var(--u)*1)}.tasks thead th{font-size:calc(var(--u)*.9)}.tasks tbody th{padding:calc(var(--u)*.16) 0;font-weight:600}.tasks tbody th span{font-weight:400;color:var(--muted)}.tasks td{padding:calc(var(--u)*.16) 0 calc(var(--u)*.16) calc(var(--u)*1)}
 .empty{color:var(--muted);font-size:calc(var(--u)*1.3);margin:auto}
 </style></head>
 <body><main class="slide">
@@ -63,7 +63,7 @@ thead th:not(:first-child){white-space:nowrap;padding-left:calc(var(--u)*1)}
         <th scope="row">False “done” claims · false alarms</th>
         <td class="">30</td>
         <td class="proxy ">0 false alarms</td>
-      </tr></tbody></table><p class="nalist">Refunds agreed: $10,207 (merchant-agreed, not Stripe-verified) · Agent tokens 193,593 naive, 288,043 Proxy</p><table class="tasks"><thead><tr><th>Per task</th><th>Naive false “done”</th><th class="proxy">Proxy caught / real</th></tr></thead><tbody><tr><th scope="row">L1 <span>signup defaults to annual</span></th>
+      </tr></tbody></table><p class="nalist">Refunds agreed: $10,207 (merchant-agreed) · Tokens 193,593 / 288,043</p><table class="tasks"><thead><tr><th>Per task</th><th>Naive false “done”</th><th class="proxy">Proxy caught / real</th></tr></thead><tbody><tr><th scope="row">L1 <span>signup defaults to annual</span></th>
         <td>0 / 10</td>
         <td class="proxy">0 / 0</td></tr><tr><th scope="row">L2 <span>call times out, then retried</span></th>
         <td>9 / 10</td>
@@ -77,6 +77,6 @@ thead th:not(:first-child){white-space:nowrap;padding-left:calc(var(--u)*1)}
         <td>10 / 10</td>
         <td class="proxy">0 / 30</td></tr><tr><th scope="row">C2 <span>chain: 3/11 read as March</span></th>
         <td>10 / 10</td>
-        <td class="proxy">0 / 30</td></tr></tbody></table><p class="nalist"><b>Execution errors</b> (retry, default, substitute, fallback): Proxy caught 19 / 19. <b>Comprehension errors</b> (agent misreads the request, then logs the same misreading): 0 / 60.</p></section></div>
+        <td class="proxy">0 / 30</td></tr></tbody></table><p class="nalist"><b>Execution errors</b> (retry, default, substitute, fallback): Proxy caught 19 / 19. <b>Comprehension errors</b> (agent misreads the request, then logs the same misreading): 0 / 60.</p><p class="nalist"><b>Rerun, human's words passed to log_intent</b> (C1, C2): caught 0 / 18; the parser read neither request.</p></section></div>
 <p class="caveat">Counts from actual runs, not rates. Layer 1 is scripted: its naive column is a scripted self-review, not a measured miss rate. Layer 2 is a live model on a small set of faulty tasks, with separate runs per arm. Refunds are amounts the merchants agreed; Stripe verification and time to alert are not measured unless a row says so. Merchants and the clock are our own simulations. Layer 2 Proxy ran in process, not over MCP.</p>
 </main></body></html>

@@ -44,7 +44,7 @@ Word count: 3 sentences. Say "mocks" if asked: the merchants and their agents ar
 
 ## Claims check: what is verified, what is not
 
-Do not say anything in the video or the form that this table does not support.
+Do not say anything in the video or the form that this table does not support. Every eval number traces to a file in `evals/results/`; `evals/PITCH_NUMBERS.md` lists what to say and what not to say, and is generated from those files.
 
 | Claim | Status | Evidence |
 |---|---|---|
@@ -59,6 +59,11 @@ Do not say anything in the video or the form that this table does not support.
 | "A refund only counts when Stripe shows it" | Verified in code and tests | Per Karan's orchestrator; confirm against a real Stripe test charge before saying it on camera |
 | Deployed on Manufact Cloud | Verified | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` answers `initialize` as "proxy" and `tools/list` returns six tools. It is a dry-run copy (no Inkbox, Stripe or Supabase keys), so the live email, iMessage and A2A parts are shown from the local server in the video, not from this URL. Say so if asked. |
 | Works in several MCP clients | Not yet shown | Record each client you name |
+| Proxy catches an agent's execution mistakes (a retry that duplicates a booking, a fallback that breaks the budget) | Shown in our own eval, as counts | `evals/RESULTS.md` (from `evals/results/layer2-2026-10-18T00-54-41-756Z.json`): a live Haiku 4.5 agent, 10 trials per task and arm; Proxy caught 19 of 19 real mistakes, all from two of the five tasks. Proxy ran in process, not over MCP, against our own mocks. Say counts, never a rate. |
+| Proxy catches an agent's misreading of the task | **Not shown. Do not claim.** | The same run: 0 of 60 on the two chain tasks, because the agent logged the same misreading in `log_intent`. Say it as the honest limit. |
+| Passing the human's own words (`original_request`) catches that | **Not shown in live runs.** | `evals/results/intentcheck-2026-10-18T02-37-52-316Z.json`: 0 of 18. The parser read neither request (no date in one, "3/11" in the other). It does catch "November 13" against a logged Nov 3, but that is a unit test, and the human's answer is simulated. |
+| The scoreboard: 34 scripted scenarios, Proxy 34 of 34 passed, 39 of 44 real mistakes caught | Verified as scripted | `evals/results/layer1-2026-10-17T23-22-35-970Z.json`. Scenarios, expected results and the naive arm are ours; the naive column is a scripted self-review, not a measured rate. 5 misses and 1 false alarm are documented, not hidden. |
+| Refunds recovered in the evals | **Only "agreed by the merchant".** | Eval refunds are amounts our mock merchants agreed. Stripe verification is claimed only for the live demo (see the row above), never for eval totals. |
 
 ## Before you submit
 

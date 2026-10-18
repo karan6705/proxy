@@ -82,9 +82,9 @@ function layer2Footer(results: Layer2Results): string {
   const { naive, proxy } = results.summary;
   const money =
     results.mode === "mcp"
-      ? `Refunds Stripe shows (server's own verification): ${proxy.stripe_verified_actions ?? 0} actions`
-      : `Refunds agreed: ${dollars(proxy.refund_agreed)} (merchant-agreed, not Stripe-verified)`;
-  return `<p class="nalist">${escapeHtml(money)} · Agent tokens ${naive.tokens.toLocaleString("en-US")} naive, ${proxy.tokens.toLocaleString("en-US")} Proxy</p>`;
+      ? `Refunds Stripe shows: ${proxy.stripe_verified_actions ?? 0} actions`
+      : `Refunds agreed: ${dollars(proxy.refund_agreed)} (merchant-agreed)`;
+  return `<p class="nalist">${escapeHtml(money)} · Tokens ${naive.tokens.toLocaleString("en-US")} / ${proxy.tokens.toLocaleString("en-US")}</p>`;
 }
 
 const SHORT_TITLES: Record<string, string> = {
@@ -98,7 +98,7 @@ const SHORT_TITLES: Record<string, string> = {
 };
 
 /** Per task counts for the live agent, plus the execution versus comprehension split. */
-function taskBlock(results: Layer2Results): string {
+function taskBlock(results: Layer2Results, intent: Layer2Results | null = null): string {
   const tasks = layer2ByTask(results.episodes ?? []);
   if (tasks.length === 0) {
     return "";
@@ -118,7 +118,13 @@ function taskBlock(results: Layer2Results): string {
       ? `<p class="nalist"><b>Execution errors</b> (retry, default, substitute, fallback): Proxy caught ${total(execution, (task) => task.proxy_caught)} / ${total(execution, (task) => task.proxy_mistakes)}. ` +
         `<b>Comprehension errors</b> (agent misreads the request, then logs the same misreading): ${total(comprehension, (task) => task.proxy_caught)} / ${total(comprehension, (task) => task.proxy_mistakes)}.</p>`
       : "";
-  return `<table class="tasks"><thead><tr><th>Per task</th><th>Naive false “done”</th><th class="proxy">Proxy caught / real</th></tr></thead><tbody>${rows}</tbody></table>${split}`;
+  const rerun = intent
+    ? (() => {
+        const rerunTasks = layer2ByTask(intent.episodes ?? []);
+        return `<p class="nalist"><b>Rerun, human's words passed to log_intent</b> (${rerunTasks.map((task) => task.task_id).join(", ")}): caught ${total(rerunTasks, (task) => task.proxy_caught)} / ${total(rerunTasks, (task) => task.proxy_mistakes)}; the parser read neither request.</p>`;
+      })()
+    : "";
+  return `<table class="tasks"><thead><tr><th>Per task</th><th>Naive false “done”</th><th class="proxy">Proxy caught / real</th></tr></thead><tbody>${rows}</tbody></table>${split}${rerun}`;
 }
 
 function table(rows: Row[], naiveLabel: string, na: string, showNa = true): string {
@@ -156,16 +162,16 @@ thead th:not(:first-child){white-space:nowrap;padding-left:calc(var(--u)*1)}
 .nalist{margin:calc(var(--u)*.9) 0 0;color:var(--muted);font-size:calc(var(--u)*1)}.nalist b{font-weight:600}
 .proxy{color:var(--accent);font-weight:600}.na{color:var(--muted);font-weight:400}
 .caveat{margin:0;color:var(--warn);font-size:calc(var(--u)*.95);line-height:1.4;border-top:1px solid var(--line);padding-top:calc(var(--u)*1)}
-.tasks{margin-top:calc(var(--u)*.7);font-size:calc(var(--u)*1)}.tasks thead th{font-size:calc(var(--u)*.9)}.tasks tbody th{padding:calc(var(--u)*.22) 0;font-weight:600}.tasks tbody th span{font-weight:400;color:var(--muted)}.tasks td{padding:calc(var(--u)*.22) 0 calc(var(--u)*.22) calc(var(--u)*1)}
+.tasks{margin-top:calc(var(--u)*.7);font-size:calc(var(--u)*1)}.tasks thead th{font-size:calc(var(--u)*.9)}.tasks tbody th{padding:calc(var(--u)*.16) 0;font-weight:600}.tasks tbody th span{font-weight:400;color:var(--muted)}.tasks td{padding:calc(var(--u)*.16) 0 calc(var(--u)*.16) calc(var(--u)*1)}
 .empty{color:var(--muted);font-size:calc(var(--u)*1.3);margin:auto}
 `;
 
-export function renderScoreboard(layer1: Layer1Results | null, layer2: Layer2Results | null): string {
+export function renderScoreboard(layer1: Layer1Results | null, layer2: Layer2Results | null, intent: Layer2Results | null = null): string {
   const first = layer1
     ? `<h2>Scripted scenarios</h2><div class="tag">${escapeHtml(layer1.summaries[0]?.scenarios ?? 0)} scenarios · Layer 1 · scripted · ${escapeHtml(runDate(layer1.run_id))}</div>${table(layer1Rows(layer1), "Naive (scripted)", notMeasured(layer1))}`
     : `<h2>Scripted scenarios</h2><p class="empty">No Layer 1 results yet. Run: npx tsx evals/run.ts</p>`;
   const second = layer2
-    ? `<h2>Live agent</h2><div class="tag">${escapeHtml(layer2.model)} · ${escapeHtml(layer2.summary.trials_per_task_arm)} trials per task and arm · Layer 2 · live · ${escapeHtml(runDate(layer2.run_id))}</div>${table(layer2Rows(layer2), "Naive (self-check)", layer2.mode === "mcp" ? "time to alert · redo correctness" : "time to alert · Stripe-verified money · redo correctness", false)}${layer2Footer(layer2)}${taskBlock(layer2)}`
+    ? `<h2>Live agent</h2><div class="tag">${escapeHtml(layer2.model)} · ${escapeHtml(layer2.summary.trials_per_task_arm)} trials per task and arm · Layer 2 · live · ${escapeHtml(runDate(layer2.run_id))}</div>${table(layer2Rows(layer2), "Naive (self-check)", layer2.mode === "mcp" ? "time to alert · redo correctness" : "time to alert · Stripe-verified money · redo correctness", false)}${layer2Footer(layer2)}${taskBlock(layer2, intent)}`
     : `<h2>Live agent</h2><p class="empty">No Layer 2 results yet. Run: npx tsx --env-file=.env evals/live/run.ts</p>`;
   const caveat = layer2?.mode === "mcp" ? `${CAVEAT} Layer 2 Proxy ran over MCP against a server.` : `${CAVEAT} Layer 2 Proxy ran in process, not over MCP.`;
   return `<!doctype html>
@@ -190,7 +196,7 @@ function latest<T>(prefix: string, dir: string): T | null {
 
 /** The page built from the newest Layer 1 and Layer 2 result files. */
 export function renderLatestScoreboard(dir: string = RESULTS_DIR): string {
-  return renderScoreboard(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir));
+  return renderScoreboard(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir), latest<Layer2Results>("intentcheck-", dir));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
