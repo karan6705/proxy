@@ -24,6 +24,7 @@
     "evals:layer1": "tsx --env-file-if-exists=.env evals/run.ts",
     "demo:stage": "tsx --env-file-if-exists=.env scripts/demo-stage.ts",
     "demo:go": "tsx --env-file-if-exists=.env scripts/demo-go.ts",
+    "demo:show": "tsx --env-file-if-exists=.env scripts/demo-show.ts",
     "demo:offline-stage": "tsx --env-file-if-exists=.env scripts/demo-offline-stage.ts",
     "scoreboard:snapshot": "tsx scripts/scoreboard-snapshot.ts",
     "prebuild": "tsx scripts/write-build-info.ts",
