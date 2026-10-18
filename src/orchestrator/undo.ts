@@ -208,18 +208,27 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       // Actions the human didn't pick (PICK) stay as they are; already-settled ones (e.g. the agent's own undo) count.
       const planned = new Set(chain.plan.map((p) => p.action_id));
       const untouched = actions.filter((a) => !planned.has(a.action_id) && !["verified", "kept", "accepted"].includes(a.state));
+      // A step the plan kept is not done: it stays open, with whatever fix is still possible (e.g. a paid change).
+      const keptByPlan = new Set(chain.plan.filter((p) => p.option === "keep" || p.route === "keep").map((p) => p.action_id));
+      const optionFor = (a: Action) => {
+        const step = chain.plan.find((p) => p.action_id === a.action_id);
+        if (!keptByPlan.has(a.action_id)) return nextOption(a, step);
+        const rev = logic.reversibility(a, clock.now());
+        return nextOption(a, rev.kind === "change" && rev.cost_to_reverse > 0 ? { option: "change", cost: rev.cost_to_reverse } : undefined);
+      };
       const summary = chainSummary(
         actions.filter((a) => !untouched.includes(a)).map((a) => ({
           action: a,
           refunded: a.state === "verified" ? expectedRefund(chain, a) : 0,
-          next: nextOption(a, chain.plan.find((p) => p.action_id === a.action_id)),
+          next: optionFor(a),
+          still_open: keptByPlan.has(a.action_id) && a.state === "kept",
         })),
         DATE_OF(intent),
         untouched,
         undoneByAgent(chain, actions),
       );
       // Partial: some items need the human or weren't picked. Otherwise the agent gets the corrected intent (redo).
-      const reversed = !bad.length && !untouched.length;
+      const reversed = !bad.length && !untouched.length && !actions.some((a) => keptByPlan.has(a.action_id) && a.state === "kept");
       await store.upsertChain({ ...chain, state: reversed ? "redo_requested" : "partial" });
       return { summary, reversed };
     });
@@ -431,7 +440,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   async function runStep(chain: Chain, intent: Intent, action: Action, plan: PlanStep) {
     if (deps.isFrozen()) return;
     try {
-      if (plan.option === "keep") {
+      if (plan.option === "keep" || plan.route === "keep") {
         await setState(action, "kept");
         await step(chain, action, plan.route, "skipped", "Kept: fixing it costs more than it recovers");
       } else if (plan.route === "self_serve") await runSelfServe(chain, action);

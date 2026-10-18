@@ -166,7 +166,9 @@ export type RouteKind =
   /** A message the agent sent: send a correction. */
   | "correction"
   /** Last resort: Stripe dispute with the evidence packet. */
-  | "stripe_dispute";
+  | "stripe_dispute"
+  /** Nothing is worth doing (fixing costs more than it recovers): accept the loss. Pairs with FixOption "keep". */
+  | "keep";
 
 /** The damage minimizer's choice for one action. */
 export type FixOption = "cancel" | "change" | "keep";
@@ -271,10 +273,27 @@ export interface LogIntentInput {
   /** Defaults apply when omitted (agreed at the freeze). */
   preferences?: Partial<Preferences>;
   idempotency_key: string;
+  /**
+   * The human's request in their own words, if the agent has it. Proxy reads dates and a budget from it
+   * (deterministically) and asks the human when they disagree with `constraints`.
+   */
+  original_request?: string;
 }
 export interface LogIntentOutput {
   task_id: TaskId;
   task_email: string;
+  /** Present when original_request was given: whether it agrees with the logged constraints. */
+  intent_check?: {
+    status: "agrees" | "disagrees" | "absent" | "confirmed_human" | "confirmed_agent";
+    /** The agent's version, for the fields that disagree. */
+    understood?: string;
+    /** The human's words, for the same fields. */
+    said?: string;
+  };
+  /** "wait_for_human" while the human is asked which version is right; call log_intent again with the same key to see the answer. */
+  next_action?: NextAction;
+  /** The constraints in force, when the human's answer changed them. */
+  constraints?: IntentConstraints;
 }
 
 export interface ReversibilityInput {

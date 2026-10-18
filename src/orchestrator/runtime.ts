@@ -3,13 +3,14 @@
 // real Stripe test mode when a sk_test_ key is set. Logic and Merchants stay stand-ins until Dhwanil's merge.
 import { createAnthropicExtractor, createCapture, createInboundEmailRoute, deliverToCapture, type Capture } from "../capture/index.js";
 import { createStoreFromEnv } from "../db/index.js";
-import { createA2AAccess, createClient, createVerifier, createHumanChannel, createHumanRoutes, createInkbox, createProtocolInbox, type HumanChannel, type ProtocolInbox } from "../inkbox/index.js";
+import { createA2AAccess, createClient, createVerifier, createHumanChannel, createHumanRoutes, createInkbox, createProtocolInbox, type A2AAccess, type HumanChannel, type ProtocolInbox } from "../inkbox/index.js";
 import { logic } from "../logic/index.js";
 import {
   addressMode,
   createInkboxDeliver,
   createMerchants,
   merchantRoutes,
+  narrateSupport,
   type MerchantDeps,
   type MerchantsImpl,
 } from "../merchants/index.js";
@@ -22,7 +23,9 @@ import { createProxy, type DemoTask, type Proxy } from "./proxy.js";
 import { createSessions } from "./sessions.js";
 import { createStandInInkbox } from "./standin-inkbox.js";
 import type { ProtocolTransport } from "./undo.js";
+import { createRateLimitState, guardAccess, schedulePolls, throttledLog, type PollSchedule } from "./poll-guard.js";
 import { frontHumanChannel } from "./human-front.js";
+import { withIntentUpdates } from "./intent-store.js";
 import { setPaymentsName } from "./copy.js";
 import { protocolSubject } from "../inkbox/index.js";
 
@@ -93,7 +96,8 @@ const shortDate = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Num
 
 export function createRuntime(clock: Clock, params: Params, defaultPreferences: Preferences, overrides: RuntimeOverrides = {}): Runtime {
   const env = overrides.env ?? process.env;
-  const store = overrides.store ?? createStoreFromEnv(env);
+  // Intents can be changed by the human's answers; see intent-store.ts.
+  const store = withIntentUpdates(overrides.store ?? createStoreFromEnv(env));
   const useInkbox = Boolean(env.INKBOX_API_KEY?.trim()) || env.INKBOX_DRY_RUN === "1";
   const inkbox = overrides.inkbox ?? (useInkbox ? createInkbox({ store, clock }) : createStandInInkbox());
   const useStripe = (env.STRIPE_SECRET_KEY ?? "").startsWith("sk_test_");
@@ -181,12 +185,26 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   const humanNumber = humanPhone || (demoOn ? DEMO_HUMAN_NUMBER : "");
   const alertChannel = env.HUMAN_ALERT_CHANNEL === "sms" ? "sms" : "imessage";
 
+  // The support desks' emails and answers, printed on the server terminal like the hotel agent's (Dhwanil's narration).
+  const narrated: MerchantsImpl = {
+    ...merchants,
+    async supportEmail(merchant_id, email, now) {
+      const reply = await merchants.supportEmail(merchant_id, email, now);
+      if (merchant_id !== "host") {
+        const { received, replied } = narrateSupport(email, reply);
+        console.log(`[${merchant_id} support] ${received}`);
+        console.log(`[${merchant_id} support] ${replied}`);
+      }
+      return reply;
+    },
+  };
+
   const proxy = createProxy({
     store,
     logic,
     inkbox,
     payments: withKnownCharges(fakePayments ? fakePayments.payments : createPayments(), chargeByAction),
-    merchants,
+    merchants: narrated,
     sessions: createSessions(clock, params.SESSION_IDLE_MS),
     clock,
     // The demo waits 60 s for a merchant agent before following up by email.
@@ -273,8 +291,20 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
  * Restart point: the latest processed merchant message in the Store, minus 2 minutes. The orchestrator drops
  * replays by negotiation, message type, round and amount, so the overlap is safe.
  */
-export async function startProtocolInbox(getRuntime: () => Runtime, clock: Clock, env: NodeJS.ProcessEnv = process.env): Promise<ProtocolInbox | null> {
-  const real = Boolean(env.INKBOX_API_KEY?.trim()) && env.INKBOX_DRY_RUN !== "1";
+export interface StartedInbox {
+  inbox: ProtocolInbox;
+  schedule: PollSchedule;
+}
+
+export async function startProtocolInbox(
+  getRuntime: () => Runtime,
+  clock: Clock,
+  env: NodeJS.ProcessEnv = process.env,
+  access?: A2AAccess,
+): Promise<StartedInbox | null> {
+  // Dry-run never polls Inkbox; neither does loopback (the in-process mock agent answers instead).
+  if (env.INKBOX_DRY_RUN === "1") return null;
+  const real = Boolean(env.INKBOX_API_KEY?.trim());
   const loopback = env.PROXY_PROTOCOL_LOOPBACK ? env.PROXY_PROTOCOL_LOOPBACK === "1" : !real;
   if (!real || loopback) return null;
   const rt = getRuntime();
@@ -282,16 +312,20 @@ export async function startProtocolInbox(getRuntime: () => Runtime, clock: Clock
   const identities = rt.merchants.list().flatMap((m) => (m.agent_identity ? [m.agent_identity] : []));
   const last = await rt.proxy.undo.lastProcessedAt();
   const since = new Date((last ? Date.parse(last) : Date.now()) - 2 * 60_000).toISOString();
+  const state = createRateLimitState();
+  const log = throttledLog((line) => console.error(`[protocol-inbox] ${line}`));
   const inbox = createProtocolInbox({
-    access: createA2AAccess({ admin: createClient, handle, apiKey: env.INKBOX_PROXY_API_KEY?.trim() || undefined }),
+    access: guardAccess(access ?? createA2AAccess({ admin: createClient, handle, apiKey: env.INKBOX_PROXY_API_KEY?.trim() || undefined }), state),
     hooks: { onProtocolMessage: (m) => getRuntime().proxy.onProtocolMessage(m) },
     clock,
     store: rt.store,
     trustedHandles: identities,
     trustedEmails: identities.map((i) => `${i}@inkboxmail.com`),
     since,
-    log: (line) => console.error(`[protocol-inbox] ${line}`),
+    // The inbox's own lines about failed polls are throttled with ours; a 429 is reported by the schedule.
+    log: (line) => (/rate limit|429/i.test(line) ? undefined : log(line)),
   });
-  inbox.start();
-  return inbox;
+  // Our schedule instead of inbox.start(): one poll at a time, at most every 3 s, backing off on 429.
+  const schedule = schedulePolls({ pollOnce: () => inbox.pollOnce(), state, minIntervalMs: Number(env.PROXY_INBOX_POLL_MS ?? 3000), log });
+  return { inbox, schedule };
 }

@@ -25,6 +25,7 @@ const ROUTE_LABEL: Record<string, string> = {
   email_support: "Support email",
   correction: "Correction email",
   stripe_dispute: "Stripe dispute",
+  keep: "Kept",
 };
 
 const STATE_LABEL: Record<string, string> = {

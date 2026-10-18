@@ -403,6 +403,12 @@ Found in Karan's live run on port 3000, read from `/web/state`:
 - `verified` is true only for Stripe-confirmed refunds; the host row is `state: "accepted"`, `verified: false`, which your page already shows as "Corrected".
 - In `npm run demo:offline-stage` payments are simulated, and Proxy's texts say "Stripe (simulated)". Your channel's reply "Got it. … confirmed in Stripe." still says Stripe there; could it say "confirmed" only, or take the wording from Proxy?
 
+
+### From Karan: stage page status label (2026-10-18)
+- The top-right status says "Live" on a live run already: line 422 of `src/web/stage.ts` shows "Replaying the demo story" only when the page URL has `?fixture=…`. If someone saw "Replaying" on a live run, the URL still had `?fixture=1` from a rehearsal: open `/web/stage` with no query.
+- One small request: `q.get("fixture")` is truthy for `?fixture=0` too. Treating only `1`/`true` as replay would avoid that trap.
+- The phone alert now uses your multi-line layout (the mistake, what the agent already undid, a blank line, the numbers, the window, a blank line, the choice). The tests no longer pin your "Got it" acknowledgement's wording, beyond `/^Got it/` in the rehearsal and test 1's check that it arrives before any progress text, so you can switch it to two lines.
+
 ## Dhwanil
 
 ### A2A transport ownership
@@ -451,6 +457,18 @@ Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/`; t
 1. **Airline after the 24-hour window:** `plan_undo` returns `route: "email_support", option: "change", cost: 7500`, but the airline has no support desk, so the step can only fail (`no_agent`). Proxy now tells the human "change it with the airline for a $75 fee". Please route this to something Proxy can do (a self-serve change with a fee?), or to `keep` with the fee, and tell me which.
 2. **Hotel bookings live in the server's memory.** After a restart or a `/demo/reset` the hotel answers "Unknown booking reference" to an earlier run's request. That's fine for the demo, now that a reset closes earlier runs, but worth knowing.
 3. `negotiate_step` returns `ignored_text`, which isn't in the `Logic` type. The orchestrator reads it if present and counts it in the events log. Say if you want it added to the contract.
+
+
+### From Karan: "keep" route is in; push your airline change (2026-10-18)
+- `RouteKind` now has `"keep"` (src/types.ts); the `get_chain` output schema accepts it, and the widget labels it "Kept". Switch `plan_undo`'s keep steps from `route: "stripe_dispute"` to `route: "keep"` whenever you like; the orchestrator treats `option: "keep"` or `route: "keep"` the same way.
+- **Push your airline change (keep after the 24-hour window).** The final text is ready: a step the plan keeps is listed as still open, with the fee fix from `reversibility` ("Partly done. $0 of $412 back… Still open: Flight (change it with the airline for a $75 fee). Reply KEEP to accept the rest."), and the chain ends `partial`, not `redo_requested`. `src/orchestrator/workflows.test.ts` test 10b checks exactly that, by making your `plan_undo` return keep for the airline. Test 10 accepts either your current plan or the keep step.
+- `scripts/hotel-agent.ts` now prints your `narrateExchange(…, { style: "speakers", merchant: "Hotel" })` lines. Its polling backs off on Inkbox 429s (at most one poll every 3 s, honoring retry_after_seconds).
+
+
+### From Karan: log_intent takes the human's own words (original_request) (2026-10-18)
+- `LogIntentInput.original_request?: string`. Proxy reads dates and a budget from it with a deterministic parser (`src/orchestrator/intent-words.ts`, no model) and compares them with `constraints`. On a disagreement it texts the human "Your agent understood <X>. You said <Y>. Reply 1 for <Y> or 2 for <X>." and `log_intent` returns `next_action: "wait_for_human"` with `intent_check { status: "disagrees", understood, said }`. Calling `log_intent` again with the same key returns `confirmed_human` (plus the corrected `constraints`) or `confirmed_agent`. On agreement it sends nothing.
+- This is your S34 case (the agent logs the wrong intent, so `compare` agrees with it): when the agent passes the human's words, Proxy now catches it before anything is booked. If you add a scenario for it, the expected result is "caught at log_intent, by asking the human"; scenarios without `original_request` behave as before.
+- Only fields the human actually mentioned count (a request with no budget never disagrees on budget), and a start date alone keeps the trip's length.
 
 ## Karan's Codex
 
