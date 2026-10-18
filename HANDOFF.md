@@ -218,6 +218,19 @@ Also done: `plan_undo` keep steps now use `route: "keep"`, and the airline after
 
 ## Sarah
 
+### Please redeploy the cloud judge copy from main (Karan, 2026-10-18)
+The cloud copy still runs 8b7140e (`/web/show` is 404 there). Only you can update `bold-zero-0m4lf` in place (your org, your `~/proxy-manufact-link/`). From the repo root on your machine:
+```
+git fetch
+rm -rf /tmp/proxy-deploy && mkdir /tmp/proxy-deploy && git archive origin/main | tar -x -C /tmp/proxy-deploy
+rm -rf /tmp/proxy-deploy/.claude && mkdir /tmp/proxy-deploy/.mcp-use && cp -R ~/proxy-manufact-link/cloud /tmp/proxy-deploy/.mcp-use/
+SHA=$(git rev-parse --short=7 origin/main)
+echo "export const BUILD_COMMIT: string = \"$SHA\";" > /tmp/proxy-deploy/src/build-info.ts
+for kv in PROXY_MODE=cloud PROXY_DEMO_ROUTES=1 INKBOX_DRY_RUN=1 PROXY_COMMIT=$SHA; do npx mcp-use servers env set bold-zero-0m4lf $kv --org 9833fb6a-873c-4b80-b5a6-16c3f30ba17c; done
+npx mcp-use deploy /tmp/proxy-deploy --org 9833fb6a-873c-4b80-b5a6-16c3f30ba17c --json
+```
+No keys: leave every Inkbox, Stripe, Supabase and Anthropic variable unset. Then tell Karan; his agent checks `/status` (should show `$SHA`, mode `cloud`), `tools/list` (7 tools), `try_proxy_demo` and `/web/show`.
+
 ### From Karan's agent: /web/show, the presentation page (2026-10-17, while you were offline)
 - **Offer choices (2026-10-18):** `reply.ts` parses KEEP PUSHING; `human.ts` reads a single number or KEEP PUSHING as the answer to an open offer question (`expectCounterDecision`), before PICK numbers; `protocol.ts` passes an optional typed `counter` on `accept_counter`; `routes.ts` `/web/reply` takes `choice` 1 to 9 and `keep_pushing`. /web/show has the options bubble with chips, the "Proxy asked you to choose" card, "You chose", and store credit shown as credit.
 - **Live bug fix (2026-10-17):** `src/inkbox/protocol.ts` capped `round` at 3 in both parsers, so the new round-4 `accept_counter` was dropped by the hotel's bridge as an invalid request (silently: `demo:hotel` gives the bridge no store). The cap is now `MAX_ROUNDS` from `src/logic/negotiate-step.ts`. `bridge.ts` and `inbox.ts` now also log every dropped message. New `src/inkbox/protocol-e2e.test.ts` runs the full negotiation through `createInkbox().sendProtocolMessage`, `createMerchantBridge` and `createProtocolInbox` over an in-memory Inkbox; `protocol.test.ts` now rejects round 5 instead of 4.
