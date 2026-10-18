@@ -130,13 +130,16 @@ describe("the intent check rerun and the pitch numbers", () => {
     const pitch = renderPitchNumbers({ data: layer1, file: "layer1-x.json" }, { data: layer2, file: "layer2-y.json" }, { data: intentRun, file: "intentcheck-z.json" });
     expect(pitch).toContain("`evals/results/layer1-x.json`");
     expect(pitch).toContain("`evals/results/layer2-y.json`");
-    expect(pitch).toContain("`evals/results/intentcheck-z.json`");
+    // The intent check rerun is not part of the pitch numbers: it is only in the do-not-say list.
+    expect(pitch).not.toContain("intentcheck-z.json");
     expect(pitch).toContain("Proxy caught 39 of 44 real mistakes; 5 are documented known misses");
     expect(pitch).toContain("never quote it as how often agents miss things");
     expect(pitch).toContain("## Do not say");
     expect(pitch).toContain("4.8 to 9.3 times");
     expect(pitch).toContain("UCP Checker");
-    expect(pitch).toContain("did not catch those two misreadings: Proxy caught 0 / 9");
+    expect(pitch).toContain("fixes a misread request. The only rerun caught 0 / 9");
+    expect(pitch).toContain("when the request has no date");
+    expect(pitch).toContain("there is nothing to compare the agent's dates with");
     expect(pitch).not.toMatch(/\d\s?%/);
   });
 
