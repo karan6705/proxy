@@ -403,6 +403,12 @@ Found in Karan's live run on port 3000, read from `/web/state`:
 - `verified` is true only for Stripe-confirmed refunds; the host row is `state: "accepted"`, `verified: false`, which your page already shows as "Corrected".
 - In `npm run demo:offline-stage` payments are simulated, and Proxy's texts say "Stripe (simulated)". Your channel's reply "Got it. … confirmed in Stripe." still says Stripe there; could it say "confirmed" only, or take the wording from Proxy?
 
+
+### From Karan: stage page status label (2026-10-18)
+- The top-right status says "Live" on a live run already: line 422 of `src/web/stage.ts` shows "Replaying the demo story" only when the page URL has `?fixture=…`. If someone saw "Replaying" on a live run, the URL still had `?fixture=1` from a rehearsal: open `/web/stage` with no query.
+- One small request: `q.get("fixture")` is truthy for `?fixture=0` too. Treating only `1`/`true` as replay would avoid that trap.
+- The phone alert now uses your multi-line layout (the mistake, what the agent already undid, a blank line, the numbers, the window, a blank line, the choice). The tests no longer pin your "Got it" acknowledgement's wording, beyond `/^Got it/` in the rehearsal and test 1's check that it arrives before any progress text, so you can switch it to two lines.
+
 ## Dhwanil
 
 ### A2A transport ownership
