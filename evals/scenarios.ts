@@ -121,7 +121,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "S04",
-    title: "Flight booked 4 days out: no 24-hour refund, only a change fee (limit: the airline has no desk to ask)",
+    title: "Flight booked 4 days out: no 24-hour refund, and the airline has no desk to ask for a $75 change, so it is kept",
     group: "wrong date",
     intent: DEMO_INTENT,
     agent_belief: MISREAD_NOV_3,
@@ -133,8 +133,8 @@ export const SCENARIOS: Scenario[] = [
       mismatches: [{ action: "flight", field: "dates" }],
       chains: [{ actions: ["flight"], root: "flight", money_at_risk: 41200 }],
       alert: true,
-      // The cheapest fix is the $75 change, which goes by email, and the airline has no support desk.
-      outcomes: { flight: "not_undone" },
+      // A $75 change exists, but the airline has no agent and no support desk, so Proxy cannot request it: the human does.
+      outcomes: { flight: "kept" },
       agreed_refund_total: 0,
     },
   },

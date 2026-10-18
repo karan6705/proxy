@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const RESULTS_DIR = join(HERE, "results");
 export const RESULTS_MD = join(HERE, "RESULTS.md");
+export const PITCH_MD = join(HERE, "PITCH_NUMBERS.md");
 
 export const CAVEAT =
   "Counts from actual runs, not rates. Layer 1 is scripted: its naive column is a scripted self-review, not a measured miss rate. " +
@@ -48,7 +49,12 @@ export interface Episode {
   agent: { status: "done" | "problem" | "unclear"; usage: { input_tokens: number; output_tokens: number } };
   false_done_claim?: boolean;
   self_detected?: boolean;
-  proxy?: { caught: number; false_alarms: unknown[]; agreed_refund_total: number };
+  proxy?: {
+    caught: number;
+    false_alarms: unknown[];
+    agreed_refund_total: number;
+    intent_check?: { status: string; original_request_passed: boolean };
+  };
 }
 
 export interface Layer2Results {
@@ -127,7 +133,57 @@ function latest<T>(prefix: string, dir: string): { data: T; file: string } | nul
   return newest ? { data: JSON.parse(readFileSync(join(dir, newest), "utf8")) as T, file: newest } : null;
 }
 
-export function renderResults(layer1: { data: Layer1Results; file: string } | null, layer2: { data: Layer2Results; file: string } | null): string {
+type Loaded<T> = { data: T; file: string } | null;
+
+/** The rerun of the misread tasks with the human's own words passed to log_intent (the intent check). */
+function intentSection(intent: Loaded<Layer2Results>, main: Loaded<Layer2Results>): string[] {
+  if (!intent) {
+    return [];
+  }
+  const out: string[] = ["## Layer 2 rerun: the intent check from the human's own words", ""];
+  const tasks = layer2ByTask(intent.data.episodes);
+  const proxy = intent.data.episodes.filter((item) => item.arm === "proxy");
+  const count = (pick: (item: Episode) => boolean): number => proxy.filter(pick).length;
+  const status = (name: string): number => count((item) => item.proxy?.intent_check?.status === name);
+  const totalMistakes = tasks.reduce((sum, task) => sum + task.proxy_mistakes, 0);
+  const totalCaught = tasks.reduce((sum, task) => sum + task.proxy_caught, 0);
+  const before = main ? layer2ByTask(main.data.episodes).filter((task) => isComprehensionTask(task.task_id)) : [];
+  const beforeCaught = before.reduce((sum, task) => sum + task.proxy_caught, 0);
+  const beforeMistakes = before.reduce((sum, task) => sum + task.proxy_mistakes, 0);
+
+  out.push("_Not part of the pitch numbers. It is kept here as a record, and stays out of them unless a rerun shows the check working._", "");
+  out.push(
+    `Raw log: [\`evals/results/${intent.file}\`](results/${intent.file}) (run \`${intent.data.run_id}\`). Model: \`${intent.data.model}\`. ${intent.data.summary.trials_per_task_arm} trials per task and arm, only the misread tasks (${tasks.map((task) => task.task_id).join(", ")}).`,
+    "",
+    "| Task | What goes wrong | Proxy episodes | Agent passed the human's words | Check said: agrees / disagrees / absent | Proxy: real mistakes / caught |",
+    "|---|---|---|---|---|---|",
+  );
+  for (const task of tasks) {
+    const mine = proxy.filter((item) => item.task_id === task.task_id);
+    const passed = mine.filter((item) => item.proxy?.intent_check?.original_request_passed).length;
+    const of = (name: string): number => mine.filter((item) => item.proxy?.intent_check?.status === name).length;
+    out.push(`| ${task.task_id} | ${TASK_TITLES[task.task_id] ?? ""} | ${mine.length} | ${outOf(passed, mine.length)} | ${of("agrees")} / ${of("disagrees")} / ${of("absent")} | ${task.proxy_mistakes} / ${task.proxy_caught} |`);
+  }
+  out.push("");
+  out.push(
+    `**Result: Proxy caught ${outOf(totalCaught, totalMistakes)} of the real mistakes with the human's words passed in** (the check disagreed in ${status("disagrees")} of ${proxy.length} episodes). ` +
+      (main ? `Without the words, the main run caught ${outOf(beforeCaught, beforeMistakes)} on the same two tasks. ` : "") +
+      "This is reported as it came out.",
+    "",
+    "**Why.** The check is the server's own deterministic parser (`checkIntent`, no model): it reads dates written with a month name or as ISO, and a budget, and compares them with what the agent logged. " +
+      "In C1 the human's words contain no date at all (the conference 'is on my calendar'), so there is nothing to compare. In C2 the date is written '3/11', which the parser does not read, so it says 'agrees'. " +
+      "The same check does catch a date written 'November 13' against a logged Nov 3 (tested in `tests/evals/live-intent.test.ts`), so the mechanism works where the human's words are readable. " +
+      "It does not cover a date that is only in a calendar, or one written as day/month digits.",
+    "",
+    "**How it was measured.** Same tasks and agent as above. The agent is asked to pass the human's own words, copied exactly, as `original_request` in `log_intent`. " +
+      "`checkIntent` from `src/orchestrator/intent-words.ts` runs in process on what the agent logged. When it disagrees, the server would ask the human; here that answer is simulated as the human choosing their own words, and Proxy compares receipts with the corrected intent. " +
+      "A catch is therefore only as real as the parser, and the human's answer is not measured.",
+    "",
+  );
+  return out;
+}
+
+export function renderResults(layer1: Loaded<Layer1Results>, layer2: Loaded<Layer2Results>, intent: Loaded<Layer2Results> = null): string {
   const out: string[] = [];
   out.push("# Results", "");
   out.push("Generated by `npx tsx evals/report.ts` from the newest raw logs in `evals/results/`. Do not edit by hand: rerun the script.", "");
@@ -218,6 +274,8 @@ export function renderResults(layer1: { data: Layer1Results; file: string } | nu
     );
   }
 
+  out.push(...intentSection(intent, layer2));
+
   out.push("## What we do not claim", "");
   out.push(
     "- No rates and no percentages. These are counts from small runs.",
@@ -230,10 +288,72 @@ export function renderResults(layer1: { data: Layer1Results; file: string } | nu
 }
 
 export function renderLatestResults(dir: string = RESULTS_DIR): string {
-  return renderResults(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir));
+  return renderResults(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir), latest<Layer2Results>("intentcheck-", dir));
+}
+
+/**
+ * The numbers that are safe to say out loud, each with the file it comes from, and the things not to say.
+ * Generated from the raw logs, so a number here cannot be one the runs did not produce.
+ */
+export function renderPitchNumbers(layer1: Loaded<Layer1Results>, layer2: Loaded<Layer2Results>, intent: Loaded<Layer2Results> = null): string {
+  const out: string[] = ["# Pitch numbers", ""];
+  out.push("Generated by `npx tsx evals/report.ts` from the raw logs in `evals/results/`. Say a number only with its caveat. Do not edit by hand.", "", `> ${CAVEAT}`, "");
+  out.push("## Numbers you can say", "", "| Say | Source | Caveat that must go with it |", "|---|---|---|");
+  const naive1 = layer1?.data.summaries.find((item) => item.arm === "naive");
+  const proxy1 = layer1?.data.summaries.find((item) => item.arm === "proxy");
+  if (layer1 && naive1 && proxy1) {
+    out.push(
+      `| In ${proxy1.scenarios} scripted scenarios, Proxy caught ${proxy1.mistakes_caught} of ${proxy1.mistakes_expected} real mistakes; ${proxy1.known_misses} are documented known misses. | \`evals/results/${layer1.file}\` | Scripted by us, on our own mock merchants and a simulated clock. The naive column (${naive1.mistakes_caught} of ${naive1.mistakes_expected}) is a scripted self-review, not a measured rate: never quote it as how often agents miss things. |`,
+    );
+    out.push(
+      `| Across those scenarios the merchants agreed to ${dollars(proxy1.refund_agreed)} of refunds. | \`evals/results/${layer1.file}\` | Agreed amounts, not money Stripe verified in this layer. |`,
+    );
+  }
+  if (layer2) {
+    const { summary } = layer2.data;
+    const tasks = layer2ByTask(layer2.data.episodes);
+    const execution = tasks.filter((task) => !isComprehensionTask(task.task_id));
+    const comprehension = tasks.filter((task) => isComprehensionTask(task.task_id));
+    const total = (items: TaskCounts[], pick: (task: TaskCounts) => number): number => items.reduce((sum, task) => sum + pick(task), 0);
+    out.push(
+      `| With a live model as the agent (${layer2.data.model}), ${summary.naive.episodes_with_real_mistakes} of ${summary.naive.episodes} naive episodes had a real mistake, and the agent said it was done in ${summary.naive.false_done_claims} of them. | \`evals/results/${layer2.file}\` | ${summary.trials_per_task_arm} trials per task and arm, small samples, separate runs per arm; one small, cheap model. |`,
+    );
+    out.push(
+      `| On execution errors (a retry after a timeout, a default, a fallback), Proxy caught ${outOf(total(execution, (task) => task.proxy_caught), total(execution, (task) => task.proxy_mistakes))} real mistakes. | \`evals/results/${layer2.file}\` | Only ${execution.filter((task) => task.proxy_mistakes > 0).map((task) => task.task_id).join(" and ")} (of ${execution.length} execution tasks) produced mistakes; the rest produced none, so this says little about them. Proxy ran in process, not over MCP. |`,
+    );
+    out.push(
+      `| On comprehension errors (the agent misreads the request and logs the same misreading), Proxy caught ${outOf(total(comprehension, (task) => task.proxy_caught), total(comprehension, (task) => task.proxy_mistakes))}. Say this one yourself: it is the honest limit. | \`evals/results/${layer2.file}\` | The limit is S34 (the agent logs the wrong intent). |`,
+    );
+  }
+  const rerunTasks = intent ? layer2ByTask(intent.data.episodes) : [];
+  const intentRerun = intent
+    ? `The only rerun caught ${outOf(rerunTasks.reduce((sum, task) => sum + task.proxy_caught, 0), rerunTasks.reduce((sum, task) => sum + task.proxy_mistakes, 0))}`
+    : "No rerun has shown it working";
+  out.push(
+    "",
+    "## Do not say",
+    "",
+    "- Any percentage, rate, or multiple (including 4.8 to 9.3 times). We have counts from small runs, not rates.",
+    "- Any figure about UCP Checker sessions, or that something is 'years away'. No run of ours produced them.",
+    "- 'Proxy catches the mistakes agents make' without the split: it catches execution errors and not misreadings the agent also logs.",
+    "- 'Money recovered', 'refunded' or 'Stripe-verified' for these eval runs. They are merchant-agreed amounts. Stripe verification is claimed only for the live demo, with a real test charge, never from this table.",
+    "- That the merchants, merchant agents, or the clock are real. They are our own mocks and a simulated clock; Stripe is test mode.",
+    "- That Layer 1's naive column measures how often agents fail. It is a scripted assumption.",
+    "- Time to alert, redo correctness, or token cost per saved mistake: not measured.",
+    `- That passing the human's own words to \`log_intent\` fixes a misread request. ${intentRerun}, so the intent check is not part of the pitch numbers until a new rerun shows otherwise.`,
+    "- That Proxy can catch a misreading when the request has no date. If the human never wrote a date (the conference 'is on my calendar'), there is nothing to compare the agent's dates with, so no check can catch it. Say it as a limit.",
+    "",
+  );
+  return `${out.join("\n")}\n`;
+}
+
+export function renderLatestPitchNumbers(dir: string = RESULTS_DIR): string {
+  return renderPitchNumbers(latest<Layer1Results>("layer1-", dir), latest<Layer2Results>("layer2-", dir), latest<Layer2Results>("intentcheck-", dir));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   writeFileSync(RESULTS_MD, renderLatestResults());
+  writeFileSync(PITCH_MD, renderLatestPitchNumbers());
   console.log(`Wrote ${RESULTS_MD}`);
+  console.log(`Wrote ${PITCH_MD}`);
 }
