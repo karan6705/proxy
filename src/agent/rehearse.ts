@@ -38,6 +38,8 @@ export interface RehearsalOptions {
   write?: (line: string) => void;
   /** After the agent leaves: alert, UNDO ALL, hotel refund, summary and redo. Default: on for online runs. */
   human?: boolean;
+  /** Delay before the human part replies UNDO ALL (the offline recording waits 5 s, like a person reading). */
+  replyDelayMs?: number;
 }
 
 type SetupStep = RehearsalResult["steps"][number];
@@ -104,6 +106,7 @@ export async function runRehearsal(options: RehearsalOptions = {}): Promise<Rehe
     const passed = await runHumanPhase({
       mcpUrl,
       now,
+      ...(options.replyDelayMs ? { replyDelayMs: options.replyDelayMs } : {}),
       report: (step, status, duration_ms, detail) => {
         steps.push({ step, status, duration_ms, ...(status === "FAIL" && detail ? { error: detail } : {}) });
         write(`${status} ${step} ${Math.round(duration_ms)}ms${detail ? ` — ${detail}` : ""}`);
