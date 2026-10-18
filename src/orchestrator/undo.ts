@@ -164,7 +164,10 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     const { chain, intent, actions } = await load(chain_id);
     if (chain.state !== "undoing") return;
     const todo = actions.filter((a) => chain.plan.some((p) => p.action_id === a.action_id && p.option !== "keep"));
-    if (todo.some((a) => !DONE_STATES.has(a.state))) return;
+    // "accepted" is done only for a correction (no money); for a refund it means the counter is agreed but
+    // the money hasn't moved yet.
+    const done = (a: Action) => DONE_STATES.has(a.state) && !(a.state === "accepted" && a.amount > 0);
+    if (todo.some((a) => !done(a))) return;
     const bad = todo.filter((a) => a.state === "failed" || a.state === "denied" || a.state === "no_agent");
     const summary = chainSummary(
       actions.map((a) => ({

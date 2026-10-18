@@ -134,6 +134,28 @@ describe("QA workflows", () => {
     expect(bodies).toContain("Hotel refunded, $544 of $640, confirmed in Stripe.");
     expect(bodies).toContain("Transfer refunded, $188, confirmed in Stripe.");
     expect(bodies).toContain("Host correction sent: Nov 13 to Nov 16.");
+    // The summary is last and counts every refund, however the hotel's answers interleave with the others.
+    expect(bodies.at(-1)).toBe("All done. $1,144 of $1,240 back, confirmed in Stripe. Host told the right dates. Your agent will rebook for Nov 13.");
+  });
+
+  it("1b. A slow hotel: the summary waits for its refund instead of counting the agreed counter as done", async () => {
+    let hotelAgent: ReturnType<Runtime["merchants"]["agent"]> = null;
+    const slow: ProtocolTransport = {
+      async send(merchant, _to, message) {
+        setTimeout(() => {
+          void hotelAgent!.respond(message, clock.now()).then((answer) => rt.proxy.onProtocolMessage(answer));
+        }, 20);
+        void merchant;
+      },
+    };
+    build({}, { transport: slow });
+    hotelAgent = rt.merchants.agent("hotel");
+    await logIntent();
+    const c = await demoChain();
+    await imessageIn("UNDO ALL");
+    await settle(async () => (await chainState(c.chain_id)) === "redo_requested");
+    const bodies = texts().map((t) => t.body);
+    expect(bodies.filter((b) => b.startsWith("All done") || b.startsWith("Partly done"))).toHaveLength(1);
     expect(bodies.at(-1)).toBe("All done. $1,144 of $1,240 back, confirmed in Stripe. Host told the right dates. Your agent will rebook for Nov 13.");
   });
 
