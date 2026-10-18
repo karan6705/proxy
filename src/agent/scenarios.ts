@@ -9,24 +9,28 @@
 //              leaves. The receipt arrives late; Proxy flags the item and texts the human. After UNDO ALL, Northwind's agent
 //              offers store credit, Proxy declines, fills Northwind's return form, the simulated carrier scans the drop-off,
 //              the refund is verified, and the demo agent orders the USB-C 65W charger (the server's demo redo).
+//   trip-dmy   The human writes "11/3" meaning 11 March. The agent reads Nov 3, logs it with the human's words, and books the
+//              flight, hotel and transfer and emails the host for Nov 3 without waiting for Proxy's question, then leaves.
+//              Reply 2 (Mar 11) on /web/show or by text: Proxy finds every booking on the wrong date and sends the alert.
 // The trip story is runScriptedDemo (scripted.ts).
 import type { DateRange, LogIntentOutput, ReviewOutput, ToolResult } from "../types.js";
 import type { DemoBookingMerchants } from "./http-merchants.js";
 import type { ToolClient } from "./mcp-client.js";
 import { DEMO_PREFERENCES, type DemoControl } from "./scripted.js";
 
-export const SCENARIO_NAMES = ["trip", "ambiguous", "plan", "store"] as const;
+export const SCENARIO_NAMES = ["trip", "trip-dmy", "ambiguous", "plan", "store"] as const;
 export type ScenarioName = (typeof SCENARIO_NAMES)[number];
 
 export const AMBIGUOUS_REQUEST =
   "Book me a flight SFO to JFK landing 3/11, 3 nights at Harborview from 3/11, and an airport transfer on 3/11. Under $1,500 total.";
+export const DMY_REQUEST = "Book my NYC trip for the conference on 11/3, under $1,500.";
 export const PLAN_REQUEST = "Sign our team up for Acme Cloud's team plan, billed monthly.";
 export const STORE_REQUEST = "Order a USB-C 65W charger for my MacBook, under $60.";
 
 export interface ScenarioAgentOptions {
   client: ToolClient;
   merchants: DemoBookingMerchants;
-  control: Pick<DemoControl, "endSession">;
+  control: Pick<DemoControl, "endSession"> & Partial<Pick<DemoControl, "sendHostArrival">>;
   /** The agent's clock, for booked_at (the server's demo clock decides everything else). */
   now: () => string;
   write?: (line: string) => void;
@@ -84,6 +88,38 @@ export async function runAmbiguousAgent(o: ScenarioAgentOptions): Promise<Scenar
   const review = okOrThrow(await o.client.callTool<ToolResult<ReviewOutput>>("review", { task_id: logged.task_id }), "review");
   write(`Booked ${day(dates.start)}${dates.end ? ` to ${day(dates.end)}` : ""}; review: ${review.status}.`);
   await o.control.endSession(logged.task_id);
+  return { task_id: logged.task_id, review, booked_dates: dates };
+}
+
+export async function runTripDmyAgent(o: ScenarioAgentOptions): Promise<ScenarioAgentResult> {
+  const write = o.write ?? console.log;
+  const dates = { start: "2026-11-03", end: "2026-11-06" };
+  const logged = okOrThrow(
+    await o.client.callTool<LogIntent>("log_intent", {
+      goal: "NYC trip for the conference on 11/3, under $1,500",
+      // The agent reads 11/3 the American way: Nov 3.
+      constraints: { dates, budget_total: 150_000, destination: "NYC", categories: ["flight", "hotel", "transfer"] },
+      preferences: DEMO_PREFERENCES,
+      original_request: DMY_REQUEST,
+      idempotency_key: "demo:trip-dmy:11-3",
+    }),
+    "log_intent",
+  );
+  if (logged.next_action === "wait_for_human") write(`Proxy asked the human: "${logged.intent_check?.said}". The agent doesn't wait and books Nov 3.`);
+  // The mistake: it books without waiting for the answer.
+  const at = o.now();
+  await o.merchants.book({ merchant_id: "airline", task_id: logged.task_id, task_email: logged.task_email, item: "Flight SFO to JFK, Nov 3", dates: { start: dates.start }, amount: 41_200, booked_at: at });
+  await o.merchants.book({ merchant_id: "hotel", task_id: logged.task_id, task_email: logged.task_email, item: "Hotel, 3 nights", dates, amount: 64_000, booked_at: at });
+  await o.merchants.book({ merchant_id: "transfer", task_id: logged.task_id, task_email: logged.task_email, item: "Airport transfer, Nov 3", dates: { start: dates.start }, amount: 18_800, booked_at: at });
+  await o.control.sendHostArrival?.(
+    { action_id: "act_host_email", task_id: logged.task_id, merchant: "host", category: "message", summary: "Arrival email to the host, says Nov 3", amount: 0, dates: { start: dates.start }, ref: "HOST-EMAIL-001", source: "agent", received_at: at, state: "found" },
+    logged.task_email,
+  );
+  const review = okOrThrow(await o.client.callTool<ToolResult<ReviewOutput>>("review", { task_id: logged.task_id }), "review");
+  write(`Booked Nov 3 and emailed the host; the agent's review: ${review.status}. It says it's done and leaves.`);
+  // Still the agent's day: the flight is inside the 24-hour rule when Proxy reaches it.
+  await o.control.endSession(logged.task_id, { late: false });
+  write("Reply 2 (Mar 11) to Proxy's question on /web/show or by text: Proxy then checks the bookings and sends the alert.");
   return { task_id: logged.task_id, review, booked_dates: dates };
 }
 

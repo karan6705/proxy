@@ -2,7 +2,7 @@
 // the one alert, UNDO ALL from the demo page, the hotel negotiated and refunded, the chain finished, and the
 // redo for the right dates. Each step reads GET /demo/feed and reports PASS or FAIL.
 
-export const HUMAN_PHASE_STEPS = ["alert", "undo_all", "hotel_options", "hotel_refund", "all_done", "redone"] as const;
+export const HUMAN_PHASE_STEPS = ["date_answer", "alert", "undo_all", "hotel_options", "hotel_refund", "all_done", "redone"] as const;
 export type HumanPhaseStep = (typeof HUMAN_PHASE_STEPS)[number];
 
 interface FeedEntry {
@@ -27,9 +27,13 @@ export interface HumanPhaseOptions {
   replyDelayMs?: number;
   /** Per step. The hotel step allows for a slow agent and the email follow-up. */
   timeouts?: Partial<Record<HumanPhaseStep, number>>;
+  /** trip-dmy: answer Proxy's date question ("Did you mean Nov 3 or Mar 11?") with this choice before the alert. */
+  dateAnswer?: 1 | 2;
+  /** The date the redo text must name, e.g. "Mar 11". */
+  expectRedo?: string;
 }
 
-const DEFAULT_TIMEOUTS: Record<HumanPhaseStep, number> = { alert: 20_000, undo_all: 10_000, hotel_options: 150_000, hotel_refund: 150_000, all_done: 60_000, redone: 60_000 };
+const DEFAULT_TIMEOUTS: Record<HumanPhaseStep, number> = { date_answer: 20_000, alert: 20_000, undo_all: 10_000, hotel_options: 150_000, hotel_refund: 150_000, all_done: 60_000, redone: 60_000 };
 
 export async function runHumanPhase(options: HumanPhaseOptions): Promise<boolean> {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -66,6 +70,15 @@ export async function runHumanPhase(options: HumanPhaseOptions): Promise<boolean
     }
   };
 
+  if (options.dateAnswer) {
+    await step("date_answer", async () => {
+      const asked = await waitFor("date_answer", (f) => f.entries.find((e) => e.kind === "text_out" && /^You wrote /.test(e.text)));
+      const res = await fetchImpl(url("/web/reply"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "choice", choice: options.dateAnswer }) });
+      if (!res.ok) throw new Error(`/web/reply answered ${res.status}`);
+      const got = await waitFor("date_answer", (f) => f.entries.find((e) => e.kind === "text_out" && /^Got it: /.test(e.text)));
+      return { value: true, detail: `${asked.text} > ${got.text}` };
+    });
+  }
   const chain_id = await step("alert", async () => {
     const alert = await waitFor("alert", (f) => f.entries.find((e) => e.kind === "text_out" && e.data.alert === "chain_opened"));
     const f = await feed();
@@ -76,7 +89,7 @@ export async function runHumanPhase(options: HumanPhaseOptions): Promise<boolean
     if (options.replyDelayMs) await new Promise((r) => setTimeout(r, options.replyDelayMs));
     const res = await fetchImpl(url("/web/reply"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chain_id, kind: "undo_all" }) });
     if (!res.ok) throw new Error(`/web/reply answered ${res.status}`);
-    const got = await waitFor("undo_all", (f) => f.entries.find((e) => e.kind === "text_out" && /^Got it/.test(e.text)));
+    const got = await waitFor("undo_all", (f) => f.entries.find((e) => e.kind === "text_out" && /^Got it(?!: )/.test(e.text)));
     return { value: true, detail: got.text };
   });
   await step("hotel_options", async () => {
@@ -98,6 +111,7 @@ export async function runHumanPhase(options: HumanPhaseOptions): Promise<boolean
   });
   await step("redone", async () => {
     const e = await waitFor("redone", (f) => f.chain?.state === "redone" && f.entries.find((x) => x.kind === "text_out" && /^Rebooked/.test(x.text)));
+    if (options.expectRedo && !e.text.includes(options.expectRedo)) throw new Error(`redo is not for ${options.expectRedo}: ${e.text}`);
     return { value: true, detail: e.text };
   });
   return ok;

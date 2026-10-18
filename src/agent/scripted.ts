@@ -46,7 +46,8 @@ export interface ScriptedStepResult {
 type Ok<T> = { ok: true } & T;
 
 export interface DemoControl extends ConfirmationSink {
-  endSession(taskId: string): Promise<void>;
+  /** `late: false` ends the session without moving the demo clock to the late confirmations' hour. */
+  endSession(taskId: string, opts?: { late?: boolean }): Promise<void>;
   reset(): Promise<void>;
   sendHostArrival(action: Action, taskEmail: string): Promise<void>;
 }
@@ -121,9 +122,10 @@ export function createHttpDemoControl(
     deliver(envelope) {
       return postJson(fetchImpl, demoHttpUrl(mcpUrl, "/demo/confirmation"), envelope);
     },
-    endSession(taskId) {
+    endSession(taskId, opts) {
       const url = demoHttpUrl(mcpUrl, "/demo/end-session");
       url.searchParams.set("task_id", taskId);
+      if (opts?.late === false) url.searchParams.set("late", "0");
       return postJson(fetchImpl, url);
     },
     reset() {
