@@ -20,7 +20,7 @@ import type {
   TaskId,
 } from "../types.js";
 import { chainAlert, chainMoney, correctedDates, humanDate, money } from "./copy.js";
-import { intentQuestion } from "./intent-words.js";
+import { intentAnswer, intentQuestion } from "./intent-words.js";
 import { createFeed, type Feed, type FeedEntry } from "./feed.js";
 import type { IntentCheck } from "./intent-words.js";
 import type { IntentUpdates } from "./intent-store.js";
@@ -421,10 +421,12 @@ export function createProxy(deps: ProxyDeps): Proxy {
       if (!open) return false;
       const [task_id, entry] = open;
       await logEvent({ kind: "sms_in", task_id, outcome: `intent_answer:${choice}` });
-      if (choice === 1) {
-        await updateIntent(task_id, (i) => ({ ...i, constraints: { ...i.constraints, ...entry.check.corrected } }));
-        intentChecks.set(task_id, { ...entry, status: "confirmed_human" });
-        await sayToHuman(task_id, `Got it: ${entry.check.said}. Your agent will use that.`);
+      // Reply 1 is the human's words, 2 the agent's; for an ambiguous date, 1 and 2 are its two readings.
+      const answer = intentAnswer(entry.check, choice);
+      if (answer.corrected) {
+        await updateIntent(task_id, (i) => ({ ...i, constraints: { ...i.constraints, ...answer.corrected } }));
+        intentChecks.set(task_id, { status: "confirmed_human", check: { ...entry.check, said: answer.said } });
+        await sayToHuman(task_id, `Got it: ${answer.said}. Your agent will use that.`);
       } else {
         intentChecks.set(task_id, { ...entry, status: "confirmed_agent" });
         await sayToHuman(task_id, `Okay, keeping ${entry.check.understood}.`);

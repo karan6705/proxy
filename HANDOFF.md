@@ -20,6 +20,12 @@
 
 ## Karan
 
+### Readiness and the intent check (2026-10-18)
+- Tag `demo-v2` is on main at 51feb13 (`demo-v1` unchanged).
+- Every tool parameter has a description; `src/tools/schemas.test.ts` fails if one is added without.
+- `undo` with an unknown action id returns `not_found` (`next_action: "fix_now"`, "call review(task_id), then undo with those ids") and undoes nothing.
+- Intent check: numeric and day-only dates, the ambiguous "3/11" question, and "nothing checkable" (see the note under Dhwanil).
+
 ### Cloud judge copy: PROXY_MODE=cloud, try_proxy_demo, /health (2026-10-18)
 - **Set on the deployed server:** `PROXY_MODE=cloud` and `PROXY_DEMO_ROUTES=1` (the second makes `try_proxy_demo` available; cloud mode makes it safe). Keep `INKBOX_DRY_RUN=1` too; no keys are needed, and none have any effect in cloud mode.
 - **Cloud mode:** in-memory store, simulated payments ("Stripe (simulated)" in every text), a stand-in Inkbox that sends nothing, no model calls, no human number. The Inkbox webhook routes, the mock merchants' endpoints, `/web/reply` and every mutating `/demo/*` route (including `/demo/reset`) return 404; `/demo/feed`, `/web/stage`, `/web/state`, `/scoreboard` and `/health` work. No poller starts.
@@ -438,6 +444,12 @@ Found in Karan's live run on port 3000, read from `/web/state`:
 - The phone alert now uses your multi-line layout (the mistake, what the agent already undid, a blank line, the numbers, the window, a blank line, the choice). The tests no longer pin your "Got it" acknowledgement's wording, beyond `/^Got it/` in the rehearsal and test 1's check that it arrives before any progress text, so you can switch it to two lines.
 
 ## Dhwanil
+
+### From Karan: numeric dates in the intent check are on main (2026-10-18)
+- `checkIntent` (`src/orchestrator/intent-words.ts`) now reads `M/D`, `D/M`, `M/D/YYYY` (and two-digit years), ISO, "the 13th" (the agent's month, or the current one), "13th of November" and "Nov 13", including ranges.
+- A numeric date valid both ways ("3/11") is ambiguous. If the agent logged one reading, the result is `disagrees` with `next_action: "wait_for_human"`, and the human gets "You wrote 3/11. Your agent read it as Mar 11. Did you mean Mar 11 or Nov 3? Reply 1 or 2." `corrected` is the reading the agent did not take, so `applyIntentCheck`'s simulated "their own words" answer picks it. If the agent's date matches neither reading, it is a plain disagreement (the month-first reading is put forward).
+- Words with no date or budget (C1 has "Budget $1,500" but no date, so it still checks the budget and agrees) return `{ status: "absent", checkable: false }` and nothing is sent.
+- **Please update `tests/evals/live-intent.test.ts`** (it now fails, on purpose): C2 with a logged Mar 11 2027 is now `disagrees`, `said: "3/11 (Mar 11 or Nov 3)"`, and the corrected intent starts `2027-11-03` (ends `2027-11-06`). C1 stays `agrees`. The `evals/report.ts` line saying the parser reads only month names and ISO is out of date too. Rerunning the intent-check eval would give the real number.
 
 ### A2A transport ownership
 Sarah owns A2A transport in both directions: inbound Proxy requests route to Dhwanil's hotel agent, and hotel replies route back to the orchestrator. If Inkbox inbound A2A does not work, use email between `proxy-agent` and `hotel-agent` with a structured JSON body. The protocol state machine is unchanged.
