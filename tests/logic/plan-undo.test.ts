@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compare, logic, planUndo, trace } from "../../src/logic/index.js";
+import { compare, logic, planUndo, reversibility, trace } from "../../src/logic/index.js";
 import type { Action, Preferences } from "../../src/types.js";
 import { DEMO_NOW, FLIGHT_WINDOW_END, PREFERENCES, demoActions, demoIntent, makeChain } from "../helpers/demo.js";
 
@@ -88,24 +88,33 @@ describe("plan_undo: the demo chain", () => {
 describe("plan_undo: closed windows and the damage minimizer", () => {
   const flight = demoActions(true)[0];
 
-  it("takes the $75 change fee over losing the $412 fare once the 24-hour window has closed", () => {
+  it("keeps the flight once the 24-hour window has closed: a $75 change exists, but the airline has no desk to ask", () => {
     const now = plus(flight.received_at, 30 * 60 * 60 * 1000);
     expect(planUndo(chainOf([flight]), [flight], PREFERENCES, now)).toEqual([
-      { action_id: "act_flight", route: "email_support", option: "change", cost: 7500, deadline: NOV_2 },
+      { action_id: "act_flight", route: "keep", option: "keep", cost: 41200, deadline: null },
     ]);
+    // reversibility still tells the truth about the fare: it can be changed for $75. Only the human can do it.
+    expect(reversibility(flight, now)).toMatchObject({ kind: "change", cost_to_reverse: 7500 });
+  });
+
+  it("still takes a fee fix for a merchant that has a desk, once the free window has closed", () => {
+    const jacket = { ...flight, action_id: "act_jacket", merchant: "store", category: "store" as const, amount: 20000, received_at: "2026-10-17T09:00:00.000Z", summary: "Rain jacket", dates: { start: "2026-10-17" } };
+    const plan = planUndo(chainOf([jacket]), [jacket], PREFERENCES, "2026-12-01T10:00:00.000Z");
+    expect(plan[0]).toMatchObject({ option: "cancel", cost: 3000 });
+    expect(plan[0].route).not.toBe("keep");
   });
 
   it("does the same for a flight booked less than 7 days out, where the 24-hour rule never applied", () => {
     const lastMinute = { ...flight, received_at: "2026-10-30T12:00:00.000Z" };
     expect(planUndo(chainOf([lastMinute]), [lastMinute], PREFERENCES, lastMinute.received_at)).toEqual([
-      { action_id: "act_flight", route: "email_support", option: "change", cost: 7500, deadline: NOV_2 },
+      { action_id: "act_flight", route: "keep", option: "keep", cost: 41200, deadline: null },
     ]);
   });
 
   it("keeps a fare when the change fee is as much as the fare", () => {
     const cheap = { ...flight, amount: 5000, received_at: "2026-10-30T12:00:00.000Z" };
     expect(planUndo(chainOf([cheap]), [cheap], PREFERENCES, cheap.received_at)).toEqual([
-      { action_id: "act_flight", route: "stripe_dispute", option: "keep", cost: 5000, deadline: null },
+      { action_id: "act_flight", route: "keep", option: "keep", cost: 5000, deadline: null },
     ]);
   });
 
@@ -116,7 +125,7 @@ describe("plan_undo: closed windows and the damage minimizer", () => {
     const keeps = plan.filter((s) => s.option === "keep");
     expect(keeps.map((s) => s.action_id)).toEqual(["act_hotel", "act_flight", "act_transfer"]);
     expect(keeps.map((s) => s.cost)).toEqual([64000, 41200, 18800]);
-    expect(keeps.every((s) => s.deadline === null && s.route === "stripe_dispute")).toBe(true);
+    expect(keeps.every((s) => s.deadline === null && s.route === "keep")).toBe(true);
     // The correction message is still a fix, so it comes before the keeps.
     expect(plan[0]).toMatchObject({ action_id: "act_host_email", route: "correction" });
   });
@@ -149,7 +158,7 @@ describe("plan_undo: closed windows and the damage minimizer", () => {
   it("goes straight to keep for a final-sale item, even inside what would be a return window", () => {
     const finalSale = base({ action_id: "act_final", merchant: "final_sale", amount: 9900 });
     expect(planUndo(chainOf([finalSale]), [finalSale], PREFERENCES, plus(finalSale.received_at, DAY))).toEqual([
-      { action_id: "act_final", route: "stripe_dispute", option: "keep", cost: 9900, deadline: null },
+      { action_id: "act_final", route: "keep", option: "keep", cost: 9900, deadline: null },
     ]);
   });
 });
