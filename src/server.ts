@@ -60,7 +60,7 @@ export const logIntent = server.tool(
       "Records what the human asked for before you act, and returns a task_email unique to this task. " +
       "Call it first, at the start of any task that books, buys, signs up or emails someone. " +
       "Next: use task_email as the contact email for every booking and signup in this task, then call review(task_id) before you finish. " +
-      "Idempotent on idempotency_key.",
+      "Pass original_request (the human's own words) if you have it: if your dates or budget differ from it, the human is asked and next_action is wait_for_human; call log_intent again with the same idempotency_key to get the answer. Idempotent on idempotency_key.",
     inputSchema: advertise(logIntentInput),
     outputSchema: logIntentOutput,
     annotations: writeHints,
@@ -168,7 +168,7 @@ server.prompt(
           type: "text" as const,
           text: [
             `You are doing this task for a human${task ? `: ${task}` : ""}. Use the Proxy tools around it:`,
-            "1. Before acting, call log_intent with the goal, the hard constraints (dates, budget, must-haves) and an idempotency_key. Use the task_email it returns as the contact email for every booking, signup and message.",
+            "1. Before acting, call log_intent with the goal, the hard constraints (dates, budget, must-haves), an idempotency_key and original_request (the human's exact words). Use the task_email it returns as the contact email for every booking, signup and message. If it says wait_for_human, wait, then call log_intent again with the same key and use the constraints it returns.",
             "2. If you are unsure a purchase matches the intent, call reversibility first.",
             "3. Before you tell the human you are done, call review(task_id). If status is clean, you are done.",
             "4. If status is chain_open, call undo with the ids in fixable_now. Anything in requires_human goes to the human by text; do not try to fix it yourself.",

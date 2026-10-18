@@ -102,11 +102,26 @@ export const logIntentInput = z.object({
   constraints,
   preferences: preferences.partial().optional().describe("The human's rules for fixes. Omit to use defaults"),
   idempotency_key: z.string().min(1).describe("Unique per task. Retrying with the same key returns the same task"),
+  original_request: z
+    .string()
+    .max(2000)
+    .optional()
+    .describe("The human's request in their own words, if you have it. Proxy checks your dates and budget against it and asks the human if they differ"),
 }) satisfies z.ZodType<LogIntentInput>;
 export const logIntentOutput = z.object({
   ok,
   task_id: z.string(),
   task_email: z.string().describe("Use this email for every booking and signup in this task"),
+  intent_check: z
+    .object({
+      status: z.enum(["agrees", "disagrees", "absent", "confirmed_human", "confirmed_agent"]),
+      understood: z.string().optional(),
+      said: z.string().optional(),
+    })
+    .optional()
+    .describe("disagrees: your dates or budget differ from the human's words and the human is being asked. Wait, then call log_intent again with the same idempotency_key"),
+  next_action: z.enum(["retry", "fix_now", "wait_for_human", "redo", "stop"]).optional(),
+  constraints: constraints.optional().describe("The constraints to use, when the human's answer changed them"),
 }) satisfies z.ZodType<LogIntentOutput & { ok: true }>;
 
 // --- reversibility ---

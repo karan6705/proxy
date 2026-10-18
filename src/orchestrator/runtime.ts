@@ -25,6 +25,7 @@ import { createStandInInkbox } from "./standin-inkbox.js";
 import type { ProtocolTransport } from "./undo.js";
 import { createRateLimitState, guardAccess, schedulePolls, throttledLog, type PollSchedule } from "./poll-guard.js";
 import { frontHumanChannel } from "./human-front.js";
+import { withIntentUpdates } from "./intent-store.js";
 import { setPaymentsName } from "./copy.js";
 import { protocolSubject } from "../inkbox/index.js";
 
@@ -95,7 +96,8 @@ const shortDate = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Num
 
 export function createRuntime(clock: Clock, params: Params, defaultPreferences: Preferences, overrides: RuntimeOverrides = {}): Runtime {
   const env = overrides.env ?? process.env;
-  const store = overrides.store ?? createStoreFromEnv(env);
+  // Intents can be changed by the human's answers; see intent-store.ts.
+  const store = withIntentUpdates(overrides.store ?? createStoreFromEnv(env));
   const useInkbox = Boolean(env.INKBOX_API_KEY?.trim()) || env.INKBOX_DRY_RUN === "1";
   const inkbox = overrides.inkbox ?? (useInkbox ? createInkbox({ store, clock }) : createStandInInkbox());
   const useStripe = (env.STRIPE_SECRET_KEY ?? "").startsWith("sk_test_");

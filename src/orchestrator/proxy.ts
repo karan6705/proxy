@@ -8,6 +8,7 @@ import type {
   Clock,
   EventRow,
   Inkbox,
+  Intent,
   Logic,
   Mismatch,
   OrchestratorHooks,
@@ -19,7 +20,10 @@ import type {
   TaskId,
 } from "../types.js";
 import { chainAlert, chainMoney, correctedDates, humanDate, money } from "./copy.js";
+import { intentQuestion } from "./intent-words.js";
 import { createFeed, type Feed, type FeedEntry } from "./feed.js";
+import type { IntentCheck } from "./intent-words.js";
+import type { IntentUpdates } from "./intent-store.js";
 import { createUndoExecutor, undoneByAgent, type ProtocolTransport, type UndoExecutor, type UndoMerchants } from "./undo.js";
 
 export interface ProxyDeps {
@@ -84,6 +88,14 @@ export interface Proxy extends OrchestratorHooks {
   alertChains(task_id: TaskId): Promise<void>;
   /** Merchant protocol messages and human decisions are applied by this. */
   undo: UndoExecutor;
+  /** Texts the human outside any chain (the alert channel; recorded but not sent without HUMAN_PHONE). */
+  sayToHuman(task_id: TaskId, body: string): Promise<void>;
+  /** The human's words disagree with the logged intent: ask "Reply 1 or 2" and remember the question. */
+  askAboutIntent(task_id: TaskId, check: IntentCheck): Promise<void>;
+  /** Where the intent question for this task stands, if one was asked. */
+  intentCheckFor(task_id: TaskId): { status: "disagrees" | "confirmed_human" | "confirmed_agent"; check: IntentCheck } | null;
+  /** The human answered 1 (their words) or 2 (the agent's). False when no question is open. */
+  answerIntent(choice: 1 | 2): Promise<boolean>;
   /** RESUME after STOP: lifts the freeze and carries on with paused work. */
   resume(): Promise<void>;
   /** Answer to "Just to check..." after a correction text. False when no correction was waiting. */
@@ -307,10 +319,8 @@ export function createProxy(deps: ProxyDeps): Proxy {
     const dates = intent ? correctedDates(pending.corrected_text, intent) : null;
     if (intent && dates && (dates.start !== intent.constraints.dates?.start || dates.end !== intent.constraints.dates?.end)) {
       try {
-        await store.putIntent({ ...intent, constraints: { ...intent.constraints, dates } }, `correction:${chain_id}`);
-        await refreshChains(intent.task_id);
+        await updateIntent(intent.task_id, (i) => ({ ...i, constraints: { ...i.constraints, dates } }));
       } catch (e) {
-        // The Supabase store can't update an intent yet (requested from Sarah); the undo still runs.
         console.error("[correction] could not update the intent:", e instanceof Error ? e.name : e);
       }
     }
@@ -345,6 +355,30 @@ export function createProxy(deps: ProxyDeps): Proxy {
     await textHuman(chain.chain_id, "result", `Rebooked for ${d ? `${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""}` : "the right dates"}: ${list}. Each confirmation matches what you asked for.`);
   }
 
+  async function sayToHuman(task_id: TaskId, body: string) {
+    const channel = deps.humanChannel ?? "imessage";
+    note({ task_id, chain_id: null, actor: "proxy", kind: "text_out", text: body, data: { channel } });
+    if (deps.canTextHuman !== false && deps.humanNumber) {
+      await deps.inkbox.sendText(channel, deps.humanNumber, body);
+      await logEvent({ kind: channel === "imessage" ? "imessage_out" : "sms_out", task_id, outcome: "intent_question" });
+    } else {
+      await logEvent({ kind: channel === "imessage" ? "imessage_out" : "sms_out", task_id, outcome: "intent_question:not_sent_no_human_number" });
+    }
+  }
+
+  /** Intent questions by task, in the order they were asked. */
+  const intentChecks = new Map<TaskId, { status: "disagrees" | "confirmed_human" | "confirmed_agent"; check: IntentCheck }>();
+
+  async function updateIntent(task_id: TaskId, change: (i: Intent) => Intent) {
+    const intent = await store.getIntent(task_id);
+    if (!intent) return;
+    const next = change(intent);
+    const updater = (store as Partial<IntentUpdates>).updateIntent;
+    if (updater) await updater.call(store, next);
+    else await store.putIntent(next, `update:${task_id}:${clock.nowMs()}`);
+    await refreshChains(task_id);
+  }
+
   async function askHumanAboutCounter(chain_id: ChainId, negotiation_id: string, body: string) {
     // Tell the channel first, so a fast reply can't arrive before it knows what YES/NO means.
     humanChannel?.expectCounterDecision(chain_id, negotiation_id);
@@ -372,6 +406,28 @@ export function createProxy(deps: ProxyDeps): Proxy {
     alertChains,
     undo,
     confirmCorrection,
+    sayToHuman,
+    async askAboutIntent(task_id, check) {
+      intentChecks.set(task_id, { status: "disagrees", check });
+      note({ task_id, chain_id: null, actor: "proxy", kind: "mismatch", text: `Proxy: the agent's intent differs from the human's words (${check.understood} vs ${check.said}).`, data: { understood: check.understood ?? null, said: check.said ?? null } });
+      await sayToHuman(task_id, intentQuestion(check));
+    },
+    intentCheckFor: (task_id) => intentChecks.get(task_id) ?? null,
+    async answerIntent(choice) {
+      const open = [...intentChecks.entries()].filter(([, v]) => v.status === "disagrees").at(-1);
+      if (!open) return false;
+      const [task_id, entry] = open;
+      await logEvent({ kind: "sms_in", task_id, outcome: `intent_answer:${choice}` });
+      if (choice === 1) {
+        await updateIntent(task_id, (i) => ({ ...i, constraints: { ...i.constraints, ...entry.check.corrected } }));
+        intentChecks.set(task_id, { ...entry, status: "confirmed_human" });
+        await sayToHuman(task_id, `Got it: ${entry.check.said}. Your agent will use that.`);
+      } else {
+        intentChecks.set(task_id, { ...entry, status: "confirmed_agent" });
+        await sayToHuman(task_id, `Okay, keeping ${entry.check.understood}.`);
+      }
+      return true;
+    },
     async resume() {
       if (!frozen) return;
       frozen = false;

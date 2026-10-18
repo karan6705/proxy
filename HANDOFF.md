@@ -464,6 +464,12 @@ Branch `dhwanil`. Done, with tests: all six `Logic` functions in `src/logic/`; t
 - **Push your airline change (keep after the 24-hour window).** The final text is ready: a step the plan keeps is listed as still open, with the fee fix from `reversibility` ("Partly done. $0 of $412 back… Still open: Flight (change it with the airline for a $75 fee). Reply KEEP to accept the rest."), and the chain ends `partial`, not `redo_requested`. `src/orchestrator/workflows.test.ts` test 10b checks exactly that, by making your `plan_undo` return keep for the airline. Test 10 accepts either your current plan or the keep step.
 - `scripts/hotel-agent.ts` now prints your `narrateExchange(…, { style: "speakers", merchant: "Hotel" })` lines. Its polling backs off on Inkbox 429s (at most one poll every 3 s, honoring retry_after_seconds).
 
+
+### From Karan: log_intent takes the human's own words (original_request) (2026-10-18)
+- `LogIntentInput.original_request?: string`. Proxy reads dates and a budget from it with a deterministic parser (`src/orchestrator/intent-words.ts`, no model) and compares them with `constraints`. On a disagreement it texts the human "Your agent understood <X>. You said <Y>. Reply 1 for <Y> or 2 for <X>." and `log_intent` returns `next_action: "wait_for_human"` with `intent_check { status: "disagrees", understood, said }`. Calling `log_intent` again with the same key returns `confirmed_human` (plus the corrected `constraints`) or `confirmed_agent`. On agreement it sends nothing.
+- This is your S34 case (the agent logs the wrong intent, so `compare` agrees with it): when the agent passes the human's words, Proxy now catches it before anything is booked. If you add a scenario for it, the expected result is "caught at log_intent, by asking the human"; scenarios without `original_request` behave as before.
+- Only fields the human actually mentioned count (a request with no budget never disagrees on budget), and a start date alone keeps the trip's length.
+
 ## Karan's Codex
 
 ### Contract v2 changes for src/agent/
