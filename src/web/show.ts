@@ -309,6 +309,9 @@ footer .hint{color:var(--faint)}
   };
   var NAMES={northwind:"Northwind Market support",hotel:"Harborview Hotel's agent",transfer:"Metro Transfer support",host:"Your host",saas:"Acme Cloud billing",airline:"Skyline Demo Air"};
   var STORE_NAMES={northwind:"Northwind Market"};
+  /** Merchants that are our own simulation, even on the live server: labelled "Simulated store" wherever they appear. */
+  var SIMULATED={northwind:true};
+  function simTag(){return el("span","tag sim","Simulated store")}
   var ICONS={flight:"✈️",hotel:"🏨",transfer:"🚗",message:"✉️",saas:"☁️",store:"📦"};
   var MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
@@ -455,7 +458,7 @@ footer .hint{color:var(--faint)}
     mid.appendChild(el("div","what",(b.category==="saas"?"Team plan · "+String(b.summary||"").replace(/^Saas · /i,""):String(b.summary||"")).replace(/\s·\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?: to (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})?$/,"")));
     if(b.category==="store"&&items[b.id])mid.firstChild.textContent=items[b.id];
     var annual=/annual|yearly/i.test(String(b.raw||b.summary));
-    var when=el("div","when",b.category==="saas"?(annual?"Billed annually":"Billed monthly"):b.category==="store"?STORE_NAMES[b.merchant]||"Online order":range(b.dates));
+    var when=el("div","when",b.category==="saas"?(annual?"Billed annually":"Billed monthly"):b.category==="store"?(STORE_NAMES[b.merchant]||"Online order")+(SIMULATED[b.merchant]?" (simulated store)":""):range(b.dates));
     mid.appendChild(when);
     if(b.category==="message"){amt.textContent=opts.corrected?"Corrected":"Sent";if(opts.corrected)amt.style.color="var(--green)"}
     else if(opts.refunded!==undefined){var s=el("s",null,money(b.amount));amt.appendChild(s);amt.appendChild(el("span","back","Refunded "+money(opts.refunded)))}
@@ -726,7 +729,9 @@ footer .hint{color:var(--faint)}
     bar.appendChild(el("i"));bar.appendChild(el("i"));bar.appendChild(el("i"));bar.appendChild(el("span","url",String(d.form_url||"")));
     box.appendChild(bar);
     var body=el("div","wbody"), slots={}, n=0;
-    body.appendChild(el("h4",null,(STORE_NAMES[d.merchant]||"Store")+" · "+String(d.form_title||"Return form")));
+    var h4=el("h4",null,(STORE_NAMES[d.merchant]||"Store")+" · "+String(d.form_title||"Return form")+" ");
+    if(SIMULATED[d.merchant])h4.appendChild(simTag());
+    body.appendChild(h4);
     String(d.fields||"").split("|").filter(Boolean).forEach(function(spec){
       var i=spec.lastIndexOf(":"), label=spec.slice(0,i), w=el("div","fld"), inp=el("div","in empty");
       w.appendChild(el("div","fl",label));inp.appendChild(el("span","v",""));
@@ -750,7 +755,7 @@ footer .hint{color:var(--faint)}
   }
   function labelCard(d){
     var c=el("div","rlabel"), left=el("div"), meta=function(label,value){var m=el("div","meta");m.appendChild(document.createTextNode(label+" "));m.appendChild(el("b",null,value));return m};
-    left.appendChild(el("div","carrier",String(d.carrier||"").toUpperCase()+" · PREPAID RETURN"));
+    left.appendChild(el("div","carrier",String(d.carrier||"").toUpperCase()+" · PREPAID RETURN"+(SIMULATED[d.merchant]?" · SIMULATED":"")));
     left.appendChild(el("div","rma",String(d.rma||"")));
     left.appendChild(meta("Order",String(d.ref||"")));
     left.appendChild(meta("Drop off by",day(d.drop_off_by)));
@@ -781,7 +786,7 @@ footer .hint{color:var(--faint)}
         var g=groups["t"+m];
         if(!g){
           g=groups["t"+m]={box:el("div","thread"),list:[]};
-          var h=el("div","thread-head");h.appendChild(el("div","avatar av-merchant",(NAMES[m]||m).charAt(0)));h.appendChild(el("span",null,"Proxy and "+(NAMES[m]||m)));h.appendChild(el("span","sub","Agent to agent"));
+          var h=el("div","thread-head");h.appendChild(el("div","avatar av-merchant",(NAMES[m]||m).charAt(0)));h.appendChild(el("span",null,"Proxy and "+(NAMES[m]||m)));h.appendChild(el("span","sub",SIMULATED[m]?"Agent to agent · simulated store":"Agent to agent"));
           g.box.appendChild(h);g.ladderSlot=el("div");g.box.appendChild(g.ladderSlot);frag.appendChild(g.box);
         }
         var proxy=k==="protocol_out";
@@ -804,7 +809,7 @@ footer .hint{color:var(--faint)}
       }else if(k==="carrier_scan"||(k==="email_in"&&d.return_received)){
         var tr=groups["s"+d.action_id];
         if(!tr){
-          tr=groups["s"+d.action_id]=el("div","track");tr.appendChild(el("div","check-head","Return tracking"));
+          tr=groups["s"+d.action_id]=el("div","track");var th=el("div","check-head","Return tracking ");if(SIMULATED[m])th.appendChild(simTag());tr.appendChild(th);
           var lab=all.filter(function(x){return x.kind==="return_label"&&x.data.action_id===d.action_id})[0];
           if(lab)tr.appendChild(trackEvent("Label created, "+String(lab.data.rma),String(lab.data.carrier||"")+" · "+day(lab.at),true));
           frag.appendChild(tr);
