@@ -52,7 +52,7 @@ describe("the scoreboard page", () => {
 
   it("shows per task counts and the split between execution and comprehension errors", () => {
     expect(html).toContain("Per task");
-    expect(html).toContain("flight call times out");
+    expect(html).toContain("call times out, then retried");
     expect(html).toContain("Execution errors");
     expect(html).toContain("Comprehension errors");
     expect(html).toContain("agent misreads the request, then logs the same misreading");
