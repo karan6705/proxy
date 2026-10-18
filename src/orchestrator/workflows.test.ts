@@ -183,6 +183,8 @@ describe("QA workflows", () => {
     expect(await actionState(c.hotel)).toBe("found");
     expect(await actionState(c.transfer)).toBe("found");
     expect(rt.fakePayments!.refunds.size).toBe(1);
+    await settle(async () => (await chainState(c.chain_id)) === "partial");
+    expect(texts().at(-1)?.body).toBe("Done with what you picked. $412 of $412 back, confirmed in Stripe. Left as is: Host, Hotel, Transfer.");
   });
 
   it("4. KEEP closes the chain and refunds nothing", async () => {

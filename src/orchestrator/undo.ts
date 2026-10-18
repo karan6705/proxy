@@ -175,16 +175,20 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       const done = (a: Action) => DONE_STATES.has(a.state) && !(a.state === "accepted" && a.amount > 0);
       if (todo.some((a) => !done(a))) return null;
       const bad = todo.filter((a) => a.state === "failed" || a.state === "denied" || a.state === "no_agent");
+      // Actions the human didn't pick (PICK) stay as they are; already-settled ones (e.g. the agent's own undo) count.
+      const planned = new Set(chain.plan.map((p) => p.action_id));
+      const untouched = actions.filter((a) => !planned.has(a.action_id) && !["verified", "kept", "accepted"].includes(a.state));
       const summary = chainSummary(
-        actions.map((a) => ({
+        actions.filter((a) => !untouched.includes(a)).map((a) => ({
           action: a,
           refunded: a.state === "verified" ? expectedRefund(chain, a) : 0,
           next: nextOption(a, chain.plan.find((p) => p.action_id === a.action_id)),
         })),
         DATE_OF(intent),
+        untouched,
       );
-      // Partial: some items need the human. Otherwise the agent gets the corrected intent through get_chain (redo).
-      await store.upsertChain({ ...chain, state: bad.length ? "partial" : "redo_requested" });
+      // Partial: some items need the human or weren't picked. Otherwise the agent gets the corrected intent (redo).
+      await store.upsertChain({ ...chain, state: bad.length || untouched.length ? "partial" : "redo_requested" });
       return summary;
     });
     if (outcome) await deps.textHuman(chain_id, "result", outcome);

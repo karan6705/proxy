@@ -94,8 +94,11 @@ export interface SummaryLine {
   next?: string;
 }
 
-/** The final text for a chain. Open items name their next option in the same text. */
-export function chainSummary(lines: SummaryLine[], redoDates: { start: string; end?: string } | undefined): string {
+/**
+ * The final text for a chain. Open items name their next option in the same text. `untouched` are actions
+ * the human didn't pick: they are left as they are, not reported as failures.
+ */
+export function chainSummary(lines: SummaryLine[], redoDates: { start: string; end?: string } | undefined, untouched: Pick<Action, "category" | "merchant">[] = []): string {
   const back = lines.reduce((s, l) => s + (l.action.state === "verified" ? l.refunded : 0), 0);
   const total = lines.reduce((s, l) => s + l.action.amount, 0);
   const open = lines.filter((l) => !["verified", "accepted", "kept"].includes(l.action.state));
@@ -105,15 +108,19 @@ export function chainSummary(lines: SummaryLine[], redoDates: { start: string; e
   if (open.length) {
     parts.unshift("Partly done.");
     parts.push(`Still open: ${open.map((l) => `${noun(l.action)} (${l.next ?? `dispute the ${money(l.action.amount)} charge with your card`})`).join("; ")}. Reply KEEP to accept the rest.`);
+  } else if (untouched.length) {
+    parts.unshift("Done with what you picked.");
   } else {
     parts.unshift("All done.");
     if (redoDates) parts.push(`Your agent will rebook for ${humanDate(redoDates.start)}.`);
   }
+  if (untouched.length) parts.push(`Left as is: ${untouched.map(noun).join(", ")}.`);
   return parts.join(" ");
 }
 
 /** What the human can still do about an action Proxy couldn't fix, from its plan step. */
 export function nextOption(a: Pick<Action, "category" | "merchant" | "amount">, step: { option: string; cost: Cents } | undefined): string {
+  if (a.amount === 0) return `send the ${noun(a).toLowerCase()} the right dates yourself`;
   if (step && step.option === "change" && step.cost > 0) return `change it with the ${a.merchant} for a ${money(step.cost)} fee`;
   return `dispute the ${money(a.amount)} charge with your card`;
 }
