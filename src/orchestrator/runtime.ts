@@ -234,6 +234,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
       MERCHANT_REPLY_TIMEOUT: env.PROXY_AGENT_TIMEOUT_MS ? Number(env.PROXY_AGENT_TIMEOUT_MS) : demoOn ? 60_000 : params.MERCHANT_REPLY_TIMEOUT,
       // Pacing for the screen, demo mode only (PROXY_DEMO_ROUTES=1): DEMO_PACE_MS, default 2.5 s. Never outside the demo.
       DEMO_PACE_MS: demoOn ? Math.max(0, Number(env.DEMO_PACE_MS ?? process.env.DEMO_PACE_MS ?? 2500) || 0) : 0,
+      DEMO_SEQUENTIAL: demoOn && (env.PROXY_DEMO_SEQUENTIAL === "1" || Math.max(0, Number(env.DEMO_PACE_MS ?? process.env.DEMO_PACE_MS ?? 2500) || 0) > 0),
     },
     defaultPreferences,
     demo: env.PROXY_DEMO_ROUTES === "1" ? { identityTaskId: env.INKBOX_DEMO_TASK_ID?.trim() || "task_demo", current: null } : null,

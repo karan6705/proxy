@@ -120,6 +120,18 @@ footer .hint{color:var(--faint)}
 .bar{height:8px;border-radius:4px;background:#EDEDF0;margin-top:14px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--green);border-radius:4px;transition:width .9s cubic-bezier(.2,.7,.2,1)}
 .money .note{font-size:14px;color:var(--muted);margin-top:10px}
 .money.calm .num{color:var(--ink);font-size:44px}
+.steps{display:flex;gap:8px;margin-top:14px}
+.steps:empty{display:none}
+.step{flex:1;min-width:0;border:1px solid var(--hair);border-radius:12px;padding:8px 10px;background:#fff}
+.st-head{display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700}
+.step .n{width:20px;height:20px;border-radius:50%;background:#F2F2F7;color:var(--muted);font-size:12px;display:grid;place-items:center;flex:none}
+.st-sub{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.3}
+.step.active{border-color:var(--accent);background:var(--accent-soft)}
+.step.active .n{background:var(--accent);color:#fff}
+.step.active .st-sub{color:var(--accent-ink);font-weight:600}
+.step.done{border-color:#BFE6CC;background:var(--green-soft)}
+.step.done .n{background:var(--green);color:#fff}
+.step.done .st-sub{color:var(--green);font-weight:600}
 .money.safe .num{color:var(--green);font-size:52px}
 .items{padding:22px 24px 30px;display:flex;flex-direction:column;gap:16px}
 .thread{border:1px solid var(--hair);border-radius:20px;padding:16px 16px 18px}
@@ -161,6 +173,7 @@ footer .hint{color:var(--faint)}
 .tm.typing .dots{letter-spacing:2px;color:var(--muted);animation:blink 1.2s infinite}
 .ladder{position:sticky;top:12px;z-index:2;border-radius:14px;background:#F7F7F9;padding:10px 14px;margin-bottom:6px;box-shadow:0 -14px 0 0 var(--card),0 6px 12px -8px rgba(29,29,31,.18)}
 .ladder-head{font-size:13px;font-weight:700;color:var(--muted);margin-bottom:4px}
+.ladder.settled{position:static;box-shadow:none}
 .rung{display:grid;grid-template-columns:92px 1fr 56px 104px;align-items:center;gap:10px;font-size:14px;padding:3px 0}
 .rung .rl{color:var(--muted)}
 .rung .rb{height:8px;border-radius:4px;background:#EDEDF0;overflow:hidden}
@@ -266,7 +279,7 @@ footer .hint{color:var(--faint)}
     <section class="col">
       <h2>Behind the scenes</h2>
       <div class="panel">
-        <div class="money calm" id="money"><div class="label" id="moneyLabel">Watching your agent's receipts</div><div class="big"><span class="num zero" id="moneyNum">$0</span><span class="of" id="moneyOf"></span></div><div class="bar" id="moneyBar"><i></i></div><div class="note" id="moneyNote"></div></div>
+        <div class="money calm" id="money"><div class="label" id="moneyLabel">Watching your agent's receipts</div><div class="big"><span class="num zero" id="moneyNum">$0</span><span class="of" id="moneyOf"></span></div><div class="bar" id="moneyBar"><i></i></div><div class="note" id="moneyNote"></div><div class="steps" id="steps"></div></div>
         <div class="scroll" id="itemScroll"><div class="items" id="items"></div></div>
       </div>
     </section>
@@ -428,6 +441,7 @@ footer .hint{color:var(--faint)}
     renderChat(es,v.scene,byId,refunded,corrected,spotted);
     renderPhone(es);
     renderMoney(es,spotted,byId);
+    renderSteps(es,byId);
     renderItems(es,v.checks||{},byId);
     var n=S.scenes.length;
     $("scene").textContent=v.scene?"Scene "+v.scene+" of "+n+": "+S.scenes[v.scene-1]:(LIVE&&!PRESENT?"Waiting for your agent":"Ready");
@@ -577,6 +591,30 @@ footer .hint{color:var(--faint)}
     if(!back){counter.shown=counter.target=0;$("moneyNum").textContent="$0"}
     else setCount(back,false);
   }
+  /** Proxy's plan as a row of steps, always in view: the agent's own fix, then each merchant in Proxy's order. */
+  function renderSteps(es,byId){
+    var box=$("steps"), frag=document.createDocumentFragment();
+    var plan=es.filter(function(e){return e.kind==="plan"}).pop();
+    var own=es.filter(function(e){return e.kind==="self_undo"});
+    if(!plan&&!own.length){box.replaceChildren();return}
+    var label=function(cat,m){return m==="host"?"Host":{flight:"Flight",hotel:"Hotel",transfer:"Transfer",saas:"Subscription",store:"Order",message:"Message"}[cat]||m};
+    var chip=function(n,title,sub,cls){var c=el("div","step "+cls);var h=el("div","st-head");h.appendChild(el("span","n",n));h.appendChild(el("span","st-title",title));c.appendChild(h);c.appendChild(el("div","st-sub",sub));return c};
+    own.forEach(function(e){var b=byId[e.data.action_id]||{};frag.appendChild(chip("✓",label(b.category||"flight",b.merchant),"Your agent fixed it, "+money(e.data.amount)+" back","done"))});
+    var steps=[];try{steps=plan?JSON.parse(String(plan.data.steps||"[]")):[]}catch(x){steps=[]}
+    var activeSet=false;
+    steps.forEach(function(st,i){
+      var refund=es.filter(function(e){return e.kind==="stripe_refund"&&e.data.action_id===st.action_id}).pop();
+      var fixed=es.some(function(e){return e.kind==="email_in"&&e.data.action_id===st.action_id&&e.data.correction&&e.data.approved});
+      var touched=es.some(function(e){return e.seq>plan.seq&&e.data&&e.data.action_id===st.action_id&&e.kind!=="stripe_refund"});
+      var title=label(st.category,st.merchant);
+      if(refund)frag.appendChild(chip("✓",title,money(refund.data.amount)+" back","done"));
+      else if(fixed)frag.appendChild(chip("✓",title,"Right dates sent","done"));
+      else if(touched&&!activeSet){activeSet=true;frag.appendChild(chip(String(i+1),title,st.how.charAt(0).toUpperCase()+st.how.slice(1)+"…","active"))}
+      else frag.appendChild(chip(String(i+1),title,(activeSet||touched?"Waiting: ":"Next: ")+st.how,"next"));
+    });
+    box.replaceChildren(frag);
+  }
+
   function setCount(target,instant){
     if(instant){counter.shown=counter.target=target;return}
     if(target===counter.target)return;
@@ -629,7 +667,9 @@ footer .hint{color:var(--faint)}
   function ladder(list){
     var asked=list.filter(function(e){return e.kind==="protocol_out"&&e.data.type==="request_reversal"})[0];
     if(!asked)return null;
-    var full=Number(asked.data.order_amount||0), box=el("div","ladder");
+    // Sticky only while the negotiation is open; once the merchant accepts or denies, it scrolls with its thread.
+    var closed=list.some(function(e){return e.kind==="protocol_in"&&(e.data.type==="accept"||e.data.type==="deny")});
+    var full=Number(asked.data.order_amount||0), box=el("div","ladder"+(closed?" settled":""));
     box.appendChild(el("div","ladder-head","Offers"));
     var add=function(label,amount,kind,status,cls){
       var r=el("div","rung"+(cls?" "+cls:""));r.appendChild(el("span","rl",label));

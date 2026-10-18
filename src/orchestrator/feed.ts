@@ -22,6 +22,8 @@ export type FeedKind =
   | "redo"
   /** Demo pacing: a visible "waiting for a reply…" or "verifying in Stripe…" before the next step lands. */
   | "wait"
+  /** Proxy's plan for a chain after the human's reply: who it will contact, how, in what order. */
+  | "plan"
   /** A merchant's return form: opened, each field Proxy filled in, submitted. */
   | "form_field"
   | "return_label"
