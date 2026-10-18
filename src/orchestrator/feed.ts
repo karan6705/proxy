@@ -20,6 +20,8 @@ export type FeedKind =
   | "stripe_refund"
   | "chain"
   | "redo"
+  /** Demo pacing: a visible "waiting for a reply…" or "verifying in Stripe…" before the next step lands. */
+  | "wait"
   /** A merchant's return form: opened, each field Proxy filled in, submitted. */
   | "form_field"
   | "return_label"

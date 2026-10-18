@@ -31,7 +31,7 @@ import type {
 import { expectedRefund, refundOnce } from "./refunds.js";
 import { humanDate, type AlreadyUndone } from "./copy.js";
 import { runSelfServeRoute } from "./routes/self-serve.js";
-import { chainSummary, correctionStep, deniedStep, merchantLine, merchantSaid, nextOption, noAnswerYet, proxyLine, proxyWhy, pushBackKind, refundedStep, type ProxyLineContext } from "./copy.js";
+import { chainSummary, correctionStep, deniedStep, merchantLine, merchantSaid, nextOption, noAnswerYet, howUndone, proxyLine, proxyWhy, pushBackKind, refundedStep, stillWorking, type ProxyLineContext } from "./copy.js";
 import { MAX_ROUNDS } from "../logic/negotiate-step.js";
 import type { FeedActor, FeedEntry } from "./feed.js";
 import type { CarrierScan, ReturnsPortal } from "../merchants/deps.js";
@@ -123,13 +123,15 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   const paymentsName = deps.paymentsName ?? "Stripe";
   const note = (chain: Pick<Chain, "task_id" | "chain_id">, actor: FeedActor, kind: FeedEntry["kind"], text: string, data: FeedEntry["data"] = {}) =>
     deps.note?.({ task_id: chain.task_id, chain_id: chain.chain_id, actor, kind, text, data });
-  const stripeNote = (chain: Chain, action: Action, refunded: Cents, ref: string | null) =>
-    note(chain, "stripe", "stripe_refund", `${paymentsName}: ${money(refunded)} refunded on the ${merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, {
+  const nameOf = (merchant: string) => merchants.get(merchant)?.name ?? merchant;
+  const stripeNote = (chain: Chain, action: Action, refunded: Cents, ref: string | null, how?: string) =>
+    note(chain, "stripe", "stripe_refund", `${paymentsName}: ${money(refunded)} refunded on the ${nameOf(action.merchant)} charge, confirmed.`, {
       action_id: action.action_id,
       merchant: action.merchant,
       amount: refunded,
       of: action.amount,
       refund_id: ref,
+      how: how ?? null,
     });
   /** `window` is when the booking's own window closes (the plan's deadline), for the "time left" in Proxy's reasons. */
   const negotiations = new Map<string, { state: NegotiationState; merchant: MerchantId; chain_id: ChainId; action: Action; window?: string | null }>();
@@ -183,9 +185,21 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     });
   }
 
+  /**
+   * Demo pacing: a visible "waiting" line, then a pause of `factor` x DEMO_PACE_MS, so a viewer can follow each step.
+   * DEMO_PACE_MS is 0 outside demo mode (and in tests), so this does nothing there.
+   */
+  async function pace(chain: Pick<Chain, "task_id" | "chain_id">, factor: number, waiting?: { text: string; merchant: string; action_id: string }) {
+    const ms = (deps.params.DEMO_PACE_MS ?? 0) * factor;
+    if (ms <= 0) return;
+    if (waiting) note(chain, "proxy", "wait", waiting.text, { merchant: waiting.merchant, action_id: waiting.action_id, ms });
+    await new Promise((r) => setTimeout(r, ms));
+  }
+
   /** Refunds the agreed amount once and records whether Stripe shows it. Returns the action's new state. */
   async function refundAndVerify(chain: Chain, action: Action, agreed: Cents, route: Step["route"], note: string): Promise<Action["state"]> {
     await savePlanRefund(chain.chain_id, action.action_id, agreed);
+    await pace(chain, 0.6, { text: `Refund of ${money(agreed)} issued; verifying it in ${paymentsName}…`, merchant: action.merchant, action_id: action.action_id });
     const r = await refundOnce(payments, action, agreed);
     if (r.status === "no_charge") {
       await setState(action, "failed");
@@ -200,8 +214,9 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     }
     await setState(action, "verified");
     await step(chain, action, route, "succeeded", `${note}; refunded ${money(agreed)}, verified in Stripe`, { stripe_ref: ref });
-    stripeNote(chain, action, r.refunded_amount, ref);
-    await deps.textHuman(chain.chain_id, "progress", refundedStep(action, r.refunded_amount, paymentsName));
+    const how = howUndone(action, route, nameOf(action.merchant));
+    stripeNote(chain, action, r.refunded_amount, ref, how);
+    await deps.textHuman(chain.chain_id, "progress", refundedStep(action, r.refunded_amount, paymentsName, how));
     return "verified";
   }
 
@@ -267,10 +282,12 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   // --- routes ---
 
   async function runSelfServe(chain: Chain, action: Action) {
+    await pace(chain, 0.6, { text: `Cancelling on ${nameOf(action.merchant)}'s site and verifying the refund in ${paymentsName}…`, merchant: action.merchant, action_id: action.action_id });
     const r = await runSelfServeRoute({ merchants, payments, store, clock }, chain, action);
     if (r.action.state === "verified") {
-      stripeNote(chain, action, action.amount, r.step.stripe_ref);
-      await deps.textHuman(chain.chain_id, "progress", refundedStep(action, action.amount, paymentsName));
+      const how = howUndone(action, "self_serve", nameOf(action.merchant));
+      stripeNote(chain, action, action.amount, r.step.stripe_ref, how);
+      await deps.textHuman(chain.chain_id, "progress", refundedStep(action, action.amount, paymentsName, how));
     }
   }
 
@@ -341,6 +358,8 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   async function sendToAgent(negotiation_id: string, message: ProxyProtocolMessage, via: "default" | "email" = "default") {
     const neg = negotiations.get(negotiation_id);
     if (!neg) return;
+    // Demo pacing: about 2 s between the merchant's message and Proxy's answer, so each can be read on screen.
+    if (message.type !== "request_reversal") await pace({ task_id: neg.action.task_id, chain_id: neg.chain_id }, 0.8);
     armTimer(negotiation_id);
     const intent = await store.getIntent(neg.action.task_id);
     const d = intent?.constraints.dates;
@@ -425,6 +444,45 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     await finishIfDone(chain.chain_id);
   }
 
+  /**
+   * The last line of defence: no chain sits silently. The protocol's own timers normally settle every step first;
+   * if a chain is still undoing after 3 merchant timeouts anyway, the human gets a text saying what Proxy is still
+   * waiting on, and after 5 every open step that isn't waiting on the human is marked failed, so the chain finishes
+   * and its summary names the next option.
+   */
+  function armWatchdog(chain_id: ChainId) {
+    const unit = deps.params.MERCHANT_REPLY_TIMEOUT;
+    const check = async (final: boolean) => {
+      const chain = await store.getChain(chain_id);
+      if (!chain || chain.state !== "undoing" || deps.isFrozen()) return;
+      const { actions } = await load(chain_id);
+      const askedHuman = new Set([...negotiations.values()].filter((n) => n.chain_id === chain_id && n.state.state === "human_decision").map((n) => n.state.action_id));
+      const settled = (a: Action) => DONE_STATES.has(a.state) && !(a.state === "accepted" && a.amount > 0);
+      const open = actions.filter((a) => chain.plan.some((p) => p.action_id === a.action_id && p.option !== "keep") && !settled(a) && !askedHuman.has(a.action_id));
+      if (!open.length) return;
+      if (!final) {
+        await deps.textHuman(chain_id, "reminder", stillWorking(open));
+        return;
+      }
+      for (const a of open) {
+        for (const n of negotiations.values()) {
+          if (n.state.action_id === a.action_id) {
+            n.state = { ...n.state, state: "failed" };
+            stopWaiting(n.state.negotiation_id);
+          }
+        }
+        await setState(a, "failed");
+        const route = chain.plan.find((p) => p.action_id === a.action_id)?.route ?? "reversal_protocol";
+        await step(chain, a, route, "failed", "No progress in time; stopped so the summary can name the next option");
+      }
+      await finishIfDone(chain_id);
+    };
+    for (const [times, final] of [[3, false], [5, true]] as const) {
+      const t = setTimeout(() => check(final).catch((e) => console.error("[undo] watchdog failed:", e)), times * unit);
+      t.unref?.();
+    }
+  }
+
   function stopWaiting(negotiation_id: string) {
     clearTimeout(timers.get(negotiation_id));
     timers.delete(negotiation_id);
@@ -449,6 +507,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     }
     await step(chain, action, "email_support", "pending", `Emailed ${info.support_email} asking for a full refund`);
     note(chain, "proxy", "email_out", `Proxy emailed ${info.name} support: please cancel ${action.ref} and refund ${money(action.amount)}.`, { to: info.support_email, ref: action.ref, amount: action.amount, action_id: action.action_id, merchant: action.merchant });
+    await pace(chain, 1, { text: `Waiting for ${info.name} support to reply…`, merchant: action.merchant, action_id: action.action_id });
     const answer = await merchants.supportEmail(action.merchant, { from: deps.proxyEmail, subject, body }, clock.now());
     note(chain, actorFor(action.merchant), "email_in", answer.approved && answer.refund_amount > 0 ? `${info.name} support: refund approved, ${money(answer.refund_amount)}.` : `${info.name} support: refund declined.`, {
       action_id: action.action_id,
@@ -481,6 +540,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       await deps.logEvent({ kind: "email_out", chain_id: chain.chain_id, action_id: action.action_id, outcome: `correction_not_sent:${(e as Error).name}` });
     }
     note(chain, "proxy", "email_out", `Proxy emailed ${info.name}: the right dates are ${dates ? `${humanDate(dates.start)}${dates.end ? ` to ${humanDate(dates.end)}` : ""}` : "in the task"}.`, { to: info.support_email, ref: action.ref, action_id: action.action_id, merchant: action.merchant, correction: true });
+    await pace(chain, 1, { text: `Waiting for ${info.name} to confirm…`, merchant: action.merchant, action_id: action.action_id });
     const answer = await merchants.supportEmail(action.merchant, { from: deps.proxyEmail, subject, body }, clock.now());
     note(chain, actorFor(action.merchant), "email_in", answer.approved ? `${info.name}: thanks, plans updated.` : `${info.name}: didn't confirm the correction.`, { approved: answer.approved, action_id: action.action_id, merchant: action.merchant, correction: true });
     if (!answer.approved) {
@@ -491,7 +551,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     // A correction moves no money, so there is nothing for Stripe to show.
     await setState(action, "accepted");
     await step(chain, action, "correction", "succeeded", "Correction sent and acknowledged");
-    await deps.textHuman(chain.chain_id, "progress", correctionStep(action, dates));
+    await deps.textHuman(chain.chain_id, "progress", correctionStep(action, dates, info.name));
   }
 
   async function runStep(chain: Chain, intent: Intent, action: Action, plan: PlanStep) {
@@ -616,6 +676,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
         return store.upsertChain({ ...latest, state: "undoing", plan });
       });
       if (!started) return; // a second UNDO ALL (or a double press) while this one runs
+      armWatchdog(chain_id);
       // Independent steps run side by side: a merchant agent that is slow to answer holds up nothing else.
       await Promise.all(
         plan.map(async (p) => {
