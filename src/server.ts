@@ -9,6 +9,7 @@ import type { Action, HttpMethod, Preferences, RouteHandler, RouteRequest } from
 import { MISTAKES_RESOURCE_URI } from "./types.js";
 import { createToolHandlers, type LiveChainMeta } from "./tools/handlers.js";
 import { toStageFeed, type StageChainInput } from "./orchestrator/stage.js";
+import { actionLabel } from "./orchestrator/copy.js";
 import { advertise, handler } from "./tools/result.js";
 import {
   getChainInput,
@@ -25,6 +26,7 @@ import {
   undoOutput,
 } from "./tools/schemas.js";
 import { DEMO_LATE_AT, DEMO_NOW } from "./tools/stubs.js";
+import { renderLatestScoreboard } from "../evals/scoreboard.js";
 
 const server = new MCPServer({
   name: "proxy",
@@ -229,6 +231,19 @@ mountRoutes([
     path: "/health",
     handle: async () => ({ status: 200, body: { ok: true } }),
   },
+  {
+    // Dhwanil's scoreboard slide, built from the newest eval result files on each request.
+    method: "GET",
+    path: "/scoreboard",
+    handle: async () => {
+      try {
+        return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: renderLatestScoreboard() };
+      } catch (e) {
+        console.error("[scoreboard] could not render:", e instanceof Error ? e.message : e);
+        return { status: 503, body: { ok: false, message: "No eval results yet. Run npm run evals:layer1." } };
+      }
+    },
+  },
 ]);
 
 // Sarah's webhooks: inbound email to task addresses (capture) and the human's texts and iMessages.
@@ -381,7 +396,10 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
           }
         }
         const intent = await runtime.store.getIntent(task_id);
-        const flagged = intent ? runtime.proxy.deps.logic.compare(intent, await runtime.store.listActions(task_id)).map((m) => m.action_id) : [];
+        const actions = await runtime.store.listActions(task_id);
+        for (const a of actions) labels[a.action_id] ??= actionLabel(a, runtime.merchants.get(a.merchant)?.name ?? a.merchant);
+        // Wrong: anything compare flags now, and everything in the chain (refunded actions drop out of compare).
+        const flagged = [...(intent ? runtime.proxy.deps.logic.compare(intent, actions).map((m) => m.action_id) : []), ...(chainRow?.action_ids ?? [])];
         const stage = toStageFeed(task_id, clock.now(), intent, entries, chain, labels, flagged);
         // `entries` is the full plain-English timeline; the rest is the StageFeed the stage page reads.
         return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true, ...stage, entries } };

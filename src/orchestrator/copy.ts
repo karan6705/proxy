@@ -200,3 +200,10 @@ export function proxyLine(
   if (m.type === "accept_counter") return `Proxy: we accept${ctx.lastCounter ? ` the ${money(ctx.lastCounter.amount)} ${ctx.lastCounter.kind === "store_credit" ? "store credit" : "refund"}` : " your offer"}.`;
   return "Proxy: checking with our human.";
 }
+
+/** A short title for an action, e.g. "Hotel · Harborview Hotel · Nov 3 to Nov 6" or "Email to Alex Rivera (host) · Nov 3". */
+export function actionLabel(a: Pick<Action, "category" | "dates">, merchantName: string): string {
+  const d = a.dates ? `${humanDate(a.dates.start)}${a.dates.end ? ` to ${humanDate(a.dates.end)}` : ""}` : "";
+  const what = a.category === "message" ? `Email to ${merchantName}` : `${a.category[0]!.toUpperCase()}${a.category.slice(1)} · ${merchantName}`;
+  return [what, d].filter(Boolean).join(" · ");
+}
