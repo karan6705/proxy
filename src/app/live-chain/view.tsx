@@ -11,6 +11,8 @@ interface LiveMeta {
   server_now: string;
   windows: Record<string, string | null>;
   recovered: Record<string, number>;
+  /** Message actions whose correction was sent; done with no money. */
+  corrected?: string[];
 }
 
 const ROUTE_LABEL: Record<string, string> = {
@@ -104,6 +106,8 @@ export default function LiveChain() {
   if (tool.status === "error" || !chain) return <div className="lc lc-muted">Couldn't load this chain.</div>;
 
   const now = tick + offsetMs;
+  const corrected = new Set(meta?.corrected ?? []);
+  const isDone = (a: { action_id: string; stripe_verified: boolean }) => a.stripe_verified || corrected.has(a.action_id);
   const verified = chain.actions.filter((a) => a.stripe_verified).length;
   const recovered = chain.actions.reduce((sum, a) => sum + (a.stripe_verified ? (meta?.recovered[a.action_id] ?? 0) : 0), 0);
 
@@ -130,15 +134,15 @@ export default function LiveChain() {
 
       <ol className="lc-rows">
         {chain.actions.map((a) => (
-          <li key={a.action_id} className={`lc-row ${a.stripe_verified ? "lc-ok" : a.state === "failed" ? "lc-bad" : ""}`}>
+          <li key={a.action_id} className={`lc-row ${isDone(a) ? "lc-ok" : a.state === "failed" ? "lc-bad" : ""}`}>
             <span className="lc-dot" aria-hidden="true" />
             <span className="lc-what">
               <span className="lc-summary">{a.summary}</span>
               <span className="lc-route">{a.route ? (ROUTE_LABEL[a.route] ?? a.route) : "Not planned"}</span>
             </span>
             <span className="lc-amount">{a.amount ? usd(a.amount) : "—"}</span>
-            <span className="lc-time">{a.stripe_verified ? "Done" : timeLeft(meta?.windows[a.action_id], now)}</span>
-            <span className="lc-state">{STATE_LABEL[a.state] ?? a.state}</span>
+            <span className="lc-time">{isDone(a) ? "Done" : timeLeft(meta?.windows[a.action_id], now)}</span>
+            <span className="lc-state">{corrected.has(a.action_id) ? "Correction sent" : (STATE_LABEL[a.state] ?? a.state)}</span>
           </li>
         ))}
       </ol>
