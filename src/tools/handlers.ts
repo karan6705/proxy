@@ -129,7 +129,9 @@ export function createToolHandlers(getProxy: () => Proxy) {
       try {
         // Sarah's Inkbox client gets or creates the identity task_<id> -> task-<id>@...
         ({ task_email } = await inkbox.createTaskAddress(identityTask));
-      } catch {
+      } catch (e) {
+        // The agent gets the safe message; the real cause goes to the server log (never a key: the SDK's errors don't carry one).
+        console.error(`[log_intent] createTaskAddress(${identityTask}) failed:`, e instanceof Error ? `${e.name}: ${e.message}` : e);
         return fail("upstream_unavailable", "Could not create the task email address. Retry shortly.", true, "retry");
       }
       const intent: Intent = { task_id, task_email, goal: input.goal, constraints: input.constraints, preferences, created_at: clock.now() };

@@ -313,7 +313,7 @@ describe("QA workflows", () => {
     await rt.proxy.alertChains(task_id);
     const [chain] = await rt.store.listChains(task_id);
     // The 24-hour free window has closed; what is left is the fee window, shown in days past 48 hours.
-    expect(texts()[0]?.body).toContain("Reversible for 4 days.");
+    expect(texts()[0]?.body).toContain("\nReversible for 4 days\n");
     await imessageIn("UNDO ALL");
     await settle(async () => ["partial", "redo_requested"].includes((await chainState(chain!.chain_id)) ?? ""));
     const plan = (await rt.store.getChain(chain!.chain_id))!.plan.find((p) => p.action_id === flight.action_id)!;
@@ -431,7 +431,7 @@ describe("QA workflows", () => {
     await booked("transfer", "Airport transfer, Nov 3", 18_800, "transfer", { start: "2026-11-03" });
     await rt.proxy.alertChains(task_id);
     const [chain] = await rt.store.listChains(task_id);
-    expect(texts()[0]?.body).toMatch(/^Your agent used the wrong dates \(Nov 3, not Nov 13\)\. Flight already refunded by your agent \(\$412\)\. 3 more things affected, \$828 at risk of \$1,240\. Reversible for /);
+    expect(texts()[0]?.body).toMatch(/^Your agent used the wrong dates \(Nov 3, not Nov 13\)\.\nFlight already refunded by your agent \(\$412\)\.\n\n3 more things affected · \$828 at risk of \$1,240\nReversible for .+\n\nReply UNDO ALL, PICK or KEEP\.$/);
 
     await imessageIn("UNDO ALL");
     await settle(async () => (await chainState(chain!.chain_id)) === "redone", 4000);
