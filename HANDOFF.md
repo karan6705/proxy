@@ -130,7 +130,50 @@ Requests for you (the files are yours):
 3. **"keep" route:** `RouteKind` has no `keep` yet (only `FixOption` does). `plan_undo` still marks keep steps with `route: "stripe_dispute"`. Tell me when `"keep"` is in `RouteKind` and I will switch; it is a one-line change in `src/logic/plan-undo.ts` plus tests.
 4. **The transfer desk's lines on the server terminal:** `narrateSupport(email, reply)` returns `{ received, replied }`; call it where you handle `POST /merchants/transfer/support` if you want them printed there.
 
+### From Dhwanil: review of the demo feed's agent-to-agent lines (for the video)
+Test applied: would someone who has never seen the protocol follow it without a voice-over? Today, no. I read what a viewer sees on the `/web` feed (`src/web/page.ts`, one row per event: a pill with `e.kind`, then `tool_name: outcome`) and the step messages the orchestrator writes (`src/orchestrator/undo.ts`).
+
+**What the feed shows now**
+```
+a2a         out:request_reversal
+a2a         out:push_back
+a2a         out:accept_counter
+a2a         ignored_text:1
+email_out   support_request
+email_out   follow_up:counter
+email_out   correction
+```
+and step messages: `Asked the merchant agent to reverse the booking`, `Merchant counter $640.00; now countered`, `Received counter [in:2026-10-18T...|counter:1:64000]`, `Merchant agreed $544.00`.
+
+**Problems**
+1. **Jargon.** `a2a`, `out:`, `reversal_protocol`, `countered`, `refund_pending` and `ignored_text:1` mean nothing to a viewer. `ignored_text:1` reads like an error; it is actually the safety story (Proxy never acts on a merchant's free text).
+2. **Only Proxy's side is in the feed.** Nothing says who it is talking to, and the merchant's answers (counter $640 store credit, counter $544, accept) are missing from the event feed, so the negotiation looks one-sided. The amounts and the 85% never appear.
+3. **The request text contains raw JSON.** `what_went_wrong` is `Booked <item>; the task needed {"start":"2026-11-13","end":"2026-11-16"}.` (`undo.ts` line 215). It also shows on the hotel's terminal.
+4. **An internal marker is in a step message:** `Received counter [in:<time>|counter:1:64000]`. Keep the marker, but not in the text anyone reads.
+5. **Arrows are ambiguous.** `→ Proxy: offering store credit` reads as if Proxy is the speaker. Label lines by who is talking.
+
+**Suggested wording** (event, then the line to show). Names come from the merchant; amounts from the message:
+| Event | Show |
+|---|---|
+| `a2a out:request_reversal` | Proxy asks the hotel to reverse the booking: it was booked for Nov 3, the customer needs Nov 13 |
+| (new) `a2a in:counter store_credit` | Hotel offers store credit, $640 |
+| `a2a out:push_back` | Proxy pushes back: the customer wants the money back, not store credit |
+| (new) `a2a in:counter partial_refund` | Hotel offers a refund of $544 (85%) |
+| `a2a out:accept_counter` | Proxy accepts the $544 refund |
+| (new) `a2a in:accept` | Hotel confirms: $544 refund agreed |
+| `a2a ignored_text:N` | The hotel added free text. Proxy never acts on a merchant's text, so it was ignored |
+| `email_out support_request` | Proxy emails Metro Transfer support to cancel the transfer |
+| `email_out follow_up:...` | No reply yet: Proxy follows up with Metro Transfer |
+| `email_out correction` | Proxy emails the host: the correct arrival date is Nov 13 |
+| `what_went_wrong` | Booked Nov 3 to Nov 6, but the customer needs Nov 13 to Nov 16. |
+Pills: show the merchant (Hotel, Transfer, Host) and a plain icon or word for the channel, not `a2a` and `email_out`.
+
+**What I changed on my side:** the push-back reasons (mine, in `negotiate_step`) now read "The customer does not accept store credit. Please refund the original payment." and "That refund is below the minimum the customer accepts. Please improve the offer." And `narrateExchange(..., { style: "speakers", merchant: "Hotel" })` prints `Proxy: ...` and `Hotel: ...` instead of arrows. Use `style: "speakers"` in `scripts/hotel-agent.ts` for the video; arrows stay the default.
+
 ## Sarah
+
+### From Dhwanil: the `/web` feed wording
+`src/web/page.ts` renders the event feed as `kind` plus `tool_name: outcome`. The suggested plain wording for each event is in the table under Karan ("review of the demo feed's agent-to-agent lines"). If you own the page text, a small lookup from `(kind, outcome prefix)` to a sentence is all it needs; the events do not change.
 
 ### From Dhwanil: the hotel's readable line (optional)
 The hotel agent's counters and accepts now include a `message` string next to the typed fields. `parseMerchantMessage` in `src/inkbox/protocol.ts` drops it for `accept` and `counter` (it keeps only the typed fields, and `reason` for `deny`). If you want Proxy's own log to show the hotel's line, keep a cleaned `message` (one line, at most 140 characters, no control characters) on the parsed message. It is display text only; `negotiate_step` ignores it and lists it in `ignored_text`. Skip it if it complicates the contract.

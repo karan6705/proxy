@@ -92,14 +92,39 @@ export function formatLine(direction: Direction, who: string, text: string, opti
   return `${tone}${CODES.bold}${arrow} ${who}:${CODES.reset} ${tone}${text}${CODES.reset}`;
 }
 
+export interface ExchangeOptions {
+  color?: boolean;
+  /**
+   * "arrows" (default): "← Proxy: ..." is what the merchant received, "→ Proxy: ..." is what it sent to Proxy.
+   * "speakers": "Proxy: ..." and "Hotel: ...", by who is talking. Clearer for someone who has never seen the protocol.
+   */
+  style?: "arrows" | "speakers";
+  /** The merchant's name in the "speakers" style. Defaults to "Hotel". */
+  merchant?: string;
+}
+
 /** The two lines for one exchange on the hotel agent's terminal: what came in, then what it answered. */
-export function narrateExchange(
-  incoming: ProxyProtocolMessage,
-  reply: MerchantProtocolMessage,
-  options: { color?: boolean } = {},
-): string[] {
+export function narrateExchange(incoming: ProxyProtocolMessage, reply: MerchantProtocolMessage, options: ExchangeOptions = {}): string[] {
+  const inTone = incoming.type === "push_back" ? "push" : undefined;
+  const outTone = reply.type === "deny" ? "deny" : undefined;
+  if (options.style === "speakers") {
+    const merchant = oneLine(options.merchant ?? "Hotel", 30);
+    return [
+      formatSpeaker("Proxy", narrateFromProxy(incoming), { color: options.color, tone: inTone, side: "in" }),
+      formatSpeaker(merchant, narrateToProxy(reply), { color: options.color, tone: outTone, side: "out" }),
+    ];
+  }
   return [
-    formatLine("in", "Proxy", narrateFromProxy(incoming), { ...options, tone: incoming.type === "push_back" ? "push" : undefined }),
-    formatLine("out", "Proxy", narrateToProxy(reply), { ...options, tone: reply.type === "deny" ? "deny" : undefined }),
+    formatLine("in", "Proxy", narrateFromProxy(incoming), { color: options.color, tone: inTone }),
+    formatLine("out", "Proxy", narrateToProxy(reply), { color: options.color, tone: outTone }),
   ];
+}
+
+/** "Proxy: ..." or "Hotel: ...", colored by who is speaking. */
+export function formatSpeaker(who: string, text: string, options: { color?: boolean; tone?: "deny" | "push"; side: Direction }): string {
+  if (!options.color) {
+    return `${who}: ${text}`;
+  }
+  const tone = options.tone === "deny" ? CODES.red : options.tone === "push" ? CODES.yellow : options.side === "in" ? CODES.cyan : CODES.green;
+  return `${tone}${CODES.bold}${who}:${CODES.reset} ${tone}${text}${CODES.reset}`;
 }
