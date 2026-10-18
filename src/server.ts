@@ -23,7 +23,7 @@ import {
   undoInput,
   undoOutput,
 } from "./tools/schemas.js";
-import { DEMO_NOW } from "./tools/stubs.js";
+import { DEMO_LATE_AT, DEMO_NOW } from "./tools/stubs.js";
 
 const server = new MCPServer({
   name: "proxy",
@@ -142,6 +142,38 @@ export const listChains = server.tool(
     annotations: readHints,
   },
   handler(listChainsInput, tools.list_chains, { toolName: "list_chains" }),
+);
+
+// A walkthrough an agent (or a person in a client) can pull up: how to use Proxy around a task.
+server.prompt(
+  {
+    name: "undo_my_agents_mistake",
+    title: "Undo my agent's mistake",
+    description: "Walks an agent through Proxy for one task: log the intent first, review before saying done, then follow the undo chain until it is reversed and redone.",
+    schema: z.object({
+      task: z.string().optional().describe("What the human asked for, e.g. \"Book my NYC trip for the Nov 13 conference, under $1,500\""),
+    }),
+  },
+  async ({ task }) => ({
+    description: "Use Proxy, the undo layer, around a task that books, buys or emails someone.",
+    messages: [
+      {
+        role: "user" as const,
+        content: {
+          type: "text" as const,
+          text: [
+            `You are doing this task for a human${task ? `: ${task}` : ""}. Use the Proxy tools around it:`,
+            "1. Before acting, call log_intent with the goal, the hard constraints (dates, budget, must-haves) and an idempotency_key. Use the task_email it returns as the contact email for every booking, signup and message.",
+            "2. If you are unsure a purchase matches the intent, call reversibility first.",
+            "3. Before you tell the human you are done, call review(task_id). If status is clean, you are done.",
+            "4. If status is chain_open, call undo with the ids in fixable_now. Anything in requires_human goes to the human by text; do not try to fix it yourself.",
+            "5. Call get_chain(chain_id) and follow next_action: wait_for_human means the human is deciding; redo means rebook exactly what redo says, using the task email.",
+            "6. Call list_chains if a late confirmation might have opened a new chain. Never claim money is back unless get_chain shows it confirmed in Stripe.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
 );
 
 server.resource(
@@ -316,7 +348,47 @@ if (process.env.PROXY_DEMO_ROUTES === "1") {
         const task_id = req.query.task_id;
         if (!task_id) return bad("task_id query parameter is required");
         runtime.proxy.deps.sessions.end(task_id);
-        return { status: 200, body: { ok: true, task_id, session_active: false } };
+        // The late confirmations arrive close to the deadlines (see DEMO_LATE_AT). Never moves the clock back.
+        const lateAt = process.env.PROXY_DEMO_LATE_AT?.trim() || DEMO_LATE_AT;
+        if (Date.parse(lateAt) > clock.nowMs()) clock.set(lateAt);
+        return { status: 200, body: { ok: true, task_id, session_active: false, clock: clock.now() } };
+      },
+    },
+    {
+      // The stage page's timeline: everything in the current run, oldest first, in plain English.
+      // No keys, tokens or phone numbers ever appear in it.
+      method: "GET",
+      path: "/demo/feed",
+      handle: async (req) => {
+        const task_id = req.query.task_id || runtime.proxy.deps.demo?.current;
+        if (!task_id) return { status: 200, body: { ok: true, task_id: null, now: clock.now(), chain: null, entries: [] } };
+        const chainRow = (await runtime.store.listChains(task_id)).sort((a, b) => b.action_ids.length - a.action_ids.length)[0];
+        let chain = null;
+        if (chainRow) {
+          const view = await tools.get_chain({ chain_id: chainRow.chain_id });
+          const sc = view.structuredContent as { ok: boolean; state?: string; actions?: Array<{ action_id: string; amount: number; summary: string; category: string; state: string; stripe_verified: boolean }> };
+          const meta = ("_meta" in view ? view._meta : undefined) as { recovered: Record<string, number>; corrected: string[]; windows: Record<string, string | null> } | undefined;
+          if (sc.ok && sc.actions) {
+            chain = {
+              chain_id: chainRow.chain_id,
+              state: sc.state,
+              total: sc.actions.reduce((t, a) => t + a.amount, 0),
+              recovered: Object.values(meta?.recovered ?? {}).reduce((t, n) => t + n, 0),
+              window_ends_at: chainRow.window_ends_at,
+              actions: sc.actions.map((a) => ({
+                action_id: a.action_id,
+                summary: a.summary,
+                category: a.category,
+                amount: a.amount,
+                state: a.state,
+                done: a.stripe_verified || (meta?.corrected ?? []).includes(a.action_id),
+                recovered: meta?.recovered[a.action_id] ?? 0,
+                window_ends_at: meta?.windows[a.action_id] ?? null,
+              })),
+            };
+          }
+        }
+        return { status: 200, headers: { "cache-control": "no-store" }, body: { ok: true, task_id, now: clock.now(), chain, entries: runtime.proxy.feed.list(task_id) } };
       },
     },
   ]);
