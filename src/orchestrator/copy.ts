@@ -69,8 +69,11 @@ export function chainAlert(a: AlertCopy): string {
   const more = a.already?.length ? " more" : "";
   const things = a.affected === 1 ? `1${more} thing` : `${a.affected}${more} things`;
   const window = a.time_left_ms === null ? "No deadline known" : a.time_left_ms <= 0 ? "The window has closed" : `Reversible for ${timeLeft(a.time_left_ms)}`;
-  const already = (a.already ?? []).map((d) => `\n${noun(d.action)} already refunded by your agent (${money(d.amount)}).`).join("");
-  const body = (what: string) => `Your agent ${what}.${already}\n\n${things} affected · ${atRisk(a.at_risk, a.total)}\n${window}\n\nReply UNDO ALL, PICK or KEEP.`;
+  // What the agent already fixed itself comes first, then what still needs the human.
+  const fixed = (a.already ?? []).map((d) => `the ${noun(d.action).toLowerCase()} (${money(d.amount)})`);
+  const already = fixed.length ? `\nYour agent already fixed ${fixed.join(" and ")}. ${a.affected === 1 ? "1 more thing needs" : `${a.affected} more things need`} you.` : "";
+  const numbers = fixed.length ? atRisk(a.at_risk, a.total) : `${things} affected · ${atRisk(a.at_risk, a.total)}`;
+  const body = (what: string) => `Your agent ${what}.${already}\n\n${numbers}\n${window}\n\nReply UNDO ALL, PICK or KEEP.`;
   const text = body(whatWentWrong(a.mismatch));
   return text.length <= 320 ? text : body("made a mistake");
 }
@@ -86,14 +89,25 @@ const NOUN: Record<Action["category"], string> = {
 
 export const noun = (a: Pick<Action, "category" | "merchant">) => (a.merchant === "host" ? "Host" : NOUN[a.category] ?? a.merchant);
 
-/** One step confirmed: "Flight refunded, $412, confirmed in Stripe", or "Hotel refunded, $544 of $640, confirmed in Stripe". */
-export function refundedStep(a: Pick<Action, "category" | "merchant" | "amount">, refunded: Cents, via: string = DEFAULT_PAYMENTS_NAME): string {
-  const amount = refunded < a.amount ? `${money(refunded)} of ${money(a.amount)}` : money(refunded);
-  return `${noun(a)} refunded, ${amount}, confirmed in ${via}.`;
+/** Who undid a step and how, for every refund text: "Proxy negotiated with the hotel's agent", "Proxy emailed Metro Transfer Co. support". */
+export function howUndone(a: Pick<Action, "category" | "merchant">, route: string, merchantName: string, byAgent = false): string {
+  if (byAgent) return "Your agent cancelled it itself";
+  if (route === "reversal_protocol") return `Proxy negotiated with the ${noun(a).toLowerCase()}'s agent`;
+  if (route === "email_support") return `Proxy emailed ${merchantName} support`;
+  if (route === "self_serve") return `Proxy cancelled it on ${merchantName}'s site`;
+  return "Proxy";
 }
 
-export function correctionStep(a: Pick<Action, "category" | "merchant">, dates: { start: string; end?: string } | undefined): string {
-  return `${noun(a)} correction sent${dates ? `: ${humanDate(dates.start)}${dates.end ? ` to ${humanDate(dates.end)}` : ""}` : ""}.`;
+/** One step confirmed, saying who did it and how: "Proxy emailed Metro Transfer Co. support. Transfer refunded, $188, confirmed in Stripe." */
+export function refundedStep(a: Pick<Action, "category" | "merchant" | "amount">, refunded: Cents, via: string = DEFAULT_PAYMENTS_NAME, how?: string): string {
+  const amount = refunded < a.amount ? `${money(refunded)} of ${money(a.amount)}` : money(refunded);
+  return `${how ? `${how}. ` : ""}${noun(a)} refunded, ${amount}, confirmed in ${via}.`;
+}
+
+/** "Proxy emailed Alex Rivera (host) the right dates: Nov 13 to Nov 16." */
+export function correctionStep(a: Pick<Action, "category" | "merchant">, dates: { start: string; end?: string } | undefined, to?: string): string {
+  const when = dates ? `: ${humanDate(dates.start)}${dates.end ? ` to ${humanDate(dates.end)}` : ""}` : "";
+  return to ? `Proxy emailed ${to} the right dates${when}.` : `${noun(a)} correction sent${when}.`;
 }
 
 export function noAnswerYet(a: Pick<Action, "category" | "merchant">): string {

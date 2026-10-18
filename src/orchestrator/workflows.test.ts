@@ -132,10 +132,10 @@ describe("QA workflows", () => {
     expect(texts().every((t) => t.channel === "imessage" && t.to === HUMAN)).toBe(true);
     const bodies = texts().map((t) => t.body);
     expect(bodies[1]).toMatch(/^Got it/); // Sarah's acknowledgement, whatever its exact wording
-    expect(bodies).toContain("Flight refunded, $412, confirmed in Stripe.");
-    expect(bodies).toContain("Hotel refunded, $544 of $640, confirmed in Stripe.");
-    expect(bodies).toContain("Transfer refunded, $188, confirmed in Stripe.");
-    expect(bodies).toContain("Host correction sent: Nov 13 to Nov 16.");
+    expect(bodies).toContain("Proxy cancelled it on Skyline Demo Air's site. Flight refunded, $412, confirmed in Stripe.");
+    expect(bodies).toContain("Proxy negotiated with the hotel's agent. Hotel refunded, $544 of $640, confirmed in Stripe.");
+    expect(bodies).toContain("Proxy emailed Metro Transfer Co. support. Transfer refunded, $188, confirmed in Stripe.");
+    expect(bodies).toContain("Proxy emailed Alex Rivera (host) the right dates: Nov 13 to Nov 16.");
     // The summary is last and counts every refund, however the hotel's answers interleave with the others.
     expect(bodies.at(-1)).toBe("All done. $1,144 of $1,240 back, confirmed in Stripe. Host told the right dates. Your agent will rebook for Nov 13.");
   });
@@ -269,8 +269,8 @@ describe("QA workflows", () => {
     const at = (text: string) => bodies.indexOf(text);
     const gotIt = bodies.findIndex((b) => /^Got it/.test(b));
     expect(gotIt).toBeGreaterThan(0);
-    expect(at("Transfer refunded, $188, confirmed in Stripe.")).toBeGreaterThan(gotIt);
-    expect(at("The hotel hasn't answered, following up by email.")).toBeGreaterThan(at("Transfer refunded, $188, confirmed in Stripe."));
+    expect(at("Proxy emailed Metro Transfer Co. support. Transfer refunded, $188, confirmed in Stripe.")).toBeGreaterThan(gotIt);
+    expect(at("The hotel hasn't answered, following up by email.")).toBeGreaterThan(at("Proxy emailed Metro Transfer Co. support. Transfer refunded, $188, confirmed in Stripe."));
     expect(calls).toEqual([{ type: "request_reversal", via: "default" }, { type: "request_reversal", via: "email" }]);
   });
 
@@ -432,7 +432,16 @@ describe("QA workflows", () => {
     await booked("transfer", "Airport transfer, Nov 3", 18_800, "transfer", { start: "2026-11-03" });
     await rt.proxy.alertChains(task_id);
     const [chain] = await rt.store.listChains(task_id);
-    expect(texts()[0]?.body).toMatch(/^Your agent used the wrong dates \(Nov 3, not Nov 13\)\.\nFlight already refunded by your agent \(\$412\)\.\n\n3 more things affected · \$828 at risk of \$1,240\nReversible for .+\n\nReply UNDO ALL, PICK or KEEP\.$/);
+    expect(texts()[0]?.body).toMatch(/^Your agent used the wrong dates \(Nov 3, not Nov 13\)\.\nYour agent already fixed the flight \(\$412\)\. 3 more things need you\.\n\n\$828 at risk of \$1,240\nReversible for .+\n\nReply UNDO ALL, PICK or KEEP\.$/);
+
+    // Before the human replies, the only thing undone is the agent's own flight (the self-undo rule): one refund,
+    // and Proxy has contacted no merchant.
+    await new Promise((r) => setTimeout(r, 50));
+    expect([...(rt.fakePayments?.refunds.values() ?? [])].map((r) => r.amount)).toEqual([41_200]);
+    const before = rt.proxy.feed.list(task_id);
+    expect(before.filter((e) => e.kind === "stripe_refund").map((e) => e.data.action_id)).toEqual([flight.action_id]);
+    expect(before.some((e) => ["protocol_out", "email_out"].includes(e.kind))).toBe(false);
+    expect((await rt.store.listActions(task_id)).filter((a) => a.state === "verified").map((a) => a.action_id)).toEqual([flight.action_id]);
 
     await imessageIn("UNDO ALL");
     await settle(async () => (await chainState(chain!.chain_id)) === "redone", 4000);

@@ -154,6 +154,11 @@ footer .hint{color:var(--faint)}
 .checking:not(.done) .check-head::after{content:"";display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;background:var(--accent);animation:blink 1s infinite}
 @keyframes blink{50%{opacity:.2}}
 .tm .typed{display:block;margin-top:4px;font-size:12.5px;color:var(--muted)}
+.card .who{font-size:13px;color:var(--green);margin-top:3px;font-weight:500}
+.waiting{display:flex;align-items:center;gap:10px;font-size:15px;color:var(--muted);padding:6px 6px}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid #D8D8DE;border-top-color:var(--accent);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tm.typing .dots{letter-spacing:2px;color:var(--muted);animation:blink 1.2s infinite}
 .ladder{position:sticky;top:12px;z-index:2;border-radius:14px;background:#F7F7F9;padding:10px 14px;margin-bottom:6px;box-shadow:0 -14px 0 0 var(--card),0 6px 12px -8px rgba(29,29,31,.18)}
 .ladder-head{font-size:13px;font-weight:700;color:var(--muted);margin-bottom:4px}
 .rung{display:grid;grid-template-columns:92px 1fr 56px 104px;align-items:center;gap:10px;font-size:14px;padding:3px 0}
@@ -274,7 +279,7 @@ footer .hint{color:var(--faint)}
   addEventListener("resize",fit);fit();
 
   // ---- state
-  var feed=null, story="trip", steps=[], cursor=-1, timer=null, lastOut=0, counter={shown:0,target:0,raf:0};
+  var feed=null, story="trip", steps=[], cursor=-1, timer=null, lastOut=0, counter={shown:0,target:0,raf:0}, howBy={};
 
   function detect(f){
     var es=f.entries||[];
@@ -294,9 +299,10 @@ footer .hint{color:var(--faint)}
       return 5;
     }
     if(k==="intent")return 1;
-    if(k==="booking"||k==="message")return 2;
-    if(k==="mismatch"||k==="self_undo")return 3;
-    if(k==="stripe_refund")return ctx.firstAlert&&e.seq>ctx.firstAlert?7:3;
+    if(k==="wait")return 0; // live pacing lines; a presenter paces the story themselves
+    if(k==="booking"||k==="message"||k==="self_undo")return 2;
+    if(k==="mismatch")return 3;
+    if(k==="stripe_refund")return ctx.firstAlert&&e.seq>ctx.firstAlert?7:2;
     if(k==="text_in")return 5;
     if(k==="text_out"){
       if(e.data&&e.data.alert==="chain_opened")return 4;
@@ -350,9 +356,9 @@ footer .hint{color:var(--faint)}
     var v=visible(), es=v.entries, S=STORIES[story];
     $("title").textContent=S.title;
     var byId={};(feed.bookings||[]).forEach(function(b){byId[b.id]=b});
-    var refunded={}, corrected={};
+    var refunded={}, corrected={}; howBy={};
     es.forEach(function(e){
-      if(e.kind==="stripe_refund")refunded[e.data.action_id]=Number(e.data.amount||0);
+      if(e.kind==="stripe_refund"){refunded[e.data.action_id]=Number(e.data.amount||0);howBy[e.data.action_id]=e.data.how||null}
       if(e.kind==="email_out"&&e.data&&e.data.correction)corrected[e.data.action_id]=1;
     });
     var spotted=es.some(function(e){return e.kind==="mismatch"||(e.kind==="text_out"&&e.data&&e.data.alert==="chain_opened")});
@@ -376,6 +382,8 @@ footer .hint{color:var(--faint)}
     if(b.category==="message"){amt.textContent=opts.corrected?"Corrected":"Sent";if(opts.corrected)amt.style.color="var(--green)"}
     else if(opts.refunded!==undefined){var s=el("s",null,money(b.amount));amt.appendChild(s);amt.appendChild(el("span","back","Refunded "+money(opts.refunded)))}
     else amt.textContent=money(b.amount);
+    if(opts.refunded!==undefined&&howBy[b.id])mid.appendChild(el("div","who",howBy[b.id]));
+    if(opts.corrected)mid.appendChild(el("div","who","Proxy emailed the right dates"));
     if(opts.bad){
       c.className+=opts.refunded!==undefined||opts.corrected?" bad fixed":" bad";
       var want=feed.task&&feed.task.intended_dates;
@@ -416,6 +424,12 @@ footer .hint{color:var(--faint)}
           var b=asB(e);return card(b,{bad:spotted&&b.wrong!==false,refunded:refunded[b.id],corrected:corrected[b.id]});
         })));
       }
+      // The agent's own fix during its session, said in its own words.
+      es.filter(function(e){return e.kind==="self_undo"}).forEach(function(e){
+        var b=byId[e.data.action_id], what=b&&b.category?b.category:"booking";
+        var back=refunded[e.data.action_id];
+        frag.appendChild(bot("I booked the "+what+" on the wrong date. Cancelling it myself, free within 24h \u2705"+(back!==undefined?" "+money(back)+" back":"")));
+      });
       if(redo.length){
         var dates=feed.task&&feed.task.intended_dates;
         var msg=story==="plan"?"Re-subscribed on the monthly plan ✅":"Rebooked for "+range(dates)+" ✅";
@@ -495,7 +509,9 @@ footer .hint{color:var(--faint)}
     var sim=es.some(function(e){return e.kind==="stripe_refund"&&/simulated/i.test(e.text)});
     var done=es.some(function(e){return e.kind==="redo"});
     $("moneyNote").textContent=back?(sim?"Simulated payments: no real money moved.":"Every dollar here is confirmed in Stripe.")+(done?" The agent redid the task correctly.":""):"Proxy found the mistake. Nothing is back yet.";
-    setCount(back,false);
+    // Nothing back yet: show $0, not the booked total the panel showed before Proxy spotted the mistake.
+    if(!back){counter.shown=counter.target=0;$("moneyNum").textContent="$0"}
+    else setCount(back,false);
   }
   function setCount(target,instant){
     if(instant){counter.shown=counter.target=target;return}
@@ -576,7 +592,7 @@ footer .hint{color:var(--faint)}
       c.appendChild(row2("Before",before));
       c.appendChild(row2("After","Cancelled, "+money(d.amount)+" back"+(d.of&&d.of!==d.amount?" of "+money(d.of):""),"good"));
       var rounds=es.filter(function(x){return x.kind==="protocol_out"&&x.data.merchant===m}).reduce(function(t,x){return Math.max(t,Number(x.data.round||0))},0);
-      var how=m==="airline"?"Your agent cancelled it itself, free under the 24-hour rule":rounds?"Negotiated agent to agent, "+rounds+" rounds":"Proxy emailed support";
+      var how=d.how?String(d.how)+(rounds&&/negotiated/.test(String(d.how))?", "+rounds+" rounds":""):rounds?"Proxy negotiated with the agent, "+rounds+" rounds":"Proxy emailed support";
       c.appendChild(row2("How",how));
       c.appendChild(row2("Why",wrongWhy(b)));
       var sim=/simulated/i.test(e.text), rc=el("div","r-meta");
@@ -626,6 +642,10 @@ footer .hint{color:var(--faint)}
         line.appendChild(el("span","from",k==="email_out"?"Proxy: ":(NAMES[m]||m)+": "));line.appendChild(document.createTextNode(strip(e.text)));
         mg.appendChild(line);any=true;
         if(k==="email_in"&&d.correction&&d.approved)frag.appendChild(reverted(e,es,byId));
+      }else if(k==="wait"){
+        // Live pacing: shown only while it is the newest thing for its step.
+        var later=all.some(function(x){return x.seq>e.seq&&x.data&&x.data.action_id===d.action_id});
+        if(LIVE&&!PRESENT&&!later){var w=el("div","waiting");w.appendChild(el("span","spin"));w.appendChild(document.createTextNode(e.text));frag.appendChild(w);any=true}
       }else if(k==="stripe_refund"){
         frag.appendChild(reverted(e,es,byId));any=true;
       }else if(k==="mismatch"&&story==="ambiguous"){
@@ -638,7 +658,14 @@ footer .hint{color:var(--faint)}
         frag.appendChild(c);any=true;
       }
     });
-    Object.keys(groups).forEach(function(key){var g=groups[key];if(g.ladderSlot){var l=ladder(g.list);if(l)g.ladderSlot.replaceWith(l)}});
+    Object.keys(groups).forEach(function(key){
+      var g=groups[key];
+      if(!g.ladderSlot)return;
+      var l=ladder(g.list);if(l)g.ladderSlot.replaceWith(l);
+      // Live: while Proxy waits on the merchant's agent, it is "typing".
+      var last=g.list[g.list.length-1], open=feed.chain&&["undoing","alerted","detected"].indexOf(feed.chain.state)>=0;
+      if(LIVE&&!PRESENT&&last&&last.kind==="protocol_out"&&open){var ty=el("div","tm typing");ty.appendChild(el("div","avatar av-merchant",(NAMES[last.data.merchant]||"M").charAt(0)));var dots=el("div","t");dots.appendChild(el("span","dots","\u2022\u2022\u2022"));ty.appendChild(dots);g.box.appendChild(ty)}
+    });
     if(!any)frag.appendChild(el("div","empty",story==="ambiguous"?"Proxy reads the human's own words and checks them against what the agent logged.":"Merchant conversations, emails and refunds show up here."));
     box.replaceChildren(frag);
     follow($("itemScroll"));
