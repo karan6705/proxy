@@ -406,7 +406,7 @@ export function createToolHandlers(getProxy: () => Proxy, sandboxes?: SandboxLoo
         ...(redo ? { redo } : {}),
         next_action,
       };
-      return withMeta(ok(view, textGetChain(view, recovered, corrected)), meta);
+      return withMeta(ok(view, textGetChain(view, recovered, corrected, p.deps.paymentsName)), meta);
     },
 
     async list_chains({ task_id }: ListChainsInput) {

@@ -284,7 +284,7 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     ...createHumanRoutes(human, createVerifier(env)),
     ...merchantRoutes(merchants, merchantDeps, clock),
     ...("recentEvents" in store
-      ? createWebRoutes({ store: store as Store & EventReader, clock, channel: human, humanNumber, controls: demoOn })
+      ? createWebRoutes({ store: store as Store & EventReader, clock, channel: human, humanNumber, controls: demoOn && !cloud })
       : []),
   ];
 
