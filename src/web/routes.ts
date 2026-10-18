@@ -1,7 +1,9 @@
 // The live demo page: event feed, chain list, and fallback buttons for UNDO ALL / PICK / KEEP.
 //   GET  /web                 the reply page (current run only; ?all=1 shows every run, ?task_id=<id> picks one)
 //   GET  /web/state           JSON the page polls
-//   POST /web/reply           {chain_id, kind: "undo_all" | "pick" | "keep", picks?: number[]}  (only when controls are on)
+//   POST /web/reply           {chain_id, kind: "undo_all" | "pick" | "keep", picks?: number[]}, or {kind: "choice", choice: 1 | 2}
+//                             to answer an intent question (only when controls are on)
+//   GET  /web/show            the presentation page (src/web/show.ts)
 //   GET  /web/stage           the full-screen 16:9 view for screen recording (reads GET /demo/feed)
 //   GET  /web/stage-fixture   a built-in demo story for the stage page: ?step=N, or it advances by itself; ?long=1 is a long run
 import type { EventReader } from "../db/memory.js";
@@ -9,6 +11,7 @@ import type { HumanChannel } from "../inkbox/human.js";
 import type { Clock, EventRow, RouteHandler, Store } from "../types.js";
 import { PAGE_HTML } from "./page.js";
 import { fixtureFeed, fixtureSteps } from "./stage-feed.js";
+import { SHOW_HTML } from "./show.js";
 import { STAGE_HTML } from "./stage.js";
 
 export interface WebDeps {
@@ -76,11 +79,17 @@ export function createWebRoutes(deps: WebDeps): RouteHandler[] {
       async handle(req) {
         if (!controls) return { status: 404, body: { ok: false, message: "controls are off" } };
         if (deps.token && req.headers["x-demo-token"] !== deps.token) return { status: 401, body: { ok: false, message: "bad token" } };
-        let body: { chain_id?: unknown; kind?: unknown; picks?: unknown };
+        let body: { chain_id?: unknown; kind?: unknown; picks?: unknown; choice?: unknown };
         try {
           body = JSON.parse(req.rawBody);
         } catch {
           return { status: 400, body: { ok: false, message: "invalid JSON" } };
+        }
+        // "1" or "2" answers Proxy's question about the intent ("You wrote 3/11 ..."); it has no chain yet.
+        if (body.kind === "choice") {
+          if (body.choice !== 1 && body.choice !== 2) return { status: 400, body: { ok: false, message: "choice must be 1 or 2" } };
+          const result = await deps.channel!.handleInbound({ from: deps.humanNumber!, body: String(body.choice), via: "sms" });
+          return { status: 200, body: { ok: true, result } };
         }
         const picks = Array.isArray(body.picks) && body.picks.every((n) => Number.isInteger(n) && n >= 1 && n <= 99) ? (body.picks as number[]) : undefined;
         const text = body.kind === "undo_all" ? "UNDO ALL" : body.kind === "keep" ? "KEEP" : body.kind === "pick" ? (picks?.length ? `PICK ${picks.join(" ")}` : "PICK") : null;
@@ -91,6 +100,11 @@ export function createWebRoutes(deps: WebDeps): RouteHandler[] {
         const result = await deps.channel!.handleInbound({ from: deps.humanNumber!, body: text, via: "sms", chain_id: body.chain_id });
         return { status: 200, body: { ok: true, result } };
       },
+    },
+    {
+      method: "GET",
+      path: "/web/show",
+      handle: async () => ({ status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: SHOW_HTML }),
     },
     {
       method: "GET",

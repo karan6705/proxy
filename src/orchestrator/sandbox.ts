@@ -32,9 +32,13 @@ export interface SandboxLookup {
   chains(): Promise<Chain[]>;
 }
 
+/** The stories a sandbox can run. trip is try_proxy_demo's story. */
+export const SCENARIOS = ["trip"] as const;
+export type Scenario = (typeof SCENARIOS)[number];
+
 export interface Sandboxes extends SandboxLookup {
-  /** Runs the story. `task_id` is for the boot example; leave it out for a random sandbox_<random>. */
-  run(task_id?: string): Promise<SandboxResult>;
+  /** Runs a story. `task_id` is for the boot example and /web/show; leave it out for a random sandbox_<random>. */
+  run(task_id?: string, scenario?: Scenario): Promise<SandboxResult>;
   size(): number;
 }
 
@@ -51,9 +55,12 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
   const runs = new Map<string, Entry>();
   let inFlight = 0;
 
+  /** The boot example and /web/show's recordings stay; random runs make room for new ones. */
+  const kept = (task_id: string) => task_id === "sandbox_example" || task_id.startsWith("show_");
   const byChain = (chain_id: string) => [...runs.values()].find((e) => chain_id.includes(`_${e.task_id}_`) || chain_id.endsWith(`_${e.task_id}`));
 
-  async function story(task_id: string): Promise<SandboxResult> {
+  async function story(task_id: string, scenario: Scenario): Promise<SandboxResult> {
+    void scenario;
     const clock: SimulatedClock = createSimulatedClock(SANDBOX_START);
     const runtime = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, {
       store: createMemoryStore(),
@@ -69,7 +76,7 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
     });
     runs.set(task_id, { proxy: runtime.proxy, store: runtime.store, task_id });
     while (runs.size > max) {
-      const oldest = [...runs.keys()].find((k) => k !== "sandbox_example" && k !== task_id);
+      const oldest = [...runs.keys()].find((k) => !kept(k) && k !== task_id);
       if (!oldest) break;
       runs.delete(oldest);
     }
@@ -81,6 +88,7 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
     const logged = (await tools.log_intent({
       goal: "NYC trip for the Nov 13 conference, under $1,500",
       constraints: { dates: { start: "2026-11-13", end: "2026-11-16" }, budget_total: 150_000 },
+      original_request: "Book my NYC trip for the Nov 13 conference, under $1,500",
       idempotency_key: "sandbox",
     })).structuredContent;
     if (!logged.ok) throw new Error("sandbox log_intent failed");
@@ -150,11 +158,11 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
   }
 
   return {
-    async run(task_id = `sandbox_${randomBytes(4).toString("hex")}`) {
+    async run(task_id = `sandbox_${randomBytes(4).toString("hex")}`, scenario: Scenario = "trip") {
       if (inFlight >= maxConcurrent) throw new Error("The sandbox is busy. Try again in a few seconds.");
       inFlight += 1;
       try {
-        return await story(task_id);
+        return await story(task_id, scenario);
       } finally {
         inFlight -= 1;
       }
@@ -163,7 +171,8 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
     forTask: (task_id) => runs.get(task_id)?.proxy ?? null,
     async chains() {
       const all: Chain[] = [];
-      for (const e of runs.values()) all.push(...(await e.store.listChains(e.task_id)));
+      // /web/show's recordings are page material, not chains an agent should be told about.
+      for (const e of runs.values()) if (!e.task_id.startsWith("show_")) all.push(...(await e.store.listChains(e.task_id)));
       return all;
     },
     size: () => runs.size,
