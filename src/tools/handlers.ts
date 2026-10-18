@@ -159,7 +159,7 @@ export function createToolHandlers(getProxy: () => Proxy, sandboxes?: SandboxLoo
         actor: "agent",
         kind: "intent",
         text: `Agent started a task: ${input.goal}${d ? ` (${humanDate(d.start)}${d.end ? ` to ${humanDate(d.end)}` : ""})` : ""}.`,
-        data: { goal: input.goal, start: d?.start ?? null, end: d?.end ?? null, budget_total: input.constraints.budget_total ?? null },
+        data: { goal: input.goal, request: input.original_request ?? null, start: d?.start ?? null, end: d?.end ?? null, budget_total: input.constraints.budget_total ?? null },
       });
       // The human's own words, if given: a disagreement is put to the human; agreement sends nothing.
       const check = checkIntent(input.constraints, input.original_request, Number(clock.now().slice(0, 4)), clock.now());
