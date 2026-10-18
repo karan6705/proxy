@@ -8,53 +8,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { CAVEAT, TASK_TITLES, isComprehensionTask, layer2ByTask, type Layer1Results, type Layer2Results } from "./report.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const RESULTS_DIR = join(HERE, "results");
 export const SCOREBOARD_FILE = join(HERE, "scoreboard", "index.html");
 
-interface Layer1Summary {
-  arm: "naive" | "proxy";
-  scenarios: number;
-  passed: number;
-  mistakes_expected: number;
-  mistakes_caught: number;
-  known_misses: number;
-  false_alarms: number;
-  known_false_alarms: number;
-  chain_members_expected: number;
-  chain_members_found: number;
-  outcomes_expected: number;
-  outcomes_correct: number;
-  refund_agreed: number;
-  refund_expected: number;
-  false_done_claims: number;
-}
-
-export interface Layer1Results {
-  run_id: string;
-  note?: string;
-  not_measured?: { name: string; why: string }[];
-  summaries: Layer1Summary[];
-}
-
-export interface Layer2Results {
-  run_id: string;
-  model: string;
-  summary: {
-    trials_per_task_arm: number;
-    naive: { episodes: number; episodes_with_real_mistakes: number; self_detected: number; false_done_claims: number; tokens: number };
-    proxy: {
-      episodes: number;
-      episodes_with_real_mistakes: number;
-      mistakes: number;
-      caught: number;
-      false_alarms: number;
-      refund_agreed: number;
-      tokens: number;
-    };
-  };
-}
+export type { Layer1Results, Layer2Results };
 
 const escapeHtml = (value: unknown): string =>
   String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char);
@@ -120,6 +80,30 @@ function layer2Rows(results: Layer2Results): Row[] {
   ];
 }
 
+/** Per task counts for the live agent, plus the execution versus comprehension split. */
+function taskBlock(results: Layer2Results): string {
+  const tasks = layer2ByTask(results.episodes ?? []);
+  if (tasks.length === 0) {
+    return "";
+  }
+  const rows = tasks
+    .map(
+      (task) => `<tr><th scope="row">${escapeHtml(task.task_id)}<small>${escapeHtml(TASK_TITLES[task.task_id] ?? "")}</small></th>
+        <td>${task.naive_false_done} / ${task.episodes_per_arm}</td>
+        <td class="proxy">${task.proxy_caught} / ${task.proxy_mistakes}</td></tr>`,
+    )
+    .join("");
+  const total = (items: typeof tasks, pick: (task: (typeof tasks)[number]) => number): number => items.reduce((sum, task) => sum + pick(task), 0);
+  const execution = tasks.filter((task) => !isComprehensionTask(task.task_id));
+  const comprehension = tasks.filter((task) => isComprehensionTask(task.task_id));
+  const split =
+    comprehension.length > 0
+      ? `<p class="nalist"><b>Execution errors</b> (retry, default, substitute, fallback): Proxy caught ${total(execution, (task) => task.proxy_caught)} / ${total(execution, (task) => task.proxy_mistakes)}. ` +
+        `<b>Comprehension errors</b> (agent misreads the request, then logs the same misreading): ${total(comprehension, (task) => task.proxy_caught)} / ${total(comprehension, (task) => task.proxy_mistakes)}.</p>`
+      : "";
+  return `<table class="tasks"><thead><tr><th>Per task</th><th>Naive false “done”</th><th class="proxy">Proxy caught / real</th></tr></thead><tbody>${rows}</tbody></table>${split}`;
+}
+
 function table(rows: Row[], naiveLabel: string, na: string): string {
   const body = rows
     .map(
@@ -155,6 +139,7 @@ thead th:not(:first-child){white-space:nowrap;padding-left:calc(var(--u)*1)}
 .nalist{margin:calc(var(--u)*.9) 0 0;color:var(--muted);font-size:calc(var(--u)*1)}.nalist b{font-weight:600}
 .proxy{color:var(--accent);font-weight:600}.na{color:var(--muted);font-weight:400}
 .caveat{margin:0;color:var(--warn);font-size:calc(var(--u)*1.1);line-height:1.45;border-top:1px solid var(--line);padding-top:calc(var(--u)*1)}
+.tasks{margin-top:calc(var(--u)*1)}.tasks thead th{font-size:calc(var(--u)*.95)}.tasks tbody th{padding:calc(var(--u)*.3) 0}.tasks td{padding:calc(var(--u)*.3) 0 calc(var(--u)*.3) calc(var(--u)*1)}
 .empty{color:var(--muted);font-size:calc(var(--u)*1.3);margin:auto}
 `;
 
@@ -163,12 +148,9 @@ export function renderScoreboard(layer1: Layer1Results | null, layer2: Layer2Res
     ? `<h2>Scripted scenarios</h2><div class="tag">${escapeHtml(layer1.summaries[0]?.scenarios ?? 0)} scenarios · Layer 1 · scripted · ${escapeHtml(runDate(layer1.run_id))}</div>${table(layer1Rows(layer1), "Naive (scripted)", notMeasured(layer1))}`
     : `<h2>Scripted scenarios</h2><p class="empty">No Layer 1 results yet. Run: npx tsx evals/run.ts</p>`;
   const second = layer2
-    ? `<h2>Live agent</h2><div class="tag">${escapeHtml(layer2.model)} · ${escapeHtml(layer2.summary.trials_per_task_arm)} trials per task and arm · Layer 2 · live · ${escapeHtml(runDate(layer2.run_id))}</div>${table(layer2Rows(layer2), "Naive (self-check)", "time to alert · Stripe-verified money · redo correctness")}`
+    ? `<h2>Live agent</h2><div class="tag">${escapeHtml(layer2.model)} · ${escapeHtml(layer2.summary.trials_per_task_arm)} trials per task and arm · Layer 2 · live · ${escapeHtml(runDate(layer2.run_id))}</div>${table(layer2Rows(layer2), "Naive (self-check)", "time to alert · Stripe-verified money · redo correctness")}${taskBlock(layer2)}`
     : `<h2>Live agent</h2><p class="empty">No Layer 2 results yet. Run: npx tsx --env-file=.env evals/live/run.ts</p>`;
-  const caveat =
-    "Counts from actual runs, not rates. Layer 1 is scripted: its naive column is a scripted self-review, not a measured miss rate. " +
-    "Layer 2 is a live model on five faulty tasks, with separate runs per arm and Proxy running in process. " +
-    "Refunds are amounts the merchants agreed; Stripe verification and time to alert are not measured here. Merchants and the clock are our own simulations.";
+  const caveat = layer2?.mode === "mcp" ? `${CAVEAT} Layer 2 Proxy ran over MCP against a server.` : `${CAVEAT} Layer 2 Proxy ran in process, not over MCP.`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Proxy scoreboard</title><style>${CSS}</style></head>

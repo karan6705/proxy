@@ -22,6 +22,12 @@ const layer2: Layer2Results = {
     naive: { episodes: 25, episodes_with_real_mistakes: 8, self_detected: 3, false_done_claims: 5, tokens: 69245 },
     proxy: { episodes: 25, episodes_with_real_mistakes: 5, mistakes: 6, caught: 6, false_alarms: 0, refund_agreed: 483200, tokens: 99747 },
   },
+  episodes: [
+    { task_id: "L2", arm: "naive", truth: [{ booking: "airline_2", field: "duplicate" }], agent: { status: "done", usage: { input_tokens: 1, output_tokens: 1 } }, false_done_claim: true },
+    { task_id: "L2", arm: "proxy", truth: [{ booking: "airline_2", field: "duplicate" }], agent: { status: "done", usage: { input_tokens: 1, output_tokens: 1 } }, proxy: { caught: 1, false_alarms: [], agreed_refund_total: 41200 } },
+    { task_id: "C2", arm: "naive", truth: [{ booking: "airline_1", field: "dates" }], agent: { status: "done", usage: { input_tokens: 1, output_tokens: 1 } }, false_done_claim: true },
+    { task_id: "C2", arm: "proxy", truth: [{ booking: "airline_1", field: "dates" }], agent: { status: "done", usage: { input_tokens: 1, output_tokens: 1 } }, proxy: { caught: 0, false_alarms: [], agreed_refund_total: 0 } },
+  ],
 };
 
 describe("the scoreboard page", () => {
@@ -42,6 +48,19 @@ describe("the scoreboard page", () => {
     expect(html).toContain("not a measured miss rate");
     expect(html).toContain("Counts from actual runs, not rates.");
     expect(html).toContain("Merchants and the clock are our own simulations.");
+  });
+
+  it("shows per task counts and the split between execution and comprehension errors", () => {
+    expect(html).toContain("Per task");
+    expect(html).toContain("flight call times out");
+    expect(html).toContain("Execution errors");
+    expect(html).toContain("Comprehension errors");
+    expect(html).toContain("agent misreads the request, then logs the same misreading");
+  });
+
+  it("says how Proxy was run in layer 2", () => {
+    expect(html).toContain("Layer 2 Proxy ran in process, not over MCP.");
+    expect(renderScoreboard(layer1, { ...layer2, mode: "mcp" })).toContain("Layer 2 Proxy ran over MCP against a server.");
   });
 
   it("lists what a layer cannot measure as n/a", () => {
