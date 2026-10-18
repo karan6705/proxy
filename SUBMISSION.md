@@ -16,7 +16,7 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 | MCP server URL | yes | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (deployed on Manufact Cloud, verified over MCP: six tools). It is a dry-run copy with an in-memory store, which is fine for judges to connect to. Do not use a tunnel URL: it changes when the laptop restarts. |
 | Manufact organization ID | yes | `9833fb6a-873c-4b80-b5a6-16c3f30ba17c`: the organization that owns the deployed server (Sarah Khadder's Projects, slug `org-3e8505eb-iovbr`). If the server is ever redeployed under a different organization, use that organization's ID instead. |
 | Demo video URL (YouTube/Loom/etc.) | yes | `<PUBLIC VIDEO LINK>`. It must show the server working in more than one MCP client (Claude Code, Codex, Cursor), and judges must be able to watch it without requesting access. Open the link in a private window before pasting. |
-| Setup instructions for judges | no | See the draft below. |
+| Setup instructions for judges | no | See the draft below. Source code (public): https://github.com/karan6705/proxy |
 | What was the biggest blocker while building your project? | no | See the draft below. |
 | What is one missing capability that would unlock your next step? | no | See the draft below. |
 | Which capabilities would you use in the next 30 days? (up to 2) | no | Suggested: "Durable state or memory across agent sessions" and "Test workflows across MCP clients and catch regressions". The team should confirm. |
@@ -24,11 +24,11 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 
 ### Setup instructions for judges (draft)
 
-> Connect any MCP client to `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (streamable HTTP, no authentication). It exposes six tools: `log_intent`, `reversibility`, `review`, `undo`, `get_chain`, `list_chains`; a `mistakes` resource; and a live-chain view.
+> Connect any MCP client to `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (streamable HTTP, no authentication). It exposes seven tools: `log_intent`, `reversibility`, `review`, `undo`, `get_chain`, `list_chains` and `try_proxy_demo` (runs the whole story in a simulated sandbox); a `mistakes` resource; a prompt, `undo_my_agents_mistake`; and a live-chain view.
 >
-> Try it: call `log_intent` with a goal and constraints (it returns a `task_email` unique to that task), book through that address, then call `review(task_id)`. Every error has `retryable` and `next_action`; follow `next_action`. `undo` only touches the agent's own free, full-refund actions; anything else waits for the human, who answers UNDO ALL, PICK or KEEP by text, so no tool lets the agent approve its own undo.
+> Fastest way to see it work: call `try_proxy_demo` (a simulated sandbox: no real money, messages or merchants), then `get_chain` with the `chain_id` it returns. Or, by hand: call `log_intent` with a goal and constraints (it returns a `task_email` unique to that task), book through that address, then call `review(task_id)`. Every error has `retryable` and `next_action`; follow `next_action`. `undo` only touches the agent's own free, full-refund actions; anything else waits for the human, who answers UNDO ALL, PICK or KEEP by text, so no tool lets the agent approve its own undo.
 >
-> To watch a full run without setting anything up, open `https://bold-zero-0m4lf.run.mcp-use.com/web/stage?fixture=1`. The merchants and their agents in our demo are our own mocks, the clock is simulated, and money is Stripe test mode. Clients shown in the video: `<list only the clients you actually recorded, for example Claude Code, Codex, Cursor>`.
+> To watch a full run without setting anything up, open `https://bold-zero-0m4lf.run.mcp-use.com/web/stage` (the finished example) or `/web/stage?fixture=1` (the story replayed). Source code: https://github.com/karan6705/proxy. The merchants and their agents in our demo are our own mocks, the clock is simulated, and money is Stripe test mode. Clients shown in the video: `<list only the clients you actually recorded, for example Claude Code, Codex, Cursor>`.
 
 ### Builder feedback (drafts from what actually happened in this build; edit or delete anything you did not experience)
 
@@ -48,7 +48,7 @@ What to show if asked, all from Karan's laptop run (see the table): the task add
 
 ## Claims check: what is verified, what is not
 
-Do not say anything in the video, the form or at the live demo that this table does not support.
+Do not say anything in the video, the form or at the live demo that this table does not support. Every eval number traces to a file in `evals/results/`; `evals/PITCH_NUMBERS.md` lists what to say and what not to say, and is generated from those files.
 
 **Two separate things exist, and they are not the same.**
 
@@ -67,11 +67,16 @@ Do not say anything in the video, the form or at the live demo that this table d
 | Human replies by iMessage | Laptop only | **Partly.** `UNDO ALL` and `KEEP` arrived and parsed; `PICK` and a loose reply were not seen, and replies can be slow. The demo page buttons are the reliable reply path |
 | **SMS** | Laptop only | **Outbound did not work.** Inkbox accepted both sends we made after the recipient opted in, and the carrier dropped both (error 40002, spam filter). **Inbound `START` arrived** (so the number receives). Claim only: "SMS is supported as an alternative alert channel in the code". Do **not** claim SMS delivery or SMS replies |
 | **Phone calls** | Nowhere | **Never run live.** The call escalation exists in the code (`placeCall`) and runs only against the dry-run logger. Do not claim a call was placed. |
-| "A refund only counts when Stripe shows it" | Laptop, if it has the Stripe test key (Karan to confirm) | True in the code and tests. **On the cloud copy payments are simulated**, so "confirmed in Stripe" there means the simulated ledger, not Stripe. Confirm with a recorded real test charge before saying "Stripe confirmed" on camera |
+| "A refund only counts when Stripe shows it" | Laptop, Stripe test mode | **Confirmed by Karan: his laptop has the Stripe test key.** True in the code and tests. **On the cloud copy payments are simulated**, so "confirmed in Stripe" there means the simulated ledger, not Stripe. Show a real test refund in the recording when you say it |
 | Reversal Protocol limited to three rounds, with a hard deadline | Code and tests | Enforced in the state machine and unit-tested; live runs used 3 messages from Proxy |
 | Deployed on Manufact Cloud | Cloud copy | Verified: running, reachable over HTTPS, no runtime errors. A managed upload, not linked to GitHub: pushes to `main` do not redeploy it; redeploy steps are in HANDOFF.md |
 | Works in several MCP clients | Not yet shown | Name only the clients you actually recorded |
 | Cloud copy's end-to-end sandbox demo (`try_proxy_demo`) | Cloud copy | **Pending Karan's `demo-v1`.** Verify that it ends at $1,144 of $1,240 on the redeployed URL before claiming it |
+| Proxy catches an agent's execution mistakes (a retry that duplicates a booking, a fallback that breaks the budget) | Shown in our own eval, as counts | `evals/RESULTS.md` (from `evals/results/layer2-2026-10-18T00-54-41-756Z.json`): a live Haiku 4.5 agent, 10 trials per task and arm; Proxy caught 19 of 19 real mistakes, all from two of the five tasks. Proxy ran in process, not over MCP, against our own mocks. Say counts, never a rate. |
+| Proxy catches an agent's misreading of the task | **Not shown. Do not claim.** | The same run: 0 of 60 on the two chain tasks, because the agent logged the same misreading in `log_intent`. Say it as the honest limit. |
+| Passing the human's own words (`original_request`) catches that | **Not shown. Keep it out of the pitch until a rerun shows it working** (the numeric-date change is pending). | `evals/results/intentcheck-2026-10-18T02-37-52-316Z.json`: 0 of 18. The parser read neither request (no date in one, "3/11" in the other). It does catch "November 13" against a logged Nov 3, but that is a unit test, and the human's answer is simulated. |
+| The scoreboard: 34 scripted scenarios, Proxy 34 of 34 passed, 39 of 44 real mistakes caught | Verified as scripted | `evals/results/layer1-2026-10-17T23-22-35-970Z.json`. Scenarios, expected results and the naive arm are ours; the naive column is a scripted self-review, not a measured rate. 5 misses and 1 false alarm are documented, not hidden. |
+| Refunds recovered in the evals | **Only "agreed by the merchant".** | Eval refunds are amounts our mock merchants agreed. Stripe verification is claimed only for the live demo (see the row above), never for eval totals. |
 
 ## Before you submit
 

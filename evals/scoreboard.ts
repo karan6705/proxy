@@ -82,9 +82,9 @@ function layer2Footer(results: Layer2Results): string {
   const { naive, proxy } = results.summary;
   const money =
     results.mode === "mcp"
-      ? `Refunds Stripe shows (server's own verification): ${proxy.stripe_verified_actions ?? 0} actions`
-      : `Refunds agreed: ${dollars(proxy.refund_agreed)} (merchant-agreed, not Stripe-verified)`;
-  return `<p class="nalist">${escapeHtml(money)} · Agent tokens ${naive.tokens.toLocaleString("en-US")} naive, ${proxy.tokens.toLocaleString("en-US")} Proxy</p>`;
+      ? `Refunds Stripe shows: ${proxy.stripe_verified_actions ?? 0} actions`
+      : `Refunds agreed: ${dollars(proxy.refund_agreed)} (merchant-agreed)`;
+  return `<p class="nalist">${escapeHtml(money)} · Tokens ${naive.tokens.toLocaleString("en-US")} / ${proxy.tokens.toLocaleString("en-US")}</p>`;
 }
 
 const SHORT_TITLES: Record<string, string> = {
@@ -156,7 +156,7 @@ thead th:not(:first-child){white-space:nowrap;padding-left:calc(var(--u)*1)}
 .nalist{margin:calc(var(--u)*.9) 0 0;color:var(--muted);font-size:calc(var(--u)*1)}.nalist b{font-weight:600}
 .proxy{color:var(--accent);font-weight:600}.na{color:var(--muted);font-weight:400}
 .caveat{margin:0;color:var(--warn);font-size:calc(var(--u)*.95);line-height:1.4;border-top:1px solid var(--line);padding-top:calc(var(--u)*1)}
-.tasks{margin-top:calc(var(--u)*.7);font-size:calc(var(--u)*1)}.tasks thead th{font-size:calc(var(--u)*.9)}.tasks tbody th{padding:calc(var(--u)*.22) 0;font-weight:600}.tasks tbody th span{font-weight:400;color:var(--muted)}.tasks td{padding:calc(var(--u)*.22) 0 calc(var(--u)*.22) calc(var(--u)*1)}
+.tasks{margin-top:calc(var(--u)*.7);font-size:calc(var(--u)*1)}.tasks thead th{font-size:calc(var(--u)*.9)}.tasks tbody th{padding:calc(var(--u)*.16) 0;font-weight:600}.tasks tbody th span{font-weight:400;color:var(--muted)}.tasks td{padding:calc(var(--u)*.16) 0 calc(var(--u)*.16) calc(var(--u)*1)}
 .empty{color:var(--muted);font-size:calc(var(--u)*1.3);margin:auto}
 `;
 

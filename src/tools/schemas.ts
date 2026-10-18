@@ -239,3 +239,14 @@ export const toolError = z.object({
   retryable: z.boolean(),
   next_action: nextAction,
 }) satisfies z.ZodType<ToolError>;
+
+// --- try_proxy_demo (cloud judge copy and demo mode only) ---
+export const tryProxyDemoInput = z.object({});
+export const tryProxyDemoOutput = z.object({
+  ok,
+  task_id: z.string().describe("The sandbox task, sandbox_<random>"),
+  chain_id: z.string().describe("Pass this to get_chain to see the finished undo chain"),
+  summary: z.string().describe("One paragraph in plain English of what happened, in the simulation"),
+  finished: z.boolean().describe("False only if the simulation did not finish in time; get_chain shows where it stands"),
+  next_action: z.string().describe("What to do next"),
+});
