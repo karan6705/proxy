@@ -20,7 +20,7 @@
 
 ## Karan
 
-### Readiness and the intent check (2026-10-18)
+### Readiness and the intent check (2026-10-17)
 - Tag `demo-v2` is on main at 51feb13 (`demo-v1` unchanged).
 - Every tool parameter has a description; `src/tools/schemas.test.ts` fails if one is added without.
 - `undo` with an unknown action id returns `not_found` (`next_action: "fix_now"`, "call review(task_id), then undo with those ids") and undoes nothing.
@@ -445,7 +445,7 @@ Found in Karan's live run on port 3000, read from `/web/state`:
 
 ## Dhwanil
 
-### From Karan: numeric dates in the intent check are on main (2026-10-18)
+### From Karan: numeric dates in the intent check are on main (2026-10-17)
 - `checkIntent` (`src/orchestrator/intent-words.ts`) now reads `M/D`, `D/M`, `M/D/YYYY` (and two-digit years), ISO, "the 13th" (the agent's month, or the current one), "13th of November" and "Nov 13", including ranges.
 - A numeric date valid both ways ("3/11") is ambiguous. If the agent logged one reading, the result is `disagrees` with `next_action: "wait_for_human"`, and the human gets "You wrote 3/11. Your agent read it as Mar 11. Did you mean Mar 11 or Nov 3? Reply 1 or 2." `corrected` is the reading the agent did not take, so `applyIntentCheck`'s simulated "their own words" answer picks it. If the agent's date matches neither reading, it is a plain disagreement (the month-first reading is put forward).
 - Words with no date or budget (C1 has "Budget $1,500" but no date, so it still checks the budget and agrees) return `{ status: "absent", checkable: false }` and nothing is sent.
