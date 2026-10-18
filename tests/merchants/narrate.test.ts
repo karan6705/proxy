@@ -88,6 +88,17 @@ describe("narration of the agent-to-agent part", () => {
     expect(narrateSupport(email, nothing).replied).toBe("refund declined for no reference");
   });
 
+  it("can label lines by who is talking, which is clearer than arrows for someone new to the protocol", () => {
+    const request = requestReversal("HTL-ABC123", "hotel", 64000);
+    const reply: CounterMsg = { ...ids, round: 1, type: "counter", kind: "store_credit", amount: 64000 };
+    expect(narrateExchange(request, reply, { style: "speakers" })).toEqual([
+      expect.stringMatching(/^Proxy: reversal request for HTL-ABC123/),
+      "Hotel: offering store credit $640.00",
+    ]);
+    expect(narrateExchange(request, reply, { style: "speakers", merchant: "Harborview" })[1]).toBe("Harborview: offering store credit $640.00");
+    expect(narrateExchange(request, reply, { style: "speakers", color: true })[0]).toContain("\u001b[36m");
+  });
+
   it("keeps merchant text to one short line with no control characters, so it cannot mess up a terminal", () => {
     expect(oneLine("a\u001b[31mred\u0007\n\nline   two")).not.toMatch(/[\u0000-\u001f]/);
     expect(oneLine("x".repeat(500)).length).toBe(140);

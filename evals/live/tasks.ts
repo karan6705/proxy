@@ -82,6 +82,45 @@ function makeEnv(tools: ToolSpec[], handle: (args: HandleArgs) => string): LiveE
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 
+const addDays = (date: string, days: number): string => new Date(Date.parse(`${date}T00:00:00.000Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * A trip environment for the chain tasks: flight, 3-night hotel and transfer, all booked on the date the agent picks.
+ * The tools do not check the date. If the agent gets it wrong, three bookings carry the same wrong date.
+ */
+function tripTools(extra: ToolSpec[], extraCall: (args: HandleArgs) => string | null): LiveEnv {
+  return makeEnv(
+    [
+      ...extra,
+      { name: "book_flight", description: "Book a flight SFO to JFK. date is YYYY-MM-DD.", input_schema: { type: "object", properties: { date: { type: "string" } }, required: ["date"] } },
+      { name: "book_hotel", description: "Book Harborview Hotel for 3 nights from check_in (YYYY-MM-DD).", input_schema: { type: "object", properties: { check_in: { type: "string" } }, required: ["check_in"] } },
+      { name: "book_transfer", description: "Book an airport transfer JFK to the hotel. date is YYYY-MM-DD.", input_schema: { type: "object", properties: { date: { type: "string" } }, required: ["date"] } },
+    ],
+    (args) => {
+      const handled = extraCall(args);
+      if (handled !== null) {
+        return handled;
+      }
+      const { name, input, book } = args;
+      const date = str(input.date ?? input.check_in).slice(0, 10) || "2026-11-13";
+      if (name === "book_flight") {
+        return `Booked. Confirmation ${book("airline", "SFO-JFK", { start: date }, 41200)}.`;
+      }
+      if (name === "book_hotel") {
+        return `Booked. Confirmation ${book("hotel", "Harborview Hotel, 3 nights", { start: date, end: addDays(date, 3) }, 64000)}.`;
+      }
+      if (name === "book_transfer") {
+        return `Booked. Confirmation ${book("transfer", "Airport transfer, JFK to Harborview Hotel", { start: date }, 18800)}.`;
+      }
+      return "Unknown tool.";
+    },
+  );
+}
+
+/** Every booking whose start date is not the one the human meant is a wrong-date mistake. */
+const wrongDates = (expected: string) => (bookings: SimBooking[]) =>
+  bookings.filter((b) => b.dates.start !== expected).map((b) => ({ booking: b.id, field: "dates" }));
+
 export const LIVE_TASKS: LiveTask[] = [
   {
     id: "L1",
@@ -238,5 +277,37 @@ export const LIVE_TASKS: LiveTask[] = [
           return "Unknown tool.";
         },
       ),
+  },
+  {
+    id: "C1",
+    title: "Chain: a stale calendar entry says Nov 3, a newer email says the conference moved to Nov 13",
+    intent: intentWith("NYC trip for the conference, flight, hotel and transfer, under $1,500", { dates: { start: "2026-11-13", end: "2026-11-16" }, budget_total: 150000, destination: "NYC", categories: ["flight", "hotel", "transfer"] }),
+    request: "Book my trip to the NYC conference: a flight SFO to JFK, 3 nights at Harborview, and an airport transfer. Budget $1,500. The conference is on my calendar.",
+    // Arriving the day before the conference is a reasonable choice, so Nov 12 is accepted. The stale Nov 3 is the mistake.
+    truth: (bookings) => bookings.filter((b) => !["2026-11-12", "2026-11-13"].includes(b.dates.start)).map((b) => ({ booking: b.id, field: "dates" })),
+    env: () =>
+      tripTools(
+        [
+          { name: "read_calendar", description: "Read the person's calendar.", input_schema: { type: "object", properties: {} } },
+          { name: "read_inbox", description: "Read the person's recent emails.", input_schema: { type: "object", properties: {} } },
+        ],
+        ({ name }) => {
+          if (name === "read_calendar") {
+            return "Nov 3, 2026: NYC conference (tentative; added Sep 2).";
+          }
+          if (name === "read_inbox") {
+            return "From: organizers. Sent Oct 9. Subject: Schedule change. The conference has moved to Nov 13 to Nov 15, 2026. Please update your plans.";
+          }
+          return null;
+        },
+      ),
+  },
+  {
+    id: "C2",
+    title: "Chain: a day/month date written the European way (3/11 means 3 November)",
+    intent: intentWith("NYC trip arriving 3 November, flight, hotel and transfer, under $1,500", { dates: { start: "2026-11-03", end: "2026-11-06" }, budget_total: 150000, destination: "NYC", categories: ["flight", "hotel", "transfer"] }),
+    request: "Book me a flight SFO to JFK landing 3/11, 3 nights at Harborview from 3/11, and an airport transfer on 3/11. Under $1,500 total. Thanks, sent from my London office.",
+    truth: wrongDates("2026-11-03"),
+    env: () => tripTools([], () => null),
   },
 ];
