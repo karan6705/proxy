@@ -16,6 +16,8 @@ import { createStandInInkbox } from "./standin-inkbox.js";
 
 /** The agent's day starts a week before the trip, so the flight is free to cancel under the 24-hour rule. */
 const SANDBOX_START = "2026-10-25T14:00:00.000Z";
+/** The store story's day: the return label it gets is good until Oct 24. */
+const STORE_START = "2026-10-10T15:00:00.000Z";
 const slug = (ref: string) => ref.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 export interface SandboxResult {
@@ -32,8 +34,8 @@ export interface SandboxLookup {
   chains(): Promise<Chain[]>;
 }
 
-/** The stories a sandbox can run: trip is try_proxy_demo's story; ambiguous and plan are /web/show's other two. */
-export const SCENARIOS = ["trip", "ambiguous", "plan"] as const;
+/** The stories a sandbox can run: trip is try_proxy_demo's story; ambiguous, plan and store are /web/show's others. */
+export const SCENARIOS = ["trip", "ambiguous", "plan", "store"] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 export interface Sandboxes extends SandboxLookup {
@@ -60,7 +62,7 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
   const byChain = (chain_id: string) => [...runs.values()].find((e) => chain_id.includes(`_${e.task_id}_`) || chain_id.endsWith(`_${e.task_id}`));
 
   async function story(task_id: string, scenario: Scenario): Promise<SandboxResult> {
-    const clock: SimulatedClock = createSimulatedClock(SANDBOX_START);
+    const clock: SimulatedClock = createSimulatedClock(scenario === "store" ? STORE_START : SANDBOX_START);
     const runtime = createRuntime(clock, DEFAULT_PARAMS, DEFAULT_PARAMS.DEFAULT_PREFERENCES, {
       store: createMemoryStore(),
       inkbox: createStandInInkbox(),
@@ -85,7 +87,7 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
     const tools = createToolHandlers(() => p);
 
     // The agent's bookings: each confirmation reaches Proxy as the merchant's email would.
-    const book = async (task_email: string, merchant_id: "airline" | "hotel" | "transfer" | "host" | "saas", item: string, amount: number, category: Action["category"], dates?: Action["dates"]) => {
+    const book = async (task_email: string, merchant_id: "airline" | "hotel" | "transfer" | "host" | "saas" | "northwind", item: string, amount: number, category: Action["category"], dates?: Action["dates"]) => {
       const b = await runtime.merchants.book({ merchant_id, task_id, task_email, item, ...(dates ? { dates } : {}), amount, booked_at: clock.now(), defer_confirmation: true });
       const action: Action = {
         action_id: `act_${task_id}_${slug(b.ref)}`,
@@ -183,6 +185,33 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
         `The agent signed up for Acme Cloud's annual plan (${money(118_800)}) instead of monthly and said it was done. Proxy flagged the billing term and alerted the human, who replied UNDO ALL. ` +
         `Proxy emailed Acme Cloud billing, which cancelled and refunded it: ${money(r.recovered)} of ${money(r.total)} is back, confirmed on simulated payments. ` +
         (r.finished ? "The agent then re-subscribed on the monthly plan." : "The run did not finish in time; call get_chain to see where it stands.");
+      return { task_id, chain_id: chain.chain_id, summary, finished: r.finished };
+    }
+
+    if (scenario === "store") {
+      // The agent orders a USB-A 20W charger instead of the USB-C 65W one, says it's done and leaves. Proxy flags the
+      // item, the (simulated) human replies UNDO ALL, Northwind's support agent offers store credit and then points to
+      // its return form, Proxy fills it in, the label is used, the carrier scans it, and the refund is verified.
+      const logged = (await tools.log_intent({
+        goal: "USB-C 65W charger for a MacBook, under $60",
+        constraints: { categories: ["store"], budget_total: 6_000, must_haves: ["item:USB-C 65W charger"] },
+        original_request: "Order a USB-C 65W charger for my MacBook, under $60.",
+        idempotency_key: "sandbox",
+      })).structuredContent;
+      if (!logged.ok) throw new Error("sandbox log_intent failed");
+      await book(logged.task_email, "northwind", "USB-A 20W charger", 4_500, "store");
+      await tools.review({ task_id });
+      p.deps.sessions.end(task_id);
+      clock.advance(10 * 60_000);
+      await p.alertChains(task_id);
+      const chain = await biggestChain();
+      const r = await undoAll(chain);
+      const summary =
+        SIMULATED +
+        `The agent ordered a USB-A 20W charger (${money(4_500)}) from Northwind Market instead of the USB-C 65W one and said it was done. Proxy flagged the item and alerted the human, who replied UNDO ALL. ` +
+        "Northwind's support agent offered store credit; Proxy declined under the human's rule, and the agent pointed to its return form. Proxy filled it in, got an RMA and a label, and the (simulated) carrier scanned the drop-off. " +
+        `${money(r.recovered)} of ${money(r.total)} is back, confirmed on simulated payments. ` +
+        (r.finished ? "The agent then ordered the USB-C 65W charger." : "The run did not finish in time; call get_chain to see where it stands.");
       return { task_id, chain_id: chain.chain_id, summary, finished: r.finished };
     }
 

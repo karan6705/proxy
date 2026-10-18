@@ -41,6 +41,7 @@ export function atRisk(atRiskCents: Cents, totalCents: Cents): string {
 export function whatWentWrong(mismatch: Mismatch | undefined): string {
   if (!mismatch) return "made a mistake";
   if (mismatch.field === "term") return `signed up for the ${String(mismatch.actual)} plan, not ${String(mismatch.expected)}`;
+  if (mismatch.field === "item") return `ordered the wrong item (${String(mismatch.actual)}, not ${String(mismatch.expected)})`;
   const field = mismatch.field === "dates" ? "dates" : mismatch.field;
   return `used the wrong ${field} (${humanDate(mismatch.actual)}, not ${humanDate(mismatch.expected)})`;
 }
@@ -221,6 +222,9 @@ export function pushBackKind(ctx: Pick<ProxyLineContext, "lastCounter" | "minPct
 export function proxyLine(m: ProxyProtocolMessage, ctx: ProxyLineContext): string {
   const offerPct = ctx.lastCounter ? pct(ctx.lastCounter.amount, ctx.amount) : 0;
   if (m.type === "request_reversal") {
+    if (ctx.mismatch?.field === "item") {
+      return `Proxy: our agent ordered the wrong item (${String(ctx.mismatch.actual)}, not ${String(ctx.mismatch.expected)}), and we caught it right away. Please cancel ${ctx.ref ?? "the order"} and refund the full ${money(ctx.amount)}. Attached: the original request, your receipt and the timeline.`;
+    }
     const why = ctx.mismatch ? ` for the wrong ${ctx.mismatch.field} (${humanDate(ctx.mismatch.actual)}, not ${humanDate(ctx.mismatch.expected)})` : " by mistake";
     return `Proxy: our agent booked ${ctx.summary}${why}, and we caught it within hours. Please cancel ${ctx.ref ?? "it"} and refund the full ${money(ctx.amount)}. Attached: the original request, your receipt and the timeline.`;
   }

@@ -3,7 +3,7 @@
 // and merchant free text is never copied in (only typed protocol fields).
 import type { TaskId, Timestamp } from "../types.js";
 
-export type FeedActor = "agent" | "proxy" | "human" | "hotel_agent" | "transfer_support" | "host" | "airline" | "stripe";
+export type FeedActor = "agent" | "proxy" | "human" | "hotel_agent" | "transfer_support" | "host" | "airline" | "stripe" | "store" | "carrier";
 
 export type FeedKind =
   | "intent"
@@ -19,7 +19,11 @@ export type FeedKind =
   | "email_in"
   | "stripe_refund"
   | "chain"
-  | "redo";
+  | "redo"
+  /** A merchant's return form: opened, each field Proxy filled in, submitted. */
+  | "form_field"
+  | "return_label"
+  | "carrier_scan";
 
 export interface FeedEntry {
   /** Order of arrival, which is time order. */
