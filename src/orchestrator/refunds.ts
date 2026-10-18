@@ -5,8 +5,9 @@
 //   because Stripe forgets idempotency keys after 24 hours.
 import type { Action, ActionId, Cents, Chain, Payments } from "../types.js";
 
-export function refundKey(action_id: ActionId): string {
-  return `refund:${action_id}`;
+/** One key per action and charge: a demo reset can reuse an action id, but never with the same charge. */
+export function refundKey(action_id: ActionId, charge_id: string): string {
+  return `refund:${action_id}:${charge_id}`;
 }
 
 export type RefundOnceResult =
@@ -43,7 +44,7 @@ export async function refundOnce(
     };
   }
 
-  const { refund_id } = await payments.refund(charge_id, amount, refundKey(action.action_id));
+  const { refund_id } = await payments.refund(charge_id, amount, refundKey(action.action_id, charge_id));
   const after = await payments.verifyRefund(charge_id, amount);
   return {
     status: "refunded",
