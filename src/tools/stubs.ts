@@ -18,6 +18,11 @@ export const DEMO_CHAIN_ID = "chain_demo";
 
 /** Seeded demo time on the simulated clock; the tightest window closes 3h 40m later. */
 export const DEMO_NOW = "2026-11-01T14:00:00.000Z";
+/**
+ * Demo: when the agent's session ends, the simulated clock jumps here, so the late confirmations arrive close to the
+ * hotel and transfer deadlines (Nov 2, 00:00). The alert a few seconds later reads "Reversible for 3h 40m".
+ */
+export const DEMO_LATE_AT = "2026-11-01T20:19:15.000Z";
 const DEMO_WINDOW_ENDS = "2026-11-01T17:40:00.000Z";
 
 export const demoActions: ChainActionView[] = [

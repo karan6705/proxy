@@ -29,8 +29,10 @@ import type {
   Store,
 } from "../types.js";
 import { expectedRefund, refundOnce } from "./refunds.js";
+import { humanDate, type AlreadyUndone } from "./copy.js";
 import { runSelfServeRoute } from "./routes/self-serve.js";
-import { chainSummary, correctionStep, deniedStep, nextOption, noAnswerYet, refundedStep } from "./copy.js";
+import { chainSummary, correctionStep, deniedStep, merchantLine, nextOption, noAnswerYet, proxyLine, refundedStep } from "./copy.js";
+import type { FeedActor, FeedEntry } from "./feed.js";
 
 /** What a support desk answers: whether it approved and the refund it agreed. */
 export interface SupportAnswer {
@@ -61,6 +63,10 @@ export interface UndoDeps {
   /** Address support emails are sent from. */
   proxyEmail: string;
   isFrozen(): boolean;
+  /** Adds a line to the demo feed. */
+  note?(entry: Omit<FeedEntry, "seq" | "at"> & { at?: string }): void;
+  /** Called once a chain is reversed and the redo is handed back. */
+  onReversed?(chain_id: ChainId): Promise<void>;
   /** Runs fn alone for this chain, so concurrent steps don't overwrite each other's chain updates. */
   lockChain<T>(chain_id: ChainId, fn: () => Promise<T>): Promise<T>;
   textHuman(chain_id: ChainId, kind: "chain_opened" | "reminder" | "progress" | "result" | "too_late", body: string): Promise<void>;
@@ -90,8 +96,30 @@ const DONE_STATES = new Set<Action["state"]>(["verified", "accepted", "kept", "f
 const WAITING = new Set<NegotiationState["state"]>(["requested", "countered", "pushed_back", "accepted"]);
 const IN_MARK = /\[in:([^|\]]+)\|[^\]]*\]$/;
 
+/** Actions in the chain the agent refunded itself during its session (its own self-serve undo). */
+export function undoneByAgent(chain: Pick<Chain, "action_ids" | "steps">, actions: Action[]): AlreadyUndone[] {
+  return actions
+    .filter((a) => chain.action_ids.includes(a.action_id) && a.state === "verified")
+    .filter((a) => chain.steps.some((s) => s.action_id === a.action_id && s.message.startsWith("Self-undo requested by the agent")))
+    .map((a) => ({ action: a, amount: a.amount }));
+}
+
+/** Who speaks for a merchant in the feed. */
+export function actorFor(merchant: MerchantId): FeedActor {
+  return merchant === "hotel" ? "hotel_agent" : merchant === "transfer" ? "transfer_support" : merchant === "host" ? "host" : merchant === "airline" ? "airline" : "proxy";
+}
+
 export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   const { store, logic, clock, payments, merchants } = deps;
+  const note = (chain: Pick<Chain, "task_id" | "chain_id">, actor: FeedActor, kind: FeedEntry["kind"], text: string, data: FeedEntry["data"] = {}) =>
+    deps.note?.({ task_id: chain.task_id, chain_id: chain.chain_id, actor, kind, text, data });
+  const stripeNote = (chain: Chain, action: Action, refunded: Cents, ref: string | null) =>
+    note(chain, "stripe", "stripe_refund", `Stripe: ${money(refunded)} refunded on the ${merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, {
+      action_id: action.action_id,
+      amount: refunded,
+      of: action.amount,
+      refund_id: ref,
+    });
   const negotiations = new Map<string, { state: NegotiationState; merchant: MerchantId; chain_id: ChainId; action: Action }>();
   const queues = new Map<string, Promise<void>>();
   const serial = <T>(key: string, fn: () => Promise<T>): Promise<T> => {
@@ -160,6 +188,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     }
     await setState(action, "verified");
     await step(chain, action, route, "succeeded", `${note}; refunded ${money(agreed)}, verified in Stripe`, { stripe_ref: ref });
+    stripeNote(chain, action, r.refunded_amount, ref);
     await deps.textHuman(chain.chain_id, "progress", refundedStep(action, r.refunded_amount));
     return "verified";
   }
@@ -186,19 +215,26 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
         })),
         DATE_OF(intent),
         untouched,
+        undoneByAgent(chain, actions),
       );
       // Partial: some items need the human or weren't picked. Otherwise the agent gets the corrected intent (redo).
-      await store.upsertChain({ ...chain, state: bad.length || untouched.length ? "partial" : "redo_requested" });
-      return summary;
+      const reversed = !bad.length && !untouched.length;
+      await store.upsertChain({ ...chain, state: reversed ? "redo_requested" : "partial" });
+      return { summary, reversed };
     });
-    if (outcome) await deps.textHuman(chain_id, "result", outcome);
+    if (!outcome) return;
+    await deps.textHuman(chain_id, "result", outcome.summary);
+    if (outcome.reversed) await deps.onReversed?.(chain_id);
   }
 
   // --- routes ---
 
   async function runSelfServe(chain: Chain, action: Action) {
     const r = await runSelfServeRoute({ merchants, payments, store, clock }, chain, action);
-    if (r.action.state === "verified") await deps.textHuman(chain.chain_id, "progress", refundedStep(action, action.amount));
+    if (r.action.state === "verified") {
+      stripeNote(chain, action, action.amount, r.step.stripe_ref);
+      await deps.textHuman(chain.chain_id, "progress", refundedStep(action, action.amount));
+    }
   }
 
   function requestFor(chain: Chain, intent: Intent, action: Action, state: NegotiationState): RequestReversal {
@@ -212,7 +248,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       sent_at,
       order: { merchant: action.merchant, ref: action.ref, amount: action.amount },
       intent: { goal: intent.goal, constraints: intent.constraints },
-      what_went_wrong: `Booked ${action.summary}; the task needed ${JSON.stringify(intent.constraints.dates ?? {})}.`,
+      what_went_wrong: `booked for ${action.dates?.start ? humanDate(action.dates.start) : "the wrong dates"}; the trip is ${intent.constraints.dates ? `${humanDate(intent.constraints.dates.start)}${intent.constraints.dates.end ? ` to ${humanDate(intent.constraints.dates.end)}` : ""}` : "on other dates"}`,
       deadline: state.deadline,
       evidence: {
         intent,
@@ -268,6 +304,20 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     if (!neg) return;
     lastSent.set(negotiation_id, message);
     armTimer(negotiation_id);
+    const intent = await store.getIntent(neg.action.task_id);
+    note(
+      { task_id: neg.action.task_id, chain_id: neg.chain_id },
+      "proxy",
+      "protocol_out",
+      `${proxyLine(message, {
+        summary: `this ${neg.action.category}`,
+        amount: neg.action.amount,
+        lastCounter: neg.state.last_counter,
+        minPct: intent?.preferences.min_partial_refund_pct ?? 0,
+        mismatch: message.type === "request_reversal" ? message.evidence.mismatch : undefined,
+      })}${via === "email" ? " (sent again by email)" : ""}`,
+      { type: message.type, round: message.round, negotiation_id, via, to: merchants.get(neg.merchant)?.agent_identity ?? neg.merchant },
+    );
     // Never awaited: a merchant agent that is slow or hangs must not hold up the other steps. The timer
     // above follows up if no answer comes.
     deps.transport
@@ -331,7 +381,12 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       await deps.logEvent({ kind: "email_out", chain_id: chain.chain_id, action_id: action.action_id, outcome: `support_request_not_sent:${(e as Error).name}` });
     }
     await step(chain, action, "email_support", "pending", `Emailed ${info.support_email} asking for a full refund`);
+    note(chain, "proxy", "email_out", `Proxy emailed ${info.name} support: please cancel ${action.ref} and refund ${money(action.amount)}.`, { to: info.support_email, ref: action.ref, amount: action.amount });
     const answer = await merchants.supportEmail(action.merchant, { from: deps.proxyEmail, subject, body }, clock.now());
+    note(chain, actorFor(action.merchant), "email_in", answer.approved && answer.refund_amount > 0 ? `${info.name} support: refund approved, ${money(answer.refund_amount)}.` : `${info.name} support: refund declined.`, {
+      approved: answer.approved,
+      amount: answer.refund_amount,
+    });
     if (!answer.approved || answer.refund_amount <= 0) {
       await setState(action, "denied");
       await step(chain, action, "email_support", "failed", "The support desk did not approve a refund");
@@ -356,7 +411,9 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     } catch (e) {
       await deps.logEvent({ kind: "email_out", chain_id: chain.chain_id, action_id: action.action_id, outcome: `correction_not_sent:${(e as Error).name}` });
     }
+    note(chain, "proxy", "email_out", `Proxy emailed ${info.name}: the right dates are ${dates ? `${humanDate(dates.start)}${dates.end ? ` to ${humanDate(dates.end)}` : ""}` : "in the task"}.`, { to: info.support_email, ref: action.ref });
     const answer = await merchants.supportEmail(action.merchant, { from: deps.proxyEmail, subject, body }, clock.now());
+    note(chain, actorFor(action.merchant), "email_in", answer.approved ? `${info.name}: thanks, plans updated.` : `${info.name}: didn't confirm the correction.`, { approved: answer.approved });
     if (!answer.approved) {
       await setState(action, "failed");
       await step(chain, action, "correction", "failed", "The correction was not acknowledged");
@@ -458,6 +515,13 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
       outcome: "pending",
       stripe_ref: null,
       at: clock.now(),
+    });
+    note(chain, actorFor(neg.merchant), "protocol_in", merchantLine(`${merchants.get(neg.merchant)?.name ?? neg.merchant} agent`, message, neg.state.order_amount), {
+      type: message.type,
+      round: message.round,
+      negotiation_id: message.negotiation_id,
+      kind: message.type === "counter" ? message.kind : null,
+      amount: message.type === "counter" ? message.amount : message.type === "accept" ? message.refund_amount : null,
     });
     await applyNegotiation(neg, message);
   }

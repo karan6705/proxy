@@ -16,7 +16,7 @@ import {
 import { createPayments, createTestCharge } from "../stripe/index.js";
 import { createWebRoutes } from "../web/index.js";
 import type { EventReader } from "../db/index.js";
-import type { Action, Clock, Inkbox, OrchestratorHooks, Params, Payments, Preferences, RouteHandler, Store, TaskId } from "../types.js";
+import type { Action, Chain, Clock, Inkbox, OrchestratorHooks, Params, Payments, Preferences, RouteHandler, Store, TaskId } from "../types.js";
 import { createFakePayments } from "./fakes.js";
 import { createProxy, type DemoTask, type Proxy } from "./proxy.js";
 import { createSessions } from "./sessions.js";
@@ -86,6 +86,9 @@ function repointDemo(store: Store, hooks: OrchestratorHooks, demo: DemoTask): { 
 function withKnownCharges(payments: Payments, known: ReadonlyMap<string, string>): Payments {
   return { ...payments, async findChargeForAction(action) { return known.get(action.action_id) ?? payments.findChargeForAction(action); } };
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const shortDate = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${Number(iso.slice(8, 10))}`;
 
 export function createRuntime(clock: Clock, params: Params, defaultPreferences: Preferences, overrides: RuntimeOverrides = {}): Runtime {
   const env = overrides.env ?? process.env;
@@ -196,8 +199,33 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
     transport,
     proxyEmail: `${env.INKBOX_PROXY_HANDLE?.trim() || "proxy-agent"}@inkboxmail.com`,
     alertSettleMs: env.PROXY_ALERT_SETTLE_MS ? Number(env.PROXY_ALERT_SETTLE_MS) : undefined,
+    // The demo agent rebooks with the corrected intent once the chain is reversed, so the redo is visible.
+    onRedoRequested: demoOn && env.PROXY_DEMO_REDO !== "0" ? (chain) => demoRedo(chain) : undefined,
   });
   proxyRef = proxy;
+
+  /**
+   * Demo only: what the buying agent does with the redo instruction. It rebooks each reversed booking for the
+   * intent's dates (new Stripe test charges); the confirmations arrive like any other and Proxy checks them.
+   */
+  async function demoRedo(chain: Chain) {
+    const intent = await store.getIntent(chain.task_id);
+    const dates = intent?.constraints.dates;
+    if (!intent || !dates) return;
+    const old = (await Promise.all(chain.action_ids.map((id) => store.getAction(id)))).filter((a): a is Action => a !== null);
+    const seen = new Set<string>();
+    const todo = old.filter((a) => a.category !== "message" && a.state === "verified" && !seen.has(a.category) && seen.add(a.category));
+    const run = async () => {
+      for (const a of todo) {
+        await new Promise((r) => setTimeout(r, Number(env.PROXY_DEMO_REDO_GAP_MS ?? 1500)));
+        const from = a.dates?.start ? shortDate(a.dates.start) : null;
+        const item = from ? a.summary.replace(new RegExp(`\\b${from}\\b`), shortDate(dates.start)) : a.summary;
+        const range = a.category === "hotel" ? { start: dates.start, ...(dates.end ? { end: dates.end } : {}) } : { start: dates.start };
+        await merchants.book({ merchant_id: a.merchant, task_id: intent.task_id, task_email: intent.task_email, item, dates: range, amount: a.amount, booked_at: clock.now() });
+      }
+    };
+    run().catch((e) => console.error("[demo-redo] failed:", e instanceof Error ? e.message : e));
+  }
 
   const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
   const captureSide = proxy.deps.demo ? repointDemo(store, proxy, proxy.deps.demo) : { store, hooks: proxy };
@@ -209,7 +237,11 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   });
   // Every message to the human goes on the alert channel and from Proxy's identity, whatever channel the
   // reply came in on (the demo page's buttons arrive as "sms").
-  const sendToHuman = async (body: string) => (humanPhone ? inkbox.sendText(alertChannel, humanNumber, body) : { message_id: "not_sent" });
+  const sendToHuman = async (body: string) => {
+    const task = proxy.deps.demo?.current ?? (await proxy.mostRecentlyAlertedOpenChain())?.task_id;
+    if (task) proxy.note({ task_id: task, chain_id: null, actor: "proxy", kind: "text_out", text: body, data: { channel: alertChannel } });
+    return humanPhone ? inkbox.sendText(alertChannel, humanNumber, body) : { message_id: "not_sent" };
+  };
   const channel = createHumanChannel({
     store,
     hooks: proxy,

@@ -18,7 +18,7 @@ describe("tool error boundary", () => {
       structuredContent: {
         ok: false,
         code: "internal",
-        message: "The tool could not complete the request.",
+        message: "The tool could not complete the request. Don't retry in a loop: tell the human Proxy hit an error, and give them the task_id or chain_id.",
         retryable: false,
         next_action: "stop",
       },
