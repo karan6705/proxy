@@ -114,7 +114,7 @@ describe("stage page", () => {
     expect(STAGE_HTML).toContain("font-size:clamp(12px,min(100vw/110,100vh/63.5),22px)");
     expect(STAGE_HTML).toContain("@media (max-width:1099px)");
     expect(STAGE_HTML).not.toMatch(/innerHTML|insertAdjacentHTML|document\.write|outerHTML/);
-    for (const label of ["The mistake", "Proxy", "Agent to agent", "Recovered", "Booked by the agent", "Rebooked for", "Refunded by your agent", "Mistake detected", "Human alerted", "Human replied", "Negotiating", "Refunds confirmed"]) expect(STAGE_HTML).toContain(label);
+    for (const label of ["The mistake", "Proxy", "Agent to agent", "Recovered", "Booked by the agent", "Rebooked for", "Refunded by your agent", "Confirmed in Stripe (simulated)", "Mistake detected", "Human alerted", "Human replied", "Negotiating", "Refunds confirmed"]) expect(STAGE_HTML).toContain(label);
   });
 
   it("ships a script that parses", () => {
