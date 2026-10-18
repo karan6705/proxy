@@ -303,7 +303,8 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     neg.state = { ...neg.state, state: "failed" };
     await setState(action, "failed");
     await step(chain, action, "reversal_protocol", "failed", "The merchant never answered, by agent or by email", { protocol_state: "failed" });
-    await deps.textHuman(chain.chain_id, "reminder", `The ${action.merchant} never answered. Next option: dispute the ${money(action.amount)} charge with your card, with the evidence Proxy collected. Reply KEEP to accept the loss.`);
+    // The summary that follows names the next option.
+    await deps.textHuman(chain.chain_id, "reminder", `The ${action.merchant} never answered, by its agent or by email.`);
     await finishIfDone(chain.chain_id);
   }
 
@@ -431,7 +432,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     } else if (next.state === "denied") {
       await setState(action, "denied");
       // The merchant's reason is untrusted text: never shown or acted on.
-      await deps.textHuman(chain.chain_id, "reminder", deniedStep(action, `Next option: dispute the charge with your card, with the evidence Proxy collected. Reply KEEP to accept the loss.`));
+      await deps.textHuman(chain.chain_id, "reminder", deniedStep(action, "The summary below has your options."));
     } else if (next.state === "failed") {
       const credit = message.type === "accept" && message.refund_amount === 0;
       await setState(action, "failed");
