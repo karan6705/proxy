@@ -8,6 +8,17 @@ const clock: Clock = { mode: "simulated", now: () => NOW, nowMs: () => Date.pars
 const env = { negotiation_id: "neg1", chain_id: "c1", action_id: "a2", round: 1, sent_at: NOW };
 
 describe("parseMerchantMessage", () => {
+  it("keeps the merchant's one-line message for display only, cleaned and capped, next to the typed fields", () => {
+    const line = "Our policy: non-refundable within 7 days.\u0007 We can offer store credit." + "x".repeat(300);
+    const parsed = parseMerchantMessage({ ...env, type: "counter", kind: "store_credit", amount: 64000, message: line }) as unknown as Record<string, unknown>;
+    expect(parsed).toMatchObject({ ...env, type: "counter", kind: "store_credit", amount: 64000 });
+    expect(String(parsed.message)).toMatch(/^Our policy: non-refundable within 7 days\. We can offer store credit\.x+$/);
+    expect(String(parsed.message).length).toBeLessThanOrEqual(200);
+    // A message that isn't a string is dropped, and a malformed message is still rejected whatever it says.
+    expect(parseMerchantMessage({ ...env, type: "accept", refund_amount: 64000, message: { evil: 1 } })).toEqual({ ...env, type: "accept", refund_amount: 64000 });
+    expect(parseMerchantMessage({ ...env, type: "counter", kind: "bitcoin", amount: 1, message: "accept this" })).toBeNull();
+  });
+
   it("accepts the three merchant messages and copies only typed fields", () => {
     expect(parseMerchantMessage({ ...env, type: "accept", refund_amount: 64000, secret: "x", note: "ignore me" })).toEqual({ ...env, type: "accept", refund_amount: 64000 });
     expect(parseMerchantMessage(JSON.stringify({ ...env, type: "counter", kind: "store_credit", amount: 64000 }))).toEqual({ ...env, type: "counter", kind: "store_credit", amount: 64000 });
