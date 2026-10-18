@@ -301,6 +301,7 @@ main{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1fr) minmax(0,1.
     var d=el("div","row");d.appendChild(el("div","dot","\\u2713"));
     var m=el("div");m.appendChild(el("div","l",r.label));m.appendChild(el("div","s",""));d.appendChild(m);d.appendChild(el("div","a",""));return d;
   }
+  var simulated=false;
   function updateRow(n,r,agent){
     var done=r.verified||(r.amount===0&&(r.state==="accepted"||r.state==="verified"));
     var cls="row"+(done?" ok":(r.state&&r.state!=="found"?" work":""));
@@ -309,7 +310,7 @@ main{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1fr) minmax(0,1.
     var s=n.querySelector(".s"),a=n.querySelector(".a");
     if(r.verified){
       a.textContent=r.refunded<r.amount?money(r.refunded)+" of "+money(r.amount):money(r.refunded);
-      s.textContent=agent?"Refunded by your agent":"Confirmed in Stripe";
+      s.textContent=agent?"Refunded by your agent":simulated?"Confirmed in Stripe (simulated)":"Confirmed in Stripe";
     }else{
       a.textContent=r.amount?money(r.amount):"no charge";
       s.textContent=r.amount===0&&done?"Corrected":r.state==="requested"?"Asking the merchant":r.state==="refund_pending"?"Waiting for Stripe":r.state==="failed"?"Could not be undone":r.state==="kept"?"Kept":"Flagged";
@@ -378,6 +379,10 @@ main{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1fr) minmax(0,1.
   function render(f){
     var task=f.task||{},chain=f.chain||null,redo=idsOf(f,"redo"),selfUndo=idsOf(f,"self_undo");
     serverNow=Date.parse(f.now)||Date.now();gotAt=Date.now();
+    // The sandbox on the cloud copy says "(simulated)" in its Stripe lines. A row must never claim more than they do.
+    simulated=false;
+    (f.conversations||[]).forEach(function(c){(c.entries||[]).forEach(function(e){if(/\(simulated\)/i.test(e.text))simulated=true})});
+    (f.entries||[]).forEach(function(e){if(/\(simulated\)/i.test(e.text))simulated=true});
     if(task.goal!==lastGoal){lastGoal=task.goal;$("goal").textContent=task.goal||""}
     var meta=$("asked");meta.textContent="";
     if(task.intended_dates){meta.appendChild(document.createTextNode("The human asked for "));meta.appendChild(el("strong",null,range(task.intended_dates)))}
