@@ -2,7 +2,7 @@
 
 Agents book, buy and email on our behalf, and sometimes they get it wrong. Proxy is an MCP server that sees every receipt and Stripe charge a task produces, catches what doesn't match what the human asked for, and undoes the whole chain: merchant agent to merchant agent, before the refund window closes. Money only counts once Stripe shows it.
 
-Built for YC "Make Something Agents Want" (tracks: Manufact, Inkbox). The repo folder is still called `tripwire`.
+Built for YC "Make Something Agents Want" (tracks: Manufact, Inkbox). Source: https://github.com/karan6705/proxy (the folder is still called `tripwire` in places).
 
 ## Try it in a minute
 
