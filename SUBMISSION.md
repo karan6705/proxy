@@ -16,7 +16,7 @@ The labels are word for word from the form. The form has no Inkbox field, so the
 | MCP server URL | yes | `https://bold-zero-0m4lf.run.mcp-use.com/mcp` (deployed on Manufact Cloud, verified over MCP: six tools). It is a dry-run copy with an in-memory store, which is fine for judges to connect to. Do not use a tunnel URL: it changes when the laptop restarts. |
 | Manufact organization ID | yes | `9833fb6a-873c-4b80-b5a6-16c3f30ba17c`: the organization that owns the deployed server (Sarah Khadder's Projects, slug `org-3e8505eb-iovbr`). If the server is ever redeployed under a different organization, use that organization's ID instead. |
 | Demo video URL (YouTube/Loom/etc.) | yes | `<PUBLIC VIDEO LINK>`. It must show the server working in more than one MCP client (Claude Code, Codex, Cursor), and judges must be able to watch it without requesting access. Open the link in a private window before pasting. |
-| Setup instructions for judges | no | See the draft below. |
+| Setup instructions for judges | no | See the draft below. Source code (public): https://github.com/karan6705/proxy |
 | What was the biggest blocker while building your project? | no | See the draft below. |
 | What is one missing capability that would unlock your next step? | no | See the draft below. |
 | Which capabilities would you use in the next 30 days? (up to 2) | no | Suggested: "Durable state or memory across agent sessions" and "Test workflows across MCP clients and catch regressions". The team should confirm. |

@@ -20,6 +20,12 @@
 
 ## Karan
 
+### Public mirror for judges: karan6705/proxy (2026-10-18)
+- The team repo (karan6705/tripwire) stays private and is never rewritten. Judges get **https://github.com/karan6705/proxy**: the same history, `main` only (plus the `demo-v1` tag once it exists), with three phone numbers replaced everywhere in history by fictional ones (the two Inkbox lines and Karan's personal number, which were in early HANDOFF.md and test commits). Commit dates, authors and messages are unchanged.
+- **Refresh it right before submitting:** `scripts/publish-mirror.sh` (needs `git filter-repo` and `gh`). It clones main fresh into a temp folder, redacts, runs `scripts/secret-scan.py` on the result (no push unless it is clean), checks dates, authors and messages, then force-pushes to the mirror only. `scripts/publish-mirror.sh --dry-run` does everything but the push.
+- `python3 -I scripts/secret-scan.py <repo>` scans every ref's history for keys, tokens and real-looking phone numbers (with `HUMAN_PHONE` in the environment, that number too) and prints commit, file and kind only, never a value.
+- Never put a real phone number in a file, test or log. Use 555 numbers (`+15555550100`), as the tests do.
+
 ### QA pass on the live demo (2026-10-18)
 - `npm run demo:hotel` stays up until Ctrl+C, names any missing variable, logs each answer, and picks up requests from the last 30 minutes.
 - Undo steps run side by side. A merchant agent that is slow or hangs blocks nothing: after `MERCHANT_REPLY_TIMEOUT` (60 s in the demo, `PROXY_AGENT_TIMEOUT_MS`) Proxy texts "The hotel hasn't answered, following up by email" and resends the request by email. After a second timeout it tells the human, and the summary names the next option.
