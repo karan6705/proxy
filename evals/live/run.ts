@@ -2,6 +2,9 @@
 //   LIVE_TRIALS=3        trials per task and arm (default 3)
 //   LIVE_TASKS=L1,L2     only these tasks
 //   LIVE_EVAL_MODEL=...  the agent's model (default claude-haiku-4-5-20251001)
+//   LIVE_ORIGINAL_REQUEST=1  the agent also passes the human's own words as original_request, and the server's intent
+//                        check (checkIntent) is applied in process, with the human's answer simulated as "their own words".
+//                        Results go to evals/results/intentcheck-*.json, separate from the main Layer 2 results.
 //   LIVE_MCP_URL=...     run the Proxy half over MCP against this server (its /mcp URL, demo routes on) instead of in
 //                        process. The server's own capture, compare, orchestrator and Stripe verification are then used.
 //
@@ -22,7 +25,8 @@ import { runScenario } from "../runner.js";
 import { runProxyOverMcp } from "./mcp.js";
 import type { SimBooking } from "../sim.js";
 import type { AgentRun } from "./agent.js";
-import { AGENT_MODEL, runAgent } from "./agent.js";
+import { AGENT_MODEL, WITH_ORIGINAL_REQUEST, runAgent } from "./agent.js";
+import { applyIntentCheck } from "./intent.js";
 import { LIVE_TASKS, type LiveTask } from "./tasks.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -48,6 +52,8 @@ interface Episode {
     agreed_refund_total: number;
     /** Over MCP only: what the server's chain ended as, and how many actions Stripe shows as refunded. */
     chain_state?: string | null;
+    /** With LIVE_ORIGINAL_REQUEST=1: what the intent check from the human's words said, and whether the agent passed them. */
+    intent_check?: { status: string; understood?: string; said?: string; original_request_passed: boolean };
     stripe_verified_actions?: number;
     chain_actions?: number;
     server_steps?: string[];
@@ -58,14 +64,14 @@ interface Episode {
   self_detected?: boolean;
 }
 
-function liveScenario(task: LiveTask, agent: AgentRun, bookings: SimBooking[], unseen: string[]): Scenario {
+function liveScenario(task: LiveTask, agent: AgentRun, bookings: SimBooking[], unseen: string[], logged = agent.logged_intent): Scenario {
   const last = bookings.reduce((latest, booking) => Math.max(latest, Date.parse(booking.booked_at)), 0);
   return {
     id: `live-${task.id}`,
     title: task.title,
     group: "live",
     intent: task.intent,
-    logged_intent: agent.logged_intent ?? { goal: "", constraints: {} },
+    logged_intent: logged ?? { goal: "", constraints: {} },
     assumption: "Layer 2: the bookings come from a live model.",
     bookings,
     unseen_by_agent: unseen,
@@ -93,8 +99,12 @@ async function episode(task: LiveTask, arm: Arm, trial: number): Promise<Episode
   if (bookings.length === 0) {
     return { ...base, proxy: { flagged: [], caught: 0, missed: truth, false_alarms: [], outcomes: {}, agreed_refund_total: 0 } };
   }
+  if (WITH_ORIGINAL_REQUEST && MCP_URL) {
+    throw new Error("LIVE_ORIGINAL_REQUEST is applied in process; do not combine it with LIVE_MCP_URL");
+  }
+  const intentCheck = WITH_ORIGINAL_REQUEST ? applyIntentCheck(agent.logged_intent, agent.original_request, Number(task.intent.created_at.slice(0, 4))) : null;
   const over = MCP_URL ? await runProxyOverMcp({ taskId: task.id, trial, logged: agent.logged_intent, bookings }, { mcpUrl: MCP_URL }) : null;
-  const result = over ? null : await runScenario(liveScenario(task, agent, bookings, env.unseen()), "proxy");
+  const result = over ? null : await runScenario(liveScenario(task, agent, bookings, env.unseen(), intentCheck ? intentCheck.intent : agent.logged_intent), "proxy");
   const flagged = over ? over.flagged : (result?.mismatches ?? []);
   const key = (booking: string, field: string): string => `${booking}:${field}`;
   const truthKeys = new Set(truth.map((item) => key(item.booking, item.field)));
@@ -106,6 +116,9 @@ async function episode(task: LiveTask, arm: Arm, trial: number): Promise<Episode
       caught: truth.filter((item) => flaggedKeys.has(key(item.booking, item.field))).length,
       missed: truth.filter((item) => !flaggedKeys.has(key(item.booking, item.field))),
       false_alarms: flagged.filter((item) => !truthKeys.has(key(item.action, item.field))),
+      ...(intentCheck
+        ? { intent_check: { status: intentCheck.status, understood: intentCheck.understood, said: intentCheck.said, original_request_passed: agent.original_request !== null } }
+        : {}),
       outcomes: result?.outcomes ?? {},
       agreed_refund_total: result?.agreed_refund_total ?? 0,
       ...(over ? { chain_state: over.chain_state, stripe_verified_actions: over.stripe_verified_actions, chain_actions: over.chain_actions, server_steps: over.steps } : {}),
@@ -123,7 +136,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const tasks = LIVE_TASKS.filter((task) => ONLY.length === 0 || ONLY.includes(task.id));
-  const runId = `layer2-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const runId = `${WITH_ORIGINAL_REQUEST ? "intentcheck" : "layer2"}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const episodes: Episode[] = [];
   console.log(`\n${runId}  model ${AGENT_MODEL}  ${tasks.length} tasks x 2 arms x ${TRIALS} trials\n`);
 
@@ -192,7 +205,7 @@ async function main(): Promise<void> {
   const dir = join(HERE, "..", "results");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${runId}.json`);
-  writeFileSync(file, `${JSON.stringify({ run_id: runId, layer: "live-agent", model: AGENT_MODEL, mode: MCP_URL ? "mcp" : "in_process", ...(MCP_URL ? { mcp_url_host: new URL(MCP_URL).host } : {}), summary, episodes }, null, 2)}\n`);
+  writeFileSync(file, `${JSON.stringify({ run_id: runId, layer: WITH_ORIGINAL_REQUEST ? "live-agent-intent-check" : "live-agent", intent_check: WITH_ORIGINAL_REQUEST ? "original_request, checkIntent in process, human answer simulated as their own words" : undefined, model: AGENT_MODEL, mode: MCP_URL ? "mcp" : "in_process", ...(MCP_URL ? { mcp_url_host: new URL(MCP_URL).host } : {}), summary, episodes }, null, 2)}\n`);
   console.log(`\nRaw log: ${file}`);
 }
 
