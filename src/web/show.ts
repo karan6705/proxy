@@ -154,7 +154,7 @@ footer .hint{color:var(--faint)}
 .checking:not(.done) .check-head::after{content:"";display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;background:var(--accent);animation:blink 1s infinite}
 @keyframes blink{50%{opacity:.2}}
 .tm .typed{display:block;margin-top:4px;font-size:12.5px;color:var(--muted)}
-.ladder{position:sticky;top:0;z-index:1;border-radius:14px;background:#F7F7F9;padding:10px 14px;margin-bottom:6px;box-shadow:0 6px 12px -8px rgba(29,29,31,.18)}
+.ladder{position:sticky;top:12px;z-index:2;border-radius:14px;background:#F7F7F9;padding:10px 14px;margin-bottom:6px;box-shadow:0 -14px 0 0 var(--card),0 6px 12px -8px rgba(29,29,31,.18)}
 .ladder-head{font-size:13px;font-weight:700;color:var(--muted);margin-bottom:4px}
 .rung{display:grid;grid-template-columns:92px 1fr 56px 104px;align-items:center;gap:10px;font-size:14px;padding:3px 0}
 .rung .rl{color:var(--muted)}

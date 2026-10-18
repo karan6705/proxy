@@ -100,6 +100,13 @@ export function noAnswerYet(a: Pick<Action, "category" | "merchant">): string {
   return `The ${noun(a).toLowerCase()} hasn't answered, following up by email.`;
 }
 
+/** The watchdog's text when a chain has been undoing too long: what Proxy is still waiting on. */
+export function stillWorking(open: Pick<Action, "category" | "merchant">[]): string {
+  const names = open.map((a) => `the ${noun(a).toLowerCase()}`);
+  const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
+  return `Still working on ${list}. Everything else is settled. I'll text you as soon as it's done.`;
+}
+
 export function deniedStep(a: Pick<Action, "category" | "merchant" | "amount">, next: string): string {
   return `The ${noun(a).toLowerCase()} refused to refund ${money(a.amount)}. ${next}`;
 }
