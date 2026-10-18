@@ -10,6 +10,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Arm, Intent } from "../../src/types.js";
 import type { LiveEnv, LiveTask, ToolSpec } from "./tasks.js";
 
+/** With LIVE_ORIGINAL_REQUEST=1 the agent is asked to pass the human's own words to log_intent as original_request. */
+export const WITH_ORIGINAL_REQUEST = process.env.LIVE_ORIGINAL_REQUEST === "1";
 export const AGENT_MODEL = process.env.LIVE_EVAL_MODEL?.trim() || "claude-haiku-4-5-20251001";
 const MAX_TURNS = 12;
 
@@ -27,6 +29,8 @@ export interface AgentRun {
   status: "done" | "problem" | "unclear";
   /** The intent the agent logged (proxy arm only), as it gave it. */
   logged_intent: Pick<Intent, "goal" | "constraints"> | null;
+  /** What the agent passed as original_request, when asked to (null if it did not). */
+  original_request: string | null;
   usage: Usage;
   turns: number;
   /** Every tool call the agent made, with what it saw. Raw log. */
@@ -47,6 +51,9 @@ const LOG_INTENT: ToolSpec = {
       must_haves: { type: "array", items: { type: "string" }, description: "for example item:espresso machine, term:monthly, quantity:1" },
       categories: { type: "array", items: { type: "string" }, description: "flight, hotel, transfer, saas, store, message" },
       destination: { type: "string" },
+      ...(WITH_ORIGINAL_REQUEST
+        ? { original_request: { type: "string", description: "The person's own words, copied exactly as they wrote them." } }
+        : {}),
     },
     required: ["goal"],
   },
@@ -58,7 +65,7 @@ const SYSTEM_BASE =
   "'STATUS: DONE' if everything was done as asked, or 'STATUS: PROBLEM: <what>' if something was not.";
 
 const SYSTEM_NAIVE = `${SYSTEM_BASE} Before you finish, check your own work: compare what you booked with what you were asked for.`;
-const SYSTEM_PROXY = `${SYSTEM_BASE} First call log_intent with what the person asked for. Then do the task.`;
+const SYSTEM_PROXY = `${SYSTEM_BASE} First call log_intent with what the person asked for${WITH_ORIGINAL_REQUEST ? ", and pass original_request: the person's own words, exactly as written" : ""}. Then do the task.`;
 
 function parseLoggedIntent(input: Record<string, unknown>): NonNullable<AgentRun["logged_intent"]> {
   const goal = typeof input.goal === "string" ? input.goal : "";
@@ -91,6 +98,7 @@ export async function runAgent(task: LiveTask, env: LiveEnv, arm: Arm, client = 
     final_text: "",
     status: "unclear",
     logged_intent: null,
+    original_request: null,
     usage: { input_tokens: 0, output_tokens: 0 },
     turns: 0,
     tool_calls: [],
@@ -123,6 +131,7 @@ export async function runAgent(task: LiveTask, env: LiveEnv, arm: Arm, client = 
       let result: string;
       if (use.name === "log_intent" && arm === "proxy") {
         run.logged_intent = parseLoggedIntent(input);
+        run.original_request = typeof input.original_request === "string" && input.original_request.trim() ? input.original_request : null;
         result = "Intent logged. Proxy will compare your receipts with it.";
       } else {
         result = env.call(use.name, input);

@@ -3,15 +3,8 @@
 // "$828 at risk of $1,240" once part of a chain is undone.
 import type { Action, Cents, Chain, DateRange, Intent, MerchantProtocolMessage, Mismatch, ProxyProtocolMessage } from "../types.js";
 
-/**
- * Where refunds are confirmed. "Stripe" everywhere except the offline recording (PROXY_SIMULATED_PAYMENTS=1),
- * where payments are simulated and the texts must say so.
- */
-let paymentsName = "Stripe";
-export function setPaymentsName(name: string): void {
-  paymentsName = name;
-}
-export const payments = () => paymentsName;
+/** What refunds are confirmed in: "Stripe", or "Stripe (simulated)" where payments are simulated (the sandbox, the offline recording). */
+export const DEFAULT_PAYMENTS_NAME = "Stripe";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -93,9 +86,9 @@ const NOUN: Record<Action["category"], string> = {
 export const noun = (a: Pick<Action, "category" | "merchant">) => (a.merchant === "host" ? "Host" : NOUN[a.category] ?? a.merchant);
 
 /** One step confirmed: "Flight refunded, $412, confirmed in Stripe", or "Hotel refunded, $544 of $640, confirmed in Stripe". */
-export function refundedStep(a: Pick<Action, "category" | "merchant" | "amount">, refunded: Cents): string {
+export function refundedStep(a: Pick<Action, "category" | "merchant" | "amount">, refunded: Cents, via: string = DEFAULT_PAYMENTS_NAME): string {
   const amount = refunded < a.amount ? `${money(refunded)} of ${money(a.amount)}` : money(refunded);
-  return `${noun(a)} refunded, ${amount}, confirmed in ${paymentsName}.`;
+  return `${noun(a)} refunded, ${amount}, confirmed in ${via}.`;
 }
 
 export function correctionStep(a: Pick<Action, "category" | "merchant">, dates: { start: string; end?: string } | undefined): string {
@@ -128,13 +121,14 @@ export function chainSummary(
   redoDates: { start: string; end?: string } | undefined,
   untouched: Pick<Action, "category" | "merchant">[] = [],
   already: AlreadyUndone[] = [],
+  via: string = DEFAULT_PAYMENTS_NAME,
 ): string {
   const back = lines.reduce((s, l) => s + (l.action.state === "verified" ? l.refunded : 0), 0);
   const total = lines.reduce((s, l) => s + l.action.amount, 0);
   const open = lines.filter((l) => l.still_open || !["verified", "accepted", "kept"].includes(l.action.state));
   const corrected = lines.filter((l) => l.action.state === "accepted" && l.action.amount === 0).map((l) => noun(l.action));
   const byAgent = already.length ? ` (${already.map((d) => `${noun(d.action).toLowerCase()} ${money(d.amount)} refunded by your agent`).join(", ")})` : "";
-  const parts = [`${money(back)} of ${money(total)} back, confirmed in ${paymentsName}${byAgent}.`];
+  const parts = [`${money(back)} of ${money(total)} back, confirmed in ${via}${byAgent}.`];
   if (corrected.length) parts.push(`${corrected.join(", ")} told the right dates.`);
   if (open.length) {
     parts.unshift("Partly done.");

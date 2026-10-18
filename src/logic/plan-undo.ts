@@ -11,8 +11,9 @@
 //   change / return    the window has closed on the cheap fix and only a fee fix is left. Take it only when the fee is
 //   with a fee         strictly less than the money lost by keeping (the action's amount); otherwise "keep"
 //   correct_message    route "correction", option "change", cost 0
-//   none               nothing is reversible any more: "keep", cost = the amount, route "stripe_dispute" as the
-//                      last resort the orchestrator may still try
+//                      A merchant with no agent and no support desk (the airline) cannot be asked for a fee fix, so it is
+//                      "keep" and the human changes it themselves (reversibility still gives the fee, $75 for a flight).
+//   none               nothing is reversible any more: "keep", cost = the amount, route "keep"
 //
 // Negotiation preferences (no store credit, minimum partial refund) are applied one step at a time by
 // negotiate_step, so `preferences` does not change the plan. It is in the signature because the contract has it.
@@ -25,8 +26,14 @@ import { getRule, ruleKeyForAction } from "./rules-table.js";
 /** Actions already refunded or deliberately kept need no more planning. */
 const SETTLED_STATES: ReadonlySet<ActionState> = new Set(["verified", "kept"]);
 
+/**
+ * Merchants with no agent and no support desk, so a fee fix after the free window cannot be requested by Proxy.
+ * The airline can be changed for a fee (reversibility says so), but only the human can do it.
+ */
+const NO_FEE_FIX_ROUTE: ReadonlySet<string> = new Set(["airline"]);
+
 function keep(action: Action): PlanStep {
-  return { action_id: action.action_id, route: "stripe_dispute", option: "keep", cost: action.amount, deadline: null };
+  return { action_id: action.action_id, route: "keep", option: "keep", cost: action.amount, deadline: null };
 }
 
 function stepFor(action: Action, now: Timestamp): PlanStep {
@@ -45,8 +52,9 @@ function stepFor(action: Action, now: Timestamp): PlanStep {
       if (rev.kind === "return" && rev.cost_to_reverse === 0) {
         return { action_id: action.action_id, route: rule.route, option: "cancel", cost: 0, deadline: rev.window_ends_at };
       }
-      // Only a fee fix is left. Worth it only if the fee is strictly less than the loss from keeping.
-      if (rev.cost_to_reverse < action.amount) {
+      // Only a fee fix is left. Worth it only if the fee is strictly less than the loss from keeping, and only if
+      // Proxy has a way to ask for it. Otherwise the step is "keep", and the final text tells the human the fee fix.
+      if (rev.cost_to_reverse < action.amount && !NO_FEE_FIX_ROUTE.has(action.merchant)) {
         return {
           action_id: action.action_id,
           route: rule.after_window?.route ?? rule.route,

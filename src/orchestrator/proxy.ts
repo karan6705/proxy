@@ -55,6 +55,8 @@ export interface ProxyDeps {
    * Each reset starts a new task id, so old rows stay as history. Null outside the demo.
    */
   demo: DemoTask | null;
+  /** What refunds are confirmed in ("Stripe", or "Stripe (simulated)"). */
+  paymentsName?: string;
   /** The demo feed (GET /demo/feed). Created if not given. */
   feed?: Feed;
   /** Demo only: called once a chain is reversed, so the demo agent can rebook with the corrected intent. */
@@ -139,6 +141,7 @@ export function createProxy(deps: ProxyDeps): Proxy {
     return run;
   }
   const undo = createUndoExecutor({
+    paymentsName: deps.paymentsName,
     lockChain,
     note,
     onReversed: async (chain_id) => {

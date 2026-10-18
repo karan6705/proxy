@@ -2,7 +2,6 @@
 import type { StageBooking, StageConversation, StageConversationEntry, StageEntryKind, StageFeed, StageHumanEntry, StageRow } from "../web/stage-feed.js";
 import type { Action, Intent, Timestamp } from "../types.js";
 import type { FeedEntry } from "./feed.js";
-import { payments } from "./copy.js";
 
 export interface StageChainInput {
   chain_id: string;
@@ -36,6 +35,7 @@ export function toStageFeed(
   chain: StageChainInput | null,
   labels: Record<string, string>,
   flagged: Iterable<string> = [],
+  via = "Stripe",
 ): StageFeed {
   const wrong = new Set([...entries.filter((e) => e.kind === "mismatch").map((e) => String(e.data.action_id)), ...flagged]);
   const bookings: StageBooking[] = entries
@@ -77,7 +77,7 @@ export function toStageFeed(
     } else if (e.kind === "email_in") {
       add(merchant, { at: e.at, from: "merchant", kind: "reply", text: bubbleText(e.text) });
     } else if (e.kind === "stripe_refund") {
-      add(merchant, { at: e.at, from: "stripe", kind: "stripe", text: `Refund confirmed in ${payments()} · $${Math.round(Number(e.data.amount) / 100).toLocaleString("en-US")}` });
+      add(merchant, { at: e.at, from: "stripe", kind: "stripe", text: `Refund confirmed in ${via} · $${Math.round(Number(e.data.amount) / 100).toLocaleString("en-US")}` });
     }
   }
   const order = ["hotel", "transfer", "host"];
