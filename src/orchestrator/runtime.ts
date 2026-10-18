@@ -10,6 +10,7 @@ import {
   createInkboxDeliver,
   createMerchants,
   merchantRoutes,
+  narrateSupport,
   type MerchantDeps,
   type MerchantsImpl,
 } from "../merchants/index.js";
@@ -182,12 +183,26 @@ export function createRuntime(clock: Clock, params: Params, defaultPreferences: 
   const humanNumber = humanPhone || (demoOn ? DEMO_HUMAN_NUMBER : "");
   const alertChannel = env.HUMAN_ALERT_CHANNEL === "sms" ? "sms" : "imessage";
 
+  // The support desks' emails and answers, printed on the server terminal like the hotel agent's (Dhwanil's narration).
+  const narrated: MerchantsImpl = {
+    ...merchants,
+    async supportEmail(merchant_id, email, now) {
+      const reply = await merchants.supportEmail(merchant_id, email, now);
+      if (merchant_id !== "host") {
+        const { received, replied } = narrateSupport(email, reply);
+        console.log(`[${merchant_id} support] ${received}`);
+        console.log(`[${merchant_id} support] ${replied}`);
+      }
+      return reply;
+    },
+  };
+
   const proxy = createProxy({
     store,
     logic,
     inkbox,
     payments: withKnownCharges(fakePayments ? fakePayments.payments : createPayments(), chargeByAction),
-    merchants,
+    merchants: narrated,
     sessions: createSessions(clock, params.SESSION_IDLE_MS),
     clock,
     // The demo waits 60 s for a merchant agent before following up by email.

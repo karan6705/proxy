@@ -57,9 +57,6 @@ export interface AlreadyUndone {
   amount: Cents;
 }
 
-const alreadyLine = (done: AlreadyUndone[]) =>
-  done.length ? `${done.map((d) => `${noun(d.action)} already refunded by your agent (${money(d.amount)})`).join(", ")}. ` : "";
-
 export interface AlertCopy {
   already?: AlreadyUndone[];
   mismatch: Mismatch | undefined;
@@ -70,13 +67,18 @@ export interface AlertCopy {
   time_left_ms: number | null;
 }
 
-/** The one text per chain. Kept under 320 characters (two SMS segments). */
+/**
+ * The one text per chain, laid out for a phone like Sarah's composeChainAlert: the mistake (and what the agent
+ * already undid), a blank line, the numbers on their own lines, a blank line, the choice. Under 320 characters.
+ */
 export function chainAlert(a: AlertCopy): string {
   const more = a.already?.length ? " more" : "";
   const things = a.affected === 1 ? `1${more} thing` : `${a.affected}${more} things`;
-  const window = a.time_left_ms === null ? "No deadline known." : a.time_left_ms <= 0 ? "The window has closed." : `Reversible for ${timeLeft(a.time_left_ms)}.`;
-  const text = `Your agent ${whatWentWrong(a.mismatch)}. ${alreadyLine(a.already ?? [])}${things} affected, ${atRisk(a.at_risk, a.total)}. ${window} Reply UNDO ALL, PICK or KEEP.`;
-  return text.length <= 320 ? text : `Your agent made a mistake. ${things} affected, ${atRisk(a.at_risk, a.total)}. ${window} Reply UNDO ALL, PICK or KEEP.`;
+  const window = a.time_left_ms === null ? "No deadline known" : a.time_left_ms <= 0 ? "The window has closed" : `Reversible for ${timeLeft(a.time_left_ms)}`;
+  const already = (a.already ?? []).map((d) => `\n${noun(d.action)} already refunded by your agent (${money(d.amount)}).`).join("");
+  const body = (what: string) => `Your agent ${what}.${already}\n\n${things} affected · ${atRisk(a.at_risk, a.total)}\n${window}\n\nReply UNDO ALL, PICK or KEEP.`;
+  const text = body(whatWentWrong(a.mismatch));
+  return text.length <= 320 ? text : body("made a mistake");
 }
 
 const NOUN: Record<Action["category"], string> = {
