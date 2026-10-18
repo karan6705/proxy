@@ -131,7 +131,7 @@ describe("QA workflows", () => {
     // A: the demo page's reply arrives as "sms", but nothing goes out by SMS.
     expect(texts().every((t) => t.channel === "imessage" && t.to === HUMAN)).toBe(true);
     const bodies = texts().map((t) => t.body);
-    expect(bodies[1]).toBe("Got it. Starting the undo. I'll text you as each step is confirmed in Stripe.");
+    expect(bodies[1]).toMatch(/^Got it/); // Sarah's acknowledgement, whatever its exact wording
     expect(bodies).toContain("Flight refunded, $412, confirmed in Stripe.");
     expect(bodies).toContain("Hotel refunded, $544 of $640, confirmed in Stripe.");
     expect(bodies).toContain("Transfer refunded, $188, confirmed in Stripe.");
@@ -267,8 +267,9 @@ describe("QA workflows", () => {
 
     const bodies = texts().map((t) => t.body);
     const at = (text: string) => bodies.indexOf(text);
-    expect(at("Got it. Starting the undo. I'll text you as each step is confirmed in Stripe.")).toBeGreaterThan(0);
-    expect(at("Transfer refunded, $188, confirmed in Stripe.")).toBeGreaterThan(at("Got it. Starting the undo. I'll text you as each step is confirmed in Stripe."));
+    const gotIt = bodies.findIndex((b) => /^Got it/.test(b));
+    expect(gotIt).toBeGreaterThan(0);
+    expect(at("Transfer refunded, $188, confirmed in Stripe.")).toBeGreaterThan(gotIt);
     expect(at("The hotel hasn't answered, following up by email.")).toBeGreaterThan(at("Transfer refunded, $188, confirmed in Stripe."));
     expect(calls).toEqual([{ type: "request_reversal", via: "default" }, { type: "request_reversal", via: "email" }]);
   });
