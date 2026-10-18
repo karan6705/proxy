@@ -115,9 +115,16 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
       await runtime.human.handleInbound({ from: DEMO_HUMAN_NUMBER, body: "UNDO ALL", via: "imessage" });
       const until = Date.now() + timeoutMs;
       let state = chain.state;
+      let answered = 0;
       while (Date.now() < until) {
         state = (await runtime.store.getChain(chain.chain_id))?.state ?? state;
         if (state === "redone" || state === "partial") break;
+        // Proxy asks before accepting any offer: the (simulated) human takes option 1, its recommendation.
+        const asked = p.feed.list(task_id).filter((e) => e.kind === "options").length;
+        if (asked > answered) {
+          answered = asked;
+          await runtime.human.handleInbound({ from: DEMO_HUMAN_NUMBER, body: "1", via: "imessage" });
+        }
         await new Promise((r) => setTimeout(r, 10));
       }
       const view = await tools.get_chain({ chain_id: chain.chain_id });
@@ -248,7 +255,7 @@ export function createSandboxes(opts: { max?: number; maxConcurrent?: number; ti
       "The agent booked the flight, hotel and airport transfer for Nov 3 instead of Nov 13 and emailed the host the wrong date. " +
       `It undid the flight itself (${money(41_200)}), then left. Proxy found the rest when the late confirmations arrived and alerted the human: ` +
       `${money(total - 41_200)} at risk of ${money(total)}, reversible for 3h 40m. The (simulated) human replied UNDO ALL. ` +
-      "Proxy negotiated with the hotel's agent (store credit refused, then 85% accepted), got the transfer refunded by email and the host corrected. " +
+      "Proxy negotiated with the hotel's agent (store credit refused, then asked for the full amount; the hotel held at 85%), texted the human the two offers, and the (simulated) human chose the 85% refund. Proxy got the transfer refunded by email and the host corrected. " +
       `${money(recovered)} of ${money(total)} is back, confirmed on simulated payments. ` +
       (finished && d ? `The agent then rebooked for ${humanDate(d.start)} to ${humanDate(d.end ?? d.start)}.` : "The run did not finish in time; call get_chain to see where it stands.");
     return { task_id, chain_id: chain.chain_id, summary, finished };

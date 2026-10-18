@@ -555,7 +555,8 @@ export function createProxy(deps: ProxyDeps): Proxy {
       if (reply.kind === "undo_all") later(() => undo.start(reply.chain_id));
       else if (reply.kind === "pick") later(() => undo.start(reply.chain_id, reply.picks));
       else if (reply.kind === "keep") await undo.keep(reply.chain_id);
-      else if (reply.kind === "counter_decision") later(() => undo.decideCounter(reply.chain_id, reply.negotiation_id, reply.accept));
+      else if (reply.kind === "counter_decision")
+        later(() => undo.decideCounter(reply.chain_id, reply.negotiation_id, { accept: reply.accept, ...(reply.choice !== undefined ? { choice: reply.choice } : {}), ...(reply.push ? { push: true } : {}) }));
     },
 
     async onProtocolMessage(message) {

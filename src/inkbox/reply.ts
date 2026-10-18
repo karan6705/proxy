@@ -9,6 +9,8 @@ export type ParsedReply =
   | { kind: "numbers"; picks: number[] }
   | { kind: "yes" }
   | { kind: "no" }
+  /** KEEP PUSHING: during a negotiation question, ask the merchant once more. */
+  | { kind: "keep_pushing" }
   /** STOP and its synonyms: freezes all undo activity until the human replies again. */
   | { kind: "stop" }
   /** START, UNSTOP, HELP: the carrier answers these; never forwarded or answered. */
@@ -34,6 +36,7 @@ function numbersOf(s: string): number[] | null {
 export function parseReply(body: string): ParsedReply {
   const s = normalize(body);
   if (/^(UNDO ?ALL|UNDO EVERYTHING|UNDO)$/.test(s)) return { kind: "undo_all" };
+  if (/^(KEEP PUSHING|KEEP PUSH|PUSH|PUSH HARDER|KEEP NEGOTIATING)$/.test(s)) return { kind: "keep_pushing" };
   if (/^(KEEP|KEEP IT|KEEP ALL)$/.test(s)) return { kind: "keep" };
   if (s === "PICK") return { kind: "pick" };
   const picked = s.match(/^PICK (.+)$/);
