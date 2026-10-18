@@ -31,7 +31,7 @@ import type {
 import { expectedRefund, refundOnce } from "./refunds.js";
 import { humanDate, type AlreadyUndone } from "./copy.js";
 import { runSelfServeRoute } from "./routes/self-serve.js";
-import { payments as paymentsLabel, chainSummary, correctionStep, deniedStep, merchantLine, nextOption, noAnswerYet, proxyLine, refundedStep } from "./copy.js";
+import { chainSummary, correctionStep, deniedStep, merchantLine, nextOption, noAnswerYet, proxyLine, refundedStep } from "./copy.js";
 import type { FeedActor, FeedEntry } from "./feed.js";
 
 /** What a support desk answers: whether it approved and the refund it agreed. */
@@ -63,6 +63,8 @@ export interface UndoDeps {
   /** Address support emails are sent from. */
   proxyEmail: string;
   isFrozen(): boolean;
+  /** What refunds are confirmed in, for texts and the feed ("Stripe (simulated)" in the sandbox). */
+  paymentsName?: string;
   /** Adds a line to the demo feed. */
   note?(entry: Omit<FeedEntry, "seq" | "at"> & { at?: string }): void;
   /** Called once a chain is reversed and the redo is handed back. */
@@ -111,10 +113,11 @@ export function actorFor(merchant: MerchantId): FeedActor {
 
 export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
   const { store, logic, clock, payments, merchants } = deps;
+  const paymentsName = deps.paymentsName ?? "Stripe";
   const note = (chain: Pick<Chain, "task_id" | "chain_id">, actor: FeedActor, kind: FeedEntry["kind"], text: string, data: FeedEntry["data"] = {}) =>
     deps.note?.({ task_id: chain.task_id, chain_id: chain.chain_id, actor, kind, text, data });
   const stripeNote = (chain: Chain, action: Action, refunded: Cents, ref: string | null) =>
-    note(chain, "stripe", "stripe_refund", `${paymentsLabel()}: ${money(refunded)} refunded on the ${merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, {
+    note(chain, "stripe", "stripe_refund", `${paymentsName}: ${money(refunded)} refunded on the ${merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, {
       action_id: action.action_id,
       merchant: action.merchant,
       amount: refunded,
@@ -190,7 +193,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     await setState(action, "verified");
     await step(chain, action, route, "succeeded", `${note}; refunded ${money(agreed)}, verified in Stripe`, { stripe_ref: ref });
     stripeNote(chain, action, r.refunded_amount, ref);
-    await deps.textHuman(chain.chain_id, "progress", refundedStep(action, r.refunded_amount));
+    await deps.textHuman(chain.chain_id, "progress", refundedStep(action, r.refunded_amount, paymentsName));
     return "verified";
   }
 
@@ -226,6 +229,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
         DATE_OF(intent),
         untouched,
         undoneByAgent(chain, actions),
+        paymentsName,
       );
       // Partial: some items need the human or weren't picked. Otherwise the agent gets the corrected intent (redo).
       const reversed = !bad.length && !untouched.length && !actions.some((a) => keptByPlan.has(a.action_id) && a.state === "kept");
@@ -243,7 +247,7 @@ export function createUndoExecutor(deps: UndoDeps): UndoExecutor {
     const r = await runSelfServeRoute({ merchants, payments, store, clock }, chain, action);
     if (r.action.state === "verified") {
       stripeNote(chain, action, action.amount, r.step.stripe_ref);
-      await deps.textHuman(chain.chain_id, "progress", refundedStep(action, action.amount));
+      await deps.textHuman(chain.chain_id, "progress", refundedStep(action, action.amount, paymentsName));
     }
   }
 
