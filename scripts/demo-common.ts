@@ -21,6 +21,7 @@ export async function waitForHealth(origin: string, timeoutMs: number): Promise<
 export function printUrls(origin: string, mode: string): void {
   console.log(`
 Open these for the recording (${mode}):
+  Show page       ${origin}/web/show   (npm run demo:show lists the story and presenter URLs)
   Stage page      ${origin}/web/stage
   Widget          ${origin}/mcp/inspector?autoConnect=${origin}/mcp   (Tools > get_chain, with the chain_id from list_chains)
   Demo page       ${origin}/web
