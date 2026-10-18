@@ -58,6 +58,8 @@ Per task (counts out of the episodes per arm):
 
 ## Layer 2 rerun: the intent check from the human's own words
 
+_Not part of the pitch numbers. It is kept here as a record, and stays out of them unless a rerun shows the check working._
+
 Raw log: [`evals/results/intentcheck-2026-10-18T02-37-52-316Z.json`](results/intentcheck-2026-10-18T02-37-52-316Z.json) (run `intentcheck-2026-10-18T02-37-52-316Z`). Model: `claude-haiku-4-5-20251001`. 3 trials per task and arm, only the misread tasks (C1, C2).
 
 | Task | What goes wrong | Proxy episodes | Agent passed the human's words | Check said: agrees / disagrees / absent | Proxy: real mistakes / caught |

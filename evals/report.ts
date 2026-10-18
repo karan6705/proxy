@@ -151,6 +151,7 @@ function intentSection(intent: Loaded<Layer2Results>, main: Loaded<Layer2Results
   const beforeCaught = before.reduce((sum, task) => sum + task.proxy_caught, 0);
   const beforeMistakes = before.reduce((sum, task) => sum + task.proxy_mistakes, 0);
 
+  out.push("_Not part of the pitch numbers. It is kept here as a record, and stays out of them unless a rerun shows the check working._", "");
   out.push(
     `Raw log: [\`evals/results/${intent.file}\`](results/${intent.file}) (run \`${intent.data.run_id}\`). Model: \`${intent.data.model}\`. ${intent.data.summary.trials_per_task_arm} trials per task and arm, only the misread tasks (${tasks.map((task) => task.task_id).join(", ")}).`,
     "",
@@ -324,13 +325,10 @@ export function renderPitchNumbers(layer1: Loaded<Layer1Results>, layer2: Loaded
       `| On comprehension errors (the agent misreads the request and logs the same misreading), Proxy caught ${outOf(total(comprehension, (task) => task.proxy_caught), total(comprehension, (task) => task.proxy_mistakes))}. Say this one yourself: it is the honest limit. | \`evals/results/${layer2.file}\` | The limit is S34 (the agent logs the wrong intent). |`,
     );
   }
-  if (intent) {
-    const tasks = layer2ByTask(intent.data.episodes);
-    const total = (pick: (task: TaskCounts) => number): number => tasks.reduce((sum, task) => sum + pick(task), 0);
-    out.push(
-      `| Passing the human's own words to \`log_intent\` did not catch those two misreadings: Proxy caught ${outOf(total((task) => task.proxy_caught), total((task) => task.proxy_mistakes))} in the rerun. | \`evals/results/${intent.file}\` | The intent check is a deterministic parser; it reads month-name and ISO dates and a budget. One request had no date in it and the other wrote "3/11". It does catch "November 13" against a logged Nov 3 (a unit test, not a live run). The human's answer is simulated. |`,
-    );
-  }
+  const rerunTasks = intent ? layer2ByTask(intent.data.episodes) : [];
+  const intentRerun = intent
+    ? `The only rerun caught ${outOf(rerunTasks.reduce((sum, task) => sum + task.proxy_caught, 0), rerunTasks.reduce((sum, task) => sum + task.proxy_mistakes, 0))}`
+    : "No rerun has shown it working";
   out.push(
     "",
     "## Do not say",
@@ -342,6 +340,8 @@ export function renderPitchNumbers(layer1: Loaded<Layer1Results>, layer2: Loaded
     "- That the merchants, merchant agents, or the clock are real. They are our own mocks and a simulated clock; Stripe is test mode.",
     "- That Layer 1's naive column measures how often agents fail. It is a scripted assumption.",
     "- Time to alert, redo correctness, or token cost per saved mistake: not measured.",
+    `- That passing the human's own words to \`log_intent\` fixes a misread request. ${intentRerun}, so the intent check is not part of the pitch numbers until a new rerun shows otherwise.`,
+    "- That Proxy can catch a misreading when the request has no date. If the human never wrote a date (the conference 'is on my calendar'), there is nothing to compare the agent's dates with, so no check can catch it. Say it as a limit.",
     "",
   );
   return `${out.join("\n")}\n`;
