@@ -147,6 +147,30 @@ footer .hint{color:var(--faint)}
 .tag{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--green-soft);color:var(--green);margin-right:6px}
 .tag.sim{background:#F2F2F7;color:var(--muted)}
 .line{font-size:15px;color:var(--muted);padding:2px 4px}
+.checking{margin:10px 0 2px 36px;border:1.5px dashed #C9C8F5;background:#FAFAFF;border-radius:14px;padding:10px 14px}
+.checking .check-head{font-size:13px;font-weight:700;color:var(--accent-ink);margin-bottom:4px}
+.checking .reading{font-size:14px;padding:4px 0}
+.checking .why{margin-top:6px;font-size:14px;font-weight:600;color:var(--accent-ink)}
+.checking:not(.done) .check-head::after{content:"";display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;background:var(--accent);animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.2}}
+.tm .typed{display:block;margin-top:4px;font-size:12.5px;color:var(--muted)}
+.ladder{position:sticky;top:0;z-index:1;border-radius:14px;background:#F7F7F9;padding:10px 14px;margin-bottom:6px;box-shadow:0 6px 12px -8px rgba(29,29,31,.18)}
+.ladder-head{font-size:13px;font-weight:700;color:var(--muted);margin-bottom:4px}
+.rung{display:grid;grid-template-columns:92px 1fr 56px 104px;align-items:center;gap:10px;font-size:14px;padding:3px 0}
+.rung .rl{color:var(--muted)}
+.rung .rb{height:8px;border-radius:4px;background:#EDEDF0;overflow:hidden}
+.rung .rb i{display:block;height:100%;background:var(--green);border-radius:4px}
+.rung .rb i.credit{background:#C7C7CC}
+.rung.asked .rb i{background:var(--accent)}
+.rung .ra{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.rung .rs{font-size:12.5px;font-weight:700;color:var(--muted)}
+.rung.won .rs{color:var(--green)}.rung.no .rs{color:var(--red)}
+.revert{border:1px solid #BFE6CC;border-radius:18px;padding:13px 16px;background:#FBFEFC}
+.revert-head{display:flex;align-items:center;gap:8px;font-size:15.5px;font-weight:600;margin-bottom:4px}
+.ok-dot{width:20px;height:20px;border-radius:50%;background:var(--green);color:#fff;font-size:12px;display:grid;place-items:center}
+.revert .reading{font-size:14.5px;padding:4px 0}
+.revert .reading.good span:last-child{color:var(--green);font-weight:600}
+.revert .r-meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
 .check{border:1px solid var(--hair);border-radius:18px;padding:14px 16px}
 .check-head{font-size:15px;font-weight:600;margin-bottom:8px}
 .reading{display:flex;justify-content:space-between;font-size:16px;padding:6px 0;border-top:1px solid #F2F2F5}
@@ -300,7 +324,11 @@ footer .hint{color:var(--faint)}
     var ctx=context(es), S=STORIES[story], out=[];
     for(var s=1;s<=S.scenes.length;s++){
       var list=es.filter(function(e){return sceneOf(e,ctx)===s});
-      if(s===S.talk){list.forEach(function(e){out.push({scene:s,seqs:[e.seq]})});continue}
+      if(s===S.talk){list.forEach(function(e){
+        // Present mode: "Proxy is checking" gets its own step before each of Proxy's decisions.
+        if(e.kind==="protocol_out"&&e.data&&e.data.why)out.push({scene:s,seqs:[],checks:[e.seq]});
+        out.push({scene:s,seqs:[e.seq],checks:e.kind==="protocol_out"?[e.seq]:[]});
+      });continue}
       if(list.length||(story==="ambiguous"&&s===2))out.push({scene:s,seqs:list.map(function(e){return e.seq})});
     }
     return out;
@@ -309,10 +337,10 @@ footer .hint{color:var(--faint)}
   // ---- what is visible now
   function visible(){
     var es=(feed&&feed.entries||[]).slice().sort(function(a,b){return a.seq-b.seq});
-    if(LIVE&&!PRESENT)return {entries:es,scene:liveScene(es)};
-    var shown={}, scene=0;
-    for(var i=0;i<=cursor&&i<steps.length;i++){steps[i].seqs.forEach(function(n){shown[n]=1});scene=steps[i].scene}
-    return {entries:es.filter(function(e){return shown[e.seq]}),scene:scene};
+    if(LIVE&&!PRESENT){var all={};es.forEach(function(e){all[e.seq]=1});return {entries:es,scene:liveScene(es),checks:all}}
+    var shown={}, checks={}, scene=0;
+    for(var i=0;i<=cursor&&i<steps.length;i++){steps[i].seqs.forEach(function(n){shown[n]=1});(steps[i].checks||[]).forEach(function(n){checks[n]=1});scene=steps[i].scene}
+    return {entries:es.filter(function(e){return shown[e.seq]}),scene:scene,checks:checks};
   }
   function liveScene(es){var ctx=context(es),m=0;es.forEach(function(e){m=Math.max(m,sceneOf(e,ctx))});return m}
 
@@ -331,7 +359,7 @@ footer .hint{color:var(--faint)}
     renderChat(es,v.scene,byId,refunded,corrected,spotted);
     renderPhone(es);
     renderMoney(es,spotted,byId);
-    renderItems(es);
+    renderItems(es,v.checks||{},byId);
     var n=S.scenes.length;
     $("scene").textContent=v.scene?"Scene "+v.scene+" of "+n+": "+S.scenes[v.scene-1]:(LIVE&&!PRESENT?"Waiting for your agent":"Ready");
     $("hint").textContent=PRESENT?(cursor<steps.length-1?"Space or → to continue, ← to go back":"End of the story. ← to go back"):"";
@@ -482,42 +510,135 @@ footer .hint{color:var(--faint)}
     })(start);
   }
 
-  function renderItems(es){
+  function dur(ms){if(ms===null||ms===undefined||!isFinite(ms))return "";if(ms<=0)return "closed";var m=Math.round(ms/60000),h=Math.floor(m/60);return h>=48?Math.round(h/24)+" days":h?h+"h "+(m%60)+"m":m+"m"}
+  function pctOf(a,b){return b?Math.round(a*100/b):0}
+  function wrongWhy(b){
+    if(!b)return "";
+    if(b.category==="saas")return "Annual plan, not monthly";
+    var want=feed.task&&feed.task.intended_dates;
+    return want&&b.dates?"Wrong dates: "+day(b.dates.start)+", not "+day(want.start):"Doesn't match the request";
+  }
+  function titleOf(b){return b?String(b.summary||"").replace(/\s·\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}(?: to .*)?$/,""):""}
+  function row2(label,value,cls){var r=el("div","reading"+(cls?" "+cls:""));r.appendChild(el("span","r",label));r.appendChild(el("span",null,value));return r}
+
+  /** "Proxy is checking": the human's rules against the offer on the table, before Proxy answers. Typed fields only. */
+  function checking(e,done,byId){
+    var d=e.data||{}, c=el("div","checking"+(done?" done":""));
+    c.appendChild(el("div","check-head",done?"Proxy checked":"Proxy is checking…"));
+    var amt=Number(d.order_amount||0), offer=d.offer_amount===null||d.offer_amount===undefined?null:Number(d.offer_amount);
+    if(d.type==="request_reversal"){
+      c.appendChild(row2("Matches your request","❌ "+wrongWhy(byId[d.action_id])));
+      c.appendChild(row2("Evidence","✅ request, receipt, timeline"));
+    }else if(d.offer_kind==="store_credit"){
+      c.appendChild(row2("On the table","Store credit "+money(offer)));
+      c.appendChild(row2("No store credit",d.no_store_credit?"❌ you don't accept it":"✅ you allow it"));
+    }else if(offer!==null){
+      var p=pctOf(offer,amt);
+      c.appendChild(row2("On the table",money(offer)+" refund ("+p+"%)"));
+      c.appendChild(row2("Your minimum "+d.min_pct+"%",(p>=Number(d.min_pct)?"✅ ":"❌ ")+p+"% offered"));
+      if(d.decision==="anchor")c.appendChild(row2("Rounds","✅ round "+d.round+" of 4, one left to accept"));
+    }
+    var left=dur(d.time_left_ms);
+    if(left)c.appendChild(row2("Time left",left));
+    if(done&&d.why)c.appendChild(el("div","why",String(d.why)));
+    return c;
+  }
+
+  /** The offers so far, as a ladder: what Proxy asked for, then each counter and what Proxy did with it. */
+  function ladder(list){
+    var asked=list.filter(function(e){return e.kind==="protocol_out"&&e.data.type==="request_reversal"})[0];
+    if(!asked)return null;
+    var full=Number(asked.data.order_amount||0), box=el("div","ladder");
+    box.appendChild(el("div","ladder-head","Offers"));
+    var add=function(label,amount,kind,status,cls){
+      var r=el("div","rung"+(cls?" "+cls:""));r.appendChild(el("span","rl",label));
+      var bar=el("span","rb"),fill=el("i",kind==="store_credit"?"credit":null);fill.style.width=Math.max(4,pctOf(amount,full))+"%";bar.appendChild(fill);r.appendChild(bar);
+      r.appendChild(el("span","ra",money(amount)));r.appendChild(el("span","rs",status));box.appendChild(r);
+    };
+    add("Proxy asked",full,"refund","Full refund","asked");
+    list.forEach(function(e,i){
+      if(e.kind!=="protocol_in"||e.data.type!=="counter")return;
+      var next=list.slice(i+1).filter(function(x){return x.kind==="protocol_out"})[0];
+      var dec=next?(next.data.decision||next.data.type):null;
+      var a=Number(e.data.amount||0), credit=e.data.kind==="store_credit";
+      var status=!next?"On the table":dec==="store_credit"?"Declined":dec==="anchor"?"Asked for more":dec==="below_minimum"?"Too low":dec==="accept_counter"?"Accepted":"";
+      add(credit?"Store credit":pctOf(a,full)+"% refund",a,credit?"store_credit":"refund",status,dec==="accept_counter"?"won":dec==="store_credit"||dec==="below_minimum"?"no":"");
+    });
+    return box;
+  }
+
+  /** When a merchant is finished: what was reverted, how and why, with its receipt. */
+  function reverted(e,es,byId){
+    var d=e.data||{}, b=byId[d.action_id], m=d.merchant, c=el("div","revert");
+    var head=el("div","revert-head");head.appendChild(el("span","ok-dot","✓"));head.appendChild(el("span",null,(e.kind==="stripe_refund"?"Reverted: ":"Corrected: ")+titleOf(b)));c.appendChild(head);
+    if(e.kind==="stripe_refund"){
+      var before=b?(b.category==="saas"?"Annual plan, ":(range(b.dates)?range(b.dates)+", ":""))+money(b.amount):"";
+      c.appendChild(row2("Before",before));
+      c.appendChild(row2("After","Cancelled, "+money(d.amount)+" back"+(d.of&&d.of!==d.amount?" of "+money(d.of):""),"good"));
+      var rounds=es.filter(function(x){return x.kind==="protocol_out"&&x.data.merchant===m}).reduce(function(t,x){return Math.max(t,Number(x.data.round||0))},0);
+      var how=m==="airline"?"Your agent cancelled it itself, free under the 24-hour rule":rounds?"Negotiated agent to agent, "+rounds+" rounds":"Proxy emailed support";
+      c.appendChild(row2("How",how));
+      c.appendChild(row2("Why",wrongWhy(b)));
+      var sim=/simulated/i.test(e.text), rc=el("div","r-meta");
+      rc.appendChild(el("span","tag"+(sim?" sim":""),sim?"Simulated payment":"Verified in Stripe"));
+      rc.appendChild(el("span","r-id",d.refund_id?String(d.refund_id).slice(0,8)+"…":""));
+      c.appendChild(rc);
+    }else{
+      c.appendChild(row2("Before","Said "+(b&&b.dates?day(b.dates.start):"the wrong date")));
+      var want=feed.task&&feed.task.intended_dates;
+      c.appendChild(row2("After","Told "+range(want),"good"));
+      c.appendChild(row2("How","Correction email"));
+      c.appendChild(row2("Why",wrongWhy(b)));
+    }
+    return c;
+  }
+
+  function renderItems(es,checks,byId){
     var box=$("items"), frag=document.createDocumentFragment(), groups={}, any=false;
-    es.forEach(function(e){
+    var shown={};es.forEach(function(e){shown[e.seq]=1});
+    var all=(feed.entries||[]).slice().sort(function(a,b){return a.seq-b.seq});
+    // Every entry Proxy checked before answering: its check card comes first, then (once shown) the message itself.
+    var items=all.filter(function(e){return shown[e.seq]||(checks[e.seq]&&e.kind==="protocol_out")});
+    items.forEach(function(e){
       var k=e.kind, d=e.data||{}, m=d.merchant;
       if(k==="protocol_out"||k==="protocol_in"){
         var g=groups["t"+m];
-        if(!g){g=groups["t"+m]=el("div","thread");var h=el("div","thread-head");h.appendChild(el("div","avatar av-merchant",(NAMES[m]||m).charAt(0)));h.appendChild(el("span",null,"Proxy and "+(NAMES[m]||m)));h.appendChild(el("span","sub","Agent to agent"));g.appendChild(h);frag.appendChild(g)}
-        var proxy=k==="protocol_out", row=el("div","tm"+(proxy?" proxy":""));
+        if(!g){
+          g=groups["t"+m]={box:el("div","thread"),list:[]};
+          var h=el("div","thread-head");h.appendChild(el("div","avatar av-merchant",(NAMES[m]||m).charAt(0)));h.appendChild(el("span",null,"Proxy and "+(NAMES[m]||m)));h.appendChild(el("span","sub","Agent to agent"));
+          g.box.appendChild(h);g.ladderSlot=el("div");g.box.appendChild(g.ladderSlot);frag.appendChild(g.box);
+        }
+        var proxy=k==="protocol_out";
+        if(proxy&&d.why&&checks[e.seq])g.box.appendChild(checking(e,!!shown[e.seq],byId));
+        if(!shown[e.seq])return;
+        g.list.push(e);
+        var row=el("div","tm"+(proxy?" proxy":""));
         row.appendChild(el("div","avatar "+(proxy?"av-proxy":"av-merchant"),proxy?"P":(NAMES[m]||m).charAt(0)));
-        var t=el("div","t");t.appendChild(el("span","kind",proxy?"Proxy":NAMES[m]||m));t.appendChild(document.createTextNode(strip(e.text)));
-        row.appendChild(t);g.appendChild(row);any=true;
+        var t=el("div","t");t.appendChild(el("span","kind",proxy?"Proxy":NAMES[m]||m));
+        // The merchant's own line is display only; the typed offer underneath is what Proxy acted on.
+        t.appendChild(document.createTextNode(proxy?strip(e.text):(d.said||strip(e.text))));
+        if(!proxy&&d.said)t.appendChild(el("span","typed","Read by Proxy: "+strip(e.text)));
+        row.appendChild(t);g.box.appendChild(row);any=true;
       }else if(k==="email_out"||k==="email_in"){
         var mg=groups["m"+m];
         if(!mg){mg=groups["m"+m]=el("div","mail");var mh=el("div","mail-head");mh.appendChild(el("span","env","✉️"));mh.appendChild(el("span",null,(d.correction?"Correction to ":"Email to ")+(NAMES[m]||m)));mg.appendChild(mh);frag.appendChild(mg)}
         var line=el("div","mail-line"+(k==="email_in"?" reply":""));
         line.appendChild(el("span","from",k==="email_out"?"Proxy: ":(NAMES[m]||m)+": "));line.appendChild(document.createTextNode(strip(e.text)));
         mg.appendChild(line);any=true;
+        if(k==="email_in"&&d.correction&&d.approved)frag.appendChild(reverted(e,es,byId));
       }else if(k==="stripe_refund"){
-        var r=el("div","receipt"), sim=/simulated/i.test(e.text);
-        r.appendChild(el("div","r-what",(NAMES[m]||m).replace(/'s agent$| support$| billing$/,"")+" refund"));
-        r.appendChild(el("div","r-amt",money(d.amount)));
-        var meta=el("div","r-meta");meta.appendChild(el("span","tag"+(sim?" sim":""),sim?"Simulated":"Verified in Stripe"));meta.appendChild(document.createTextNode("Refunded"+(d.of&&d.of!==d.amount?" of "+money(d.of):"")));
-        r.appendChild(meta);r.appendChild(el("div","r-id",d.refund_id?String(d.refund_id).slice(0,8)+"…":""));
-        frag.appendChild(r);any=true;
-      }else if(k==="self_undo"){
-        frag.appendChild(el("div","line","Your agent cancelled the flight itself, free under the 24-hour rule."));any=true;
+        frag.appendChild(reverted(e,es,byId));any=true;
       }else if(k==="mismatch"&&story==="ambiguous"){
         var c=el("div","check");c.appendChild(el("div","check-head","Intent check: your words against the plan"));
         var said=String(d.said||""), agent=String(d.understood||"");
         var rows=[["You wrote",said.replace(/\s*\(.*$/,"")],["Your agent read",agent],["It could also mean",(said.match(/\((.*)\)/)||["",""])[1].replace(agent.replace(/ to .*/,""),"").replace(/^ or | or $/,"")]];
         var got=es.filter(function(x){return x.kind==="text_out"&&/^Got it: /.test(x.text)})[0];
         if(got)rows.push(["You meant",got.text.replace(/^Got it: /,"").replace(/\. .*$/,"")+" ✅"]);
-        rows.forEach(function(x){var r2=el("div","reading");r2.appendChild(el("span","r",x[0]));r2.appendChild(el("span",null,x[1]));c.appendChild(r2)});
+        rows.forEach(function(x){c.appendChild(row2(x[0],x[1]))});
         frag.appendChild(c);any=true;
       }
     });
+    Object.keys(groups).forEach(function(key){var g=groups[key];if(g.ladderSlot){var l=ladder(g.list);if(l)g.ladderSlot.replaceWith(l)}});
     if(!any)frag.appendChild(el("div","empty",story==="ambiguous"?"Proxy reads the human's own words and checks them against what the agent logged.":"Merchant conversations, emails and refunds show up here."));
     box.replaceChildren(frag);
     follow($("itemScroll"));
