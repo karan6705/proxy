@@ -273,7 +273,7 @@ export function createToolHandlers(getProxy: () => Proxy) {
           p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "agent", kind: "self_undo", text: `Agent undid its own ${action.category} with ${merchantName(p, action.merchant)} (free under the airline's 24-hour rule).`, data: { action_id: id, amount: action.amount } });
           const r = await runSelfServeRoute({ merchants, payments: p.deps.payments, store, clock }, chain, { ...action, state: "planned" });
           if (r.action.state === "verified") {
-            p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "stripe", kind: "stripe_refund", text: `Stripe: ${money(action.amount)} refunded on the ${p.deps.merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, data: { action_id: id, amount: action.amount, of: action.amount, refund_id: r.step.stripe_ref } });
+            p.note?.({ task_id: action.task_id, chain_id: chain.chain_id, actor: "stripe", kind: "stripe_refund", text: `Stripe: ${money(action.amount)} refunded on the ${p.deps.merchants.get(action.merchant)?.name ?? action.merchant} charge, confirmed.`, data: { action_id: id, merchant: action.merchant, amount: action.amount, of: action.amount, refund_id: r.step.stripe_ref } });
           }
         }
         // The agent's undo covers only this action. If anything else in the chain is still open, the chain goes

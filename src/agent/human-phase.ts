@@ -14,6 +14,7 @@ interface FeedEntry {
 interface Feed {
   task_id: string | null;
   chain: { chain_id: string; state: string; total: number; recovered: number } | null;
+  conversations?: Array<{ with: string; entries: Array<{ from: string; kind: string; text: string }> }>;
   entries: FeedEntry[];
 }
 
