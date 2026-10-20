@@ -67,4 +67,8 @@ Caveats: in the scripted layer the self-checking arm is a scripted self-review, 
 
 `src/tools` (MCP tools), `src/orchestrator` (chains, undo routes, Reversal Protocol), `src/app` (the widget), `src/inkbox` and `src/capture` (identity, email, texts, A2A), `src/logic` and `src/merchants` (rules and mock merchants), `src/stripe`, `evals/`. Design docs start at `docs/01-concepts.md`.
 
-Team: Dhwanil Ranpura, Karan Raval, Sarah Khadder.
+# Team
+
+- Karan Raval ([@karan6705](https://github.com/karan6705))
+- Dhwanil ([@dhwanil1907](https://github.com/dhwanil1907))
+- Sarah Khadder ([@YOUR_USERNAME](https://github.com/skhadder))
