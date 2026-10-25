@@ -71,4 +71,4 @@ Caveats: in the scripted layer the self-checking arm is a scripted self-review, 
 
 - Karan Raval ([@karan6705](https://github.com/karan6705))
 - Dhwanil ([@dhwanil1907](https://github.com/dhwanil1907))
-- Sarah Khadder ([@YOUR_USERNAME](https://github.com/skhadder))
+- Sarah Khadder ([@skhadder](https://github.com/skhadder))

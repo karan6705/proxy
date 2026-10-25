@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Publishes the public judge mirror (karan6705/proxy) from the private team repo (karan6705/tripwire):
 #   1. a fresh bare clone of main (and the demo-v1 and demo-v2 tags, where they exist) in a temp folder;
-#   2. git filter-repo replaces the three phone numbers that are in the history with fictional 555 numbers
+#   2. git filter-repo replaces the three phone numbers that are in the history with fictional 555 numbers,
+#      and maps Sarah's old laptop email to her GitHub email so her commits count as hers;
 #      (the numbers are read from the old commits and never printed);
 #   3. the secret scan must come back clean, or nothing is pushed;
 #   4. commit dates, authors and messages are checked against the original;
@@ -56,7 +57,10 @@ REFS=(main)
 for TAG in "${TAGS[@]}"; do
   git -C "$WORK/mirror.git" rev-parse -q --verify "refs/tags/$TAG" >/dev/null && REFS+=("refs/tags/$TAG")
 done
-git -C "$WORK/mirror.git" filter-repo --quiet --force --replace-text "$REPLACE" --refs "${REFS[@]}"
+# Sarah's early commits carry her laptop's default address, which GitHub can't link to her account.
+MAILMAP="$WORK/mailmap"
+printf 'Sarah Khadder <sarahkhadder@gmail.com> <skhadder@Sarahs-MacBook-Pro.local>\n' > "$MAILMAP"
+git -C "$WORK/mirror.git" filter-repo --quiet --force --replace-text "$REPLACE" --mailmap "$MAILMAP" --refs "${REFS[@]}"
 rm -f "$REPLACE"
 
 echo "3/5 secret scan on the rewritten history"
